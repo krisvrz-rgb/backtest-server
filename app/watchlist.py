@@ -144,7 +144,57 @@ def import_from_portfolio(base_url: str = PORTFOLIO_URL) -> list[dict[str, Any]]
                 if item["tv"] not in family and item["tv"] not in [x["tv"] for x in wl]:
                     wl.append(item)
     groups.append({"name": "WATCHLIST", "symbols": wl})
-    return [g for g in groups if g["symbols"]]
+    return [g | {"list": PORTFOLIO_LIST} for g in groups if g["symbols"]]
+
+
+# --------------------------------------------------------------------------- TradingView-lijsten
+
+PORTFOLIO_LIST = "Portfolio server"
+TV_SNAPSHOT_FILE = Path(__file__).parent / "tradingview_lists.json"
+FLAG_COLORS = {"red": "rood", "blue": "blauw", "cyan": "cyaan", "orange": "oranje", "green": "groen",
+               "purple": "paars", "pink": "roze"}
+TV_PREFIX = "TradingView · "
+
+
+def list_name(group: dict[str, Any]) -> str:
+    """Lijst waartoe een groep hoort; groepen van vóór de lijsten horen bij de portfolio server."""
+    return group.get("list") or PORTFOLIO_LIST
+
+
+def import_from_tradingview(data: dict[str, Any] | None = None, path: Path | None = None) -> list[dict[str, Any]]:
+    """Elke TradingView-watchlist wordt een lijst; de ###secties erin worden groepen.
+
+    Bron: de export van de portfolio server ({lijsten: [{naam, kleur, symbolen}]}) of hetzelfde formaat als data.
+    """
+    if data is None:
+        path = path or TV_WATCHLIST_FILE
+        if not path.exists():
+            if path != TV_WATCHLIST_FILE or not TV_SNAPSHOT_FILE.exists():
+                raise FileNotFoundError(f"TradingView-export niet gevonden: {path}")
+            path = TV_SNAPSHOT_FILE
+        data = json.loads(path.read_text(encoding="utf-8"))
+    lists = data.get("lijsten") or data.get("watchlists") or []
+    # Actieve lijst eerst, dan de benoemde lijsten, dan de gekleurde vlaglijsten.
+    lists = sorted(lists, key=lambda x: (not x.get("actief", x.get("active", False)),
+                                         not (x.get("naam") or x.get("name"))))
+    groups: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for lst in lists:
+        syms = [x for x in lst.get("symbolen", lst.get("symbols", [])) if isinstance(x, str)]
+        color = lst.get("kleur") or lst.get("color")
+        name = (lst.get("naam") or lst.get("name") or "").strip() or f"Vlag {FLAG_COLORS.get(color, color or lst.get('id'))}"
+        while name in seen:
+            name += " (2)"
+        seen.add(name)
+        for g in parse_tradingview(",".join(syms), default_group=name.upper()):
+            if any(s["yahoo"] for s in g["symbols"]):  # secties met alleen indexen/rentes/futures overslaan
+                groups.append(g | {"list": TV_PREFIX + name})
+    return groups
+
+
+def replace_lists(groups: list[dict[str, Any]], new: list[dict[str, Any]], match) -> list[dict[str, Any]]:
+    """Vervangt de groepen waarvan de lijst voldoet aan `match` door `new`; andere lijsten blijven staan."""
+    return [g for g in groups if not match(list_name(g))] + new
 
 
 def load_watchlist() -> list[dict[str, Any]]:
@@ -193,7 +243,21 @@ def summarize(rank: dict[str, Any], prices) -> dict[str, Any]:
                                           "num_trades", "max_drawdown")}
         # "Hoeveel keer beter dan buy & hold": eindkapitaal strategie / eindkapitaal vasthouden.
         best_info["times_bh"] = (1 + best["total_return"]) / (1 + bh_ret) if bh_ret > -1 else None
+    # Plaats van buy & hold tussen alle strategieën (1 = niets doet beter dan gewoon vasthouden).
+    bh_rank = 1 + len([x for x in strategies if x["total_return"] > bh_ret])
+    profitable = sorted([x for x in strategies if x["total_return"] > 0], key=lambda x: -x["total_return"])
+    open_prof = [x for x in profitable if x["signal_open"]]
+    latest_prof = min(open_prof, key=lambda x: (x["bars_since_buy"], -x["total_return"])) if open_prof else None
     return {
+        "bh_rank": bh_rank,
+        "profitable_count": len(profitable),
+        "profitable": [{k: x[k] for k in ("strategy", "category_label", "total_return", "beats_buy_and_hold",
+                                          "signal_open", "bars_since_buy", "last_buy_signal", "sharpe", "max_drawdown")}
+                       for x in profitable[:12]],
+        "latest_buy_profitable": {k: latest_prof[k] for k in ("strategy", "last_buy_signal", "bars_since_buy",
+                                                              "total_return", "beats_buy_and_hold")}
+        if latest_prof else None,
+        "open_profitable": len(open_prof),
         "last_close": float(close.iloc[-1]),
         "change_pct": float(close.iloc[-1] / close.iloc[-2] - 1) if len(close) > 1 else 0.0,
         "last_date": close.index[-1].date().isoformat(),
@@ -214,11 +278,31 @@ def summarize(rank: dict[str, Any], prices) -> dict[str, Any]:
     }
 
 
-def scan_one(yahoo: str, start: str, fee_bps: float, source: str = "yahoo") -> dict[str, Any]:
-    """Draait in een apart proces: koersen ophalen, alle strategieën testen, samenvatten."""
-    prices = get_prices(yahoo, source, start, None, warmup=True)
-    rank = rank_strategies(prices, start, fee_bps=fee_bps)
-    return summarize(rank, prices[prices.index >= start])
+# Standaard testperiodes: tot vandaag vanaf 2015, 2020 en 2024.
+PERIODS = {"2015": "2015-01-01", "2020": "2020-01-01", "2024": "2024-01-01"}
+
+
+def scan_one(yahoo: str, periods: dict[str, str] | str, fee_bps: float, source: str = "yahoo") -> dict[str, Any]:
+    """Draait in een apart proces: koersen één keer ophalen, alle strategieën testen per periode, samenvatten.
+
+    Het resultaat bevat de samenvatting per periode onder "periods"; de eerste periode staat ook bovenaan
+    (zoals vroeger), zodat oudere code en pagina's blijven werken.
+    """
+    if isinstance(periods, str):
+        periods = {periods[:4]: periods}
+    first = min(periods.values())
+    prices = get_prices(yahoo, source, first, None, warmup=True)
+    out: dict[str, Any] = {"periods": {}}
+    for key, start in periods.items():
+        try:
+            rank = rank_strategies(prices, start, fee_bps=fee_bps)
+            out["periods"][key] = summarize(rank, prices[prices.index >= start]) | {"start": start}
+        except Exception as e:  # noqa: BLE001 - bv. geen koersen in deze periode
+            out["periods"][key] = {"error": str(e)[:200], "start": start}
+    ok = [v for v in out["periods"].values() if "error" not in v]
+    if not ok:
+        raise ValueError(next(iter(out["periods"].values()))["error"])
+    return ok[0] | out
 
 
 # --------------------------------------------------------------------------- achtergrond-scanner
@@ -238,7 +322,7 @@ class Scanner:
     def stop(self) -> None:
         self._stop = True
 
-    def start(self, symbols: list[str], start: str, fee_bps: float = 5.0, workers: int | None = None,
+    def start(self, symbols: list[str], start: dict[str, str] | str, fee_bps: float = 5.0, workers: int | None = None,
               source: str = "yahoo") -> bool:
         with self.lock:
             if self.state["running"]:
@@ -257,9 +341,10 @@ class Scanner:
                 self.state["errors"] += 1
             _save_scan(scan)
 
-    def _run(self, symbols: list[str], start: str, fee_bps: float, workers: int | None, source: str) -> None:
+    def _run(self, symbols: list[str], start: dict[str, str] | str, fee_bps: float, workers: int | None, source: str) -> None:
         scan = load_scan()
-        scan["settings"] = {"start": start, "fee_bps": fee_bps, "source": source}
+        periods = start if isinstance(start, dict) else {start[:4]: start}
+        scan["settings"] = {"start": min(periods.values()), "periods": periods, "fee_bps": fee_bps, "source": source}
         workers = workers or max(1, min(4, (os.cpu_count() or 2) - 1))
         try:
             with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn")) as pool:
@@ -293,7 +378,7 @@ def watchlist_view() -> dict[str, Any]:
     groups = load_watchlist()
     out = []
     for g in groups:
-        out.append({"name": g["name"], "symbols": [s | {"result": scan["results"].get(s["yahoo"]) if s.get("yahoo") else None}
+        out.append({"name": g["name"], "list": list_name(g), "symbols": [s | {"result": scan["results"].get(s["yahoo"]) if s.get("yahoo") else None}
                                                    for s in g["symbols"]]})
     return {"groups": out, "scan": SCANNER.status(), "settings": scan.get("settings"), "finished": scan.get("finished"),
             "generated": time.time()}

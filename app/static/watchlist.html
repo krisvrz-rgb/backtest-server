@@ -72,14 +72,17 @@
 <body>
 <header>
   <h1>Backtest Server</h1>
-  <a href="/">Backtest</a>
-  <a href="/watchlist" class="active">Watchlist</a>
+  <a href="/">Overzicht</a>
+  <a href="/tool">Backtest</a>
+  <a href="/watchlist" class="active">Watchlist-details</a>
   <a href="/docs">API-documentatie</a>
 </header>
 <main>
   <section class="panel">
     <div class="toolbar">
-      <div class="field"><label for="start">Backtest vanaf</label><input id="start" type="date" value="2021-01-01"></div>
+      <div class="field"><label for="list-filter">Lijst</label><select id="list-filter"></select></div>
+      <div class="field"><label for="start">Testperiode</label><select id="start">
+        <option value="2015">2015 – nu</option><option value="2020" selected>2020 – nu</option><option value="2024">2024 – nu</option></select></div>
       <div class="field"><label for="group-filter">Groep</label><select id="group-filter"><option value="">Alle groepen</option></select></div>
       <button class="primary" id="scan">Scan starten</button>
       <button id="stop" class="hidden">Stoppen</button>
@@ -95,7 +98,8 @@
         </select>
       </div>
       <button id="import-pf" title="Groepen GEZIN, KRISTOF, FREYA, CÉZANNE en WATCHLIST overnemen van de portfolio server">Portfolio server overnemen</button>
-      <button id="toggle-import">TradingView importeren</button>
+      <button id="import-tv" title="Alle TradingView-watchlists overnemen: Watchlist, M, Legacy en de gekleurde vlaglijsten">TradingView-lijsten overnemen</button>
+      <button id="toggle-import">Plakken</button>
     </div>
     <div class="status" id="status">Nog niet gescand.</div>
     <div class="import hidden" id="import">
@@ -139,6 +143,10 @@
 
 <script>
 const $ = id => document.getElementById(id);
+const PERIODS = { 2015: '2015-01-01', 2020: '2020-01-01', 2024: '2024-01-01' };
+const per = () => $('start').value, startDate = () => PERIODS[per()];
+// Resultaat voor de gekozen testperiode (oudere scans hebben alleen één periode).
+const res = s => !s.result ? null : s.result.error ? s.result : (s.result.periods ? s.result.periods[per()] || null : s.result);
 let data = null, sortKey = 'beat_count', sortAsc = false, collapsed = new Set(), poll = null;
 const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
 const pct = (v, sign) => v == null ? '–' : (sign && v > 0 ? '+' : '') + nl(v * 100, 1) + '%';
@@ -153,7 +161,7 @@ function ago(bars, days) {
 }
 
 function value(s, key) {
-  const r = s.result;
+  const r = res(s);
   if (key === 'tv') return s.tv;
   if (!r || r.error) return null;
   return { best_return: r.best?.total_return, times_bh: r.best?.times_bh, bh_return: r.buy_and_hold_return,
@@ -163,7 +171,7 @@ function value(s, key) {
 function passes(s) {
   const q = $('search').value.trim().toUpperCase();
   if (q && !s.tv.toUpperCase().includes(q) && !(s.yahoo || '').toUpperCase().includes(q)) return false;
-  const f = $('only-open').value, r = s.result;
+  const f = $('only-open').value, r = res(s);
   if (!f) return true;
   if (!r || r.error) return false;
   if (f === 'open') return !!r.latest_buy;
@@ -174,12 +182,12 @@ function passes(s) {
 }
 
 function row(s, group) {
-  const r = s.result, link = `/?symbol=${encodeURIComponent(s.yahoo || '')}&source=yahoo&start=${$('start').value}`;
+  const r = res(s), link = `/tool?symbol=${encodeURIComponent(s.yahoo || '')}&source=yahoo&start=${startDate()}`;
   const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
   const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.tv)}${s.yahoo && s.yahoo !== tvShort ? ' · ' + esc(s.yahoo) : ''}</small>`;
-  const del = `<button class="x" title="Verwijderen" data-del="${esc(s.tv)}" data-group="${esc(group)}">×</button>`;
+  const del = `<button class="x" title="Verwijderen" data-del="${esc(s.tv)}" data-group="${esc(group.name)}" data-list="${esc(group.list)}">×</button>`;
   if (!s.yahoo) return `<tr><td class="left">${sym}</td><td colspan="8" class="left desc">Geen koersdata (index, future of macro)</td><td>${del}</td></tr>`;
-  if (!r) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="8" class="left desc">Nog niet gescand</td><td>${del}</td></tr>`;
+  if (!r) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="8" class="left desc">Nog niet gescand${s.result ? ' voor deze periode' : ''}</td><td>${del}</td></tr>`;
   if (r.error) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="8" class="left error" title="${esc(r.error)}">Fout: ${esc(r.error.slice(0, 90))}</td><td>${del}</td></tr>`;
   const b = r.best, lb = r.latest_buy;
   const share = r.strategies ? r.beat_count / r.strategies : 0;
@@ -194,12 +202,12 @@ function row(s, group) {
     `<td class="${b && b.times_bh >= 1 ? 'up' : 'down'}">${b && b.times_bh != null ? nl(b.times_bh) + '×' : '–'}</td>` +
     `<td class="${cls(r.buy_and_hold_return)}">${pct(r.buy_and_hold_return, true)}</td>` +
     `<td class="left">${buy}</td><td>${r.open_signals}${r.recent_buys ? `<small>${r.recent_buys} nieuw</small>` : ''}</td>` +
-    `<td><a class="lnk" href="/?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${$('start').value}&view=rank" title="Ranglijst" onclick="event.stopPropagation()">ranglijst</a>${del}</td></tr>`;
+    `<td><a class="lnk" href="/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${startDate()}&view=rank" title="Ranglijst" onclick="event.stopPropagation()">ranglijst</a>${del}</td></tr>`;
 }
 
 function render() {
   if (!data) return;
-  const groups = data.groups.filter(g => !$('group-filter').value || g.name === $('group-filter').value);
+  const groups = data.groups.filter(g => g.list === $('list-filter').value && (!$('group-filter').value || g.name === $('group-filter').value));
   $('rows').innerHTML = groups.map(g => {
     const syms = g.symbols.filter(passes).sort((a, b) => {
       const va = value(a, sortKey), vb = value(b, sortKey);
@@ -209,10 +217,10 @@ function render() {
       const c = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
       return sortKey === 'bars_since_buy' || sortKey === 'tv' ? (sortAsc ? -c : c) : (sortAsc ? c : -c);
     });
-    const open = !collapsed.has(g.name);
-    return `<tr class="group" data-group="${esc(g.name)}"><td colspan="10"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
+    const key = g.list + '/' + g.name, open = !collapsed.has(key);
+    return `<tr class="group" data-group="${esc(key)}"><td colspan="10"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
       `<span class="count">${syms.length}${syms.length !== g.symbols.length ? ' / ' + g.symbols.length : ''}</span></td></tr>` +
-      (open ? syms.map(s => row(s, g.name)).join('') : '');
+      (open ? syms.map(s => row(s, g)).join('') : '');
   }).join('');
   document.querySelectorAll('th[data-sort]').forEach(th => {
     th.classList.toggle('sorted', th.dataset.sort === sortKey);
@@ -223,20 +231,31 @@ function render() {
 function renderStatus() {
   const st = data.scan, s = data.settings;
   $('scan').disabled = st.running; $('stop').classList.toggle('hidden', !st.running);
-  const total = data.groups.reduce((n, g) => n + g.symbols.length, 0);
-  const scanned = data.groups.reduce((n, g) => n + g.symbols.filter(x => x.result && !x.result.error).length, 0);
-  let txt = `${total} tickers in ${data.groups.length} groepen · ${scanned} gescand`;
+  const lg = data.groups.filter(g => g.list === $('list-filter').value);
+  const total = lg.reduce((n, g) => n + g.symbols.length, 0);
+  const scanned = lg.reduce((n, g) => n + g.symbols.filter(x => res(x) && !res(x).error).length, 0);
+  let txt = `${total} tickers in ${lg.length} groepen · ${scanned} gescand voor ${per()} – nu`;
   if (st.running) txt = `Scannen: ${st.done}/${st.total}` + (st.errors ? ` · ${st.errors} fouten` : '') + (st.current ? ` · laatst ${st.current}` : '') + ' — ' + txt;
-  else if (data.finished) txt += ` · laatste scan ${data.finished.replace('T', ' ')}` + (s ? ` (vanaf ${s.start})` : '');
+  else if (data.finished) txt += ` · laatste scan ${data.finished.replace('T', ' ')}`;
   $('status').innerHTML = esc(txt) + (st.running ? `<div class="progress"><div style="width:${st.total ? 100 * st.done / st.total : 0}%"></div></div>` : '');
-  if (s?.start && !st.running && !$('start').dataset.touched) $('start').value = s.start;
+}
+
+function fillLists() {
+  const lists = [...new Set(data.groups.map(g => g.list))];
+  const ls = $('list-filter');
+  let cur = ls.value;
+  if (!cur) { try { cur = localStorage.getItem('wl-list') || ''; } catch {} }
+  ls.innerHTML = lists.map(l => `<option>${esc(l)}</option>`).join('');
+  ls.value = lists.includes(cur) ? cur : (lists.find(l => l.startsWith('TradingView · Watchlist')) || lists[0] || '');
+  const sel = $('group-filter'), g = sel.value;
+  const names = data.groups.filter(x => x.list === ls.value).map(x => x.name);
+  sel.innerHTML = '<option value="">Alle groepen</option>' + names.map(n => `<option>${esc(n)}</option>`).join('');
+  sel.value = names.includes(g) ? g : '';
 }
 
 async function load() {
   data = await (await fetch('/api/watchlist')).json();
-  const sel = $('group-filter'), cur = sel.value;
-  sel.innerHTML = '<option value="">Alle groepen</option>' + data.groups.map(g => `<option>${esc(g.name)}</option>`).join('');
-  sel.value = cur;
+  fillLists();
   renderStatus(); render();
   if (data.scan.running && !poll) poll = setInterval(load, 3000);
   if (!data.scan.running && poll) { clearInterval(poll); poll = null; }
@@ -250,13 +269,13 @@ async function api(path, opts = {}) {
 
 $('scan').addEventListener('click', async () => {
   try {
-    await api('/api/watchlist/scan', { method: 'POST', body: JSON.stringify({ start: $('start').value,
+    await api('/api/watchlist/scan', { method: 'POST', body: JSON.stringify({ lists: [$('list-filter').value],
       groups: $('group-filter').value ? [$('group-filter').value] : null }) });
     load();
   } catch (e) { $('status').textContent = 'Scan starten mislukt: ' + e.message; }
 });
 $('import-pf').addEventListener('click', async () => {
-  if (!confirm('De huidige watchlist vervangen door de groepen van de portfolio server?')) return;
+  if (!confirm('De lijst "Portfolio server" opnieuw overnemen (GEZIN, KRISTOF, FREYA, CÉZANNE, WATCHLIST)? TradingView-lijsten blijven staan.')) return;
   $('import-pf').disabled = true;
   try {
     const r = await api('/api/watchlist/import-portfolio', { method: 'POST', body: '{}' });
@@ -266,7 +285,22 @@ $('import-pf').addEventListener('click', async () => {
   finally { $('import-pf').disabled = false; }
 });
 $('stop').addEventListener('click', async () => { await api('/api/watchlist/scan/stop', { method: 'POST' }); load(); });
-$('start').addEventListener('change', () => $('start').dataset.touched = '1');
+$('import-tv').addEventListener('click', async () => {
+  $('import-tv').disabled = true;
+  try {
+    const r = await api('/api/watchlist/import-tradingview', { method: 'POST', body: '{}' });
+    $('status').textContent = `Overgenomen uit TradingView: ${r.lists.map(l => `${l.name.replace('TradingView · ', '')} ${l.count}`).join(' · ')}. Start nu een scan.`;
+    $('list-filter').value = '';
+    try { localStorage.setItem('wl-list', r.lists[0].name); } catch {}
+    await load();
+  } catch (e) { $('status').textContent = 'Overnemen mislukt: ' + e.message; }
+  finally { $('import-tv').disabled = false; }
+});
+$('list-filter').addEventListener('change', () => {
+  try { localStorage.setItem('wl-list', $('list-filter').value); } catch {}
+  $('group-filter').value = ''; fillLists(); renderStatus(); render();
+});
+$('start').addEventListener('change', () => { renderStatus(); render(); });
 $('toggle-import').addEventListener('click', () => $('import').classList.toggle('hidden'));
 $('do-import').addEventListener('click', async () => {
   try {
@@ -287,7 +321,7 @@ $('rows').addEventListener('click', async e => {
   if (del) {
     e.stopPropagation();
     if (!confirm(`${del.dataset.del} uit ${del.dataset.group} verwijderen?`)) return;
-    await api(`/api/watchlist/symbols?group=${encodeURIComponent(del.dataset.group)}&symbol=${encodeURIComponent(del.dataset.del)}`, { method: 'DELETE' });
+    await api(`/api/watchlist/symbols?group=${encodeURIComponent(del.dataset.group)}&symbol=${encodeURIComponent(del.dataset.del)}&list=${encodeURIComponent(del.dataset.list)}`, { method: 'DELETE' });
     return load();
   }
   const g = e.target.closest('tr.group');

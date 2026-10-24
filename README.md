@@ -11,13 +11,16 @@ python run.py
 ```
 
 De server draait standaard op poort **9000** (poort 8000 is al de portfolio server). Andere poort:
-`BACKTEST_PORT=9100 python run.py`. Open daarna http://localhost:9000 voor de startpagina (backtest draaien, grafiek, trades en Pine Script kopiëren) of http://localhost:9000/docs voor de API.
+`BACKTEST_PORT=9100 python run.py`. Open daarna http://localhost:9000 voor het overzicht van alle tickers (plaats van buy & hold, winstgevende strategieën en open buys voor 2015, 2020 en 2024 tot nu, met een knop Vernieuwen), http://localhost:9000/tool voor één backtest (grafiek met de indicatoren van de strategie, trades, ranglijst, optimaliseren, automatische keuze en Pine Script) of http://localhost:9000/docs voor de API.
 
 ## Endpoints
 
 | Methode | Pad | Wat |
 |---|---|---|
-| GET | `/strategies` | Alle strategieën (120) met categorie en standaardparameters |
+| GET | `/` | Overzicht: per ticker de drie testperiodes naast elkaar |
+| GET | `/tool` | Backtestpagina (één ticker) |
+| POST | `/adaptive` | Automatische strategiekeuze per markttoestand, getest met walk-forward |
+| GET | `/strategies` | Alle strategieën (128) met categorie en standaardparameters |
 | GET | `/categories` | Categorieën en aantal strategieën per categorie |
 | POST | `/rank` | Alle strategieën op één ticker testen, gerangschikt op rendement (of `sort_by`) |
 | POST | `/backtest` | Eén backtest: metrics, trades en equity curve |
@@ -26,7 +29,9 @@ De server draait standaard op poort **9000** (poort 8000 is al de portfolio serv
 | GET | `/watchlist` | Watchlist-pagina: alle tickers met backtestcijfers per groep |
 | GET | `/api/watchlist` | Watchlist met groepen en laatste scanresultaten |
 | POST | `/api/watchlist/import` | TradingView-export importeren (###SECTIE = groep) |
-| POST | `/api/watchlist/scan` | Scanner starten: alle strategieën op elke ticker (achtergrond, cache in data/scan.json) |
+| POST | `/api/watchlist/import-tradingview` | Alle TradingView-watchlists overnemen als lijsten (uit `TV_WATCHLIST_FILE`, anders de meegeleverde momentopname) |
+| POST | `/api/watchlist/import-portfolio` | Groepen van de portfolio server overnemen (lijst "Portfolio server") |
+| POST | `/api/watchlist/scan` | Scanner starten: alle strategieën op elke ticker, per testperiode (standaard 2015, 2020, 2024 tot nu) |
 | POST | `/pine` | Pine Script v6 voor een strategie, klaar voor de Pine Editor |
 | GET/POST | `/data`, `/data/{symbol}` | Koersdata (CSV) bekijken of uploaden |
 
@@ -63,8 +68,10 @@ blijven mogelijk).
 
 ## Strategieën
 
-120 strategieën in zes categorieën: trend volgen, mean reversion, momentum, breakout, volatiliteit en
-volume (plus buy & hold als benchmark). Elke strategie is een instap- en een uitstapregel, long-only,
+128 strategieën in zeven categorieën: vasthouden met trendfilter, trend volgen, mean reversion, momentum,
+breakout, volatiliteit en volume (plus buy & hold als benchmark). "Vasthouden met trendfilter" blijft zo goed als
+altijd belegd en stapt alleen uit in een duidelijke neerwaartse trend: de realistische manier om een sterk
+stijgend aandeel bij te houden. Elke strategie is een instap- en een uitstapregel, long-only,
 met instelbare parameters. Dezelfde regels worden in Python uitgerekend én naar Pine Script vertaald.
 
 Voor de startdatum laadt de server ~1,5 jaar extra koersdata om indicatoren op te warmen, net zoals

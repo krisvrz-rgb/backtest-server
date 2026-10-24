@@ -16,6 +16,7 @@ from .dsl import (
 )
 
 CATEGORIES = {
+    "trend_hold": "Vasthouden met trendfilter",
     "trend": "Trend volgen",
     "mean_reversion": "Mean reversion",
     "momentum": "Momentum",
@@ -429,3 +430,51 @@ add("mfi_rsi_combo", "volume", "Koop als zowel MFI als RSI oversold zijn (< 30),
 
 add("hl2_vwma_trend", "volume", "Long als de VWMA 20 van de middenkoers stijgt en de koers erboven staat.", {"length": 20},
     lambda p: ((CLOSE > VWMA(HL2, p.length)) & (VWMA(HL2, p.length) > VWMA(HL2, p.length)[1]), CLOSE < VWMA(HL2, p.length)))
+
+# ============================================================================ vasthouden met trendfilter
+# Zo goed als altijd belegd, zoals buy & hold, en alleen eruit in een duidelijke neerwaartse trend. In een
+# sterk stijgend aandeel laten gewone strategieën te veel liggen omdat ze vaak cash staan; deze niet.
+
+add("hold_above_sma_buffer", "trend_hold",
+    "Vasthouden zolang de koers boven de SMA 200 staat; pas verkopen als ze er 3% onder zakt (minder valse signalen).",
+    {"length": 200, "buffer": 3.0},
+    lambda p: (CLOSE > SMA(CLOSE, p.length), CLOSE < SMA(CLOSE, p.length) * (1 - p.buffer / 100)))
+
+add("hold_sma_confirm", "trend_hold",
+    "Vasthouden; pas verkopen als de koers 5 dagen op rij onder de SMA 200 sluit, terugkopen erboven.",
+    {"length": 200, "days": 5},
+    lambda p: (CLOSE > SMA(CLOSE, p.length), Highest(CLOSE - SMA(CLOSE, p.length), p.days) < 0))
+
+add("hold_death_cross_exit", "trend_hold",
+    "Vasthouden boven de EMA 200; alleen verkopen bij een death cross (EMA 50 < EMA 200) én koers onder de EMA 200.",
+    {"fast": 50, "slow": 200},
+    lambda p: (CLOSE > EMA(CLOSE, p.slow), (EMA(CLOSE, p.fast) < EMA(CLOSE, p.slow)) & (CLOSE < EMA(CLOSE, p.slow))))
+
+add("hold_drawdown_stop", "trend_hold",
+    "Vasthouden; verkopen als de koers 20% onder de top van het jaar staat én onder de SMA 200, terugkopen boven de SMA 50.",
+    {"drop": 20.0, "lookback": 252, "trend_len": 200, "reentry": 50},
+    lambda p: (CLOSE > SMA(CLOSE, p.reentry),
+               (CLOSE < Highest(CLOSE, p.lookback) * (1 - p.drop / 100)) & (CLOSE < SMA(CLOSE, p.trend_len))))
+
+add("hold_stage_analysis", "trend_hold",
+    "Weinstein-fase: vasthouden zolang de 30-weekse lijn (EMA 150) stijgt of de koers erboven staat.",
+    {"length": 150, "slope": 20},
+    lambda p: (CLOSE > EMA(CLOSE, p.length),
+               (EMA(CLOSE, p.length) < EMA(CLOSE, p.length)[p.slope]) & (CLOSE < EMA(CLOSE, p.length))))
+
+add("hold_supertrend_slow", "trend_hold",
+    "Trage Supertrend (ATR 20, factor 5): blijft lang in de trend en stapt alleen uit bij een grote ommekeer.",
+    {"atr_len": 20, "factor": 5.0},
+    lambda p: (Supertrend(p.factor, p.atr_len, "dir") < 0, Supertrend(p.factor, p.atr_len, "dir") > 0))
+
+add("hold_crash_filter", "trend_hold",
+    "Vasthouden; alleen verkopen in paniek: koers onder de SMA 100 terwijl de dagelijkse beweeglijkheid (ATR) boven 5% ligt.",
+    {"length": 100, "atr_len": 20, "vol_level": 5.0, "reentry": 50},
+    lambda p: (CLOSE > SMA(CLOSE, p.reentry),
+               (CLOSE < SMA(CLOSE, p.length)) & (ATR(p.atr_len) / CLOSE * 100 > p.vol_level)))
+
+add("hold_dual_ma_buffer", "trend_hold",
+    "Vasthouden zolang SMA 50 boven SMA 200 staat of de koers boven de SMA 200; uit als beide wegvallen met 2% marge.",
+    {"fast": 50, "slow": 200, "buffer": 2.0},
+    lambda p: ((SMA(CLOSE, p.fast) > SMA(CLOSE, p.slow)) | (CLOSE > SMA(CLOSE, p.slow)),
+               (SMA(CLOSE, p.fast) < SMA(CLOSE, p.slow)) & (CLOSE < SMA(CLOSE, p.slow) * (1 - p.buffer / 100))))

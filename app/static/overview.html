@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overzicht · Backtest Server</title>
+<style>
+  :root {
+    --bg: #0d0f13; --panel: #151820; --panel-2: #1b1f29; --text: #e6e8eb; --muted: #8b93a1; --border: #262b36;
+    --accent: #3b82f6; --up: #22c55e; --down: #ef4444; --warn: #f59e0b;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f7f8fa; --text: #1b1f24; --muted: #6b7280; --border: #e3e6ea;
+      --accent: #2563eb; --up: #16a34a; --down: #dc2626; --warn: #d97706;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; display: flex; align-items: baseline; gap: 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header a { color: var(--muted); font-size: 13px; }
+  header a.active { color: var(--text); font-weight: 600; text-decoration: none; }
+  main { padding: 16px 20px 40px; max-width: 1600px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 700px) { main { padding: 12px 16px 40px; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; padding: 12px 14px; }
+  .toolbar .field { display: grid; gap: 4px; }
+  label { font-size: 12px; color: var(--muted); }
+  input, select, textarea { padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-2);
+                            color: var(--text); font: inherit; min-width: 0; }
+  textarea { width: 100%; min-height: 110px; font-family: ui-monospace, monospace; font-size: 12px; }
+  button { font: inherit; border-radius: 5px; padding: 7px 12px; cursor: pointer; border: 1px solid var(--border);
+           background: var(--panel-2); color: var(--text); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .grow { flex: 1; }
+  .progress { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .progress div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+  .status { font-size: 12px; color: var(--muted); padding: 0 14px 12px; }
+  .hidden { display: none !important; }
+  .import { padding: 12px 14px; display: grid; gap: 8px; border-top: 1px solid var(--border); }
+  .desc { font-size: 12px; color: var(--muted); }
+  .error { color: var(--down); }
+
+  .scroll { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align: right; }
+  th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--panel); cursor: pointer; user-select: none; }
+  th.left, td.left { text-align: left; }
+  th.sorted::after { content: " ↓"; color: var(--accent); }
+  th.sorted.asc::after { content: " ↑"; }
+  tr.group td { background: var(--panel-2); font-weight: 600; cursor: pointer; text-align: left; letter-spacing: .03em; }
+  tr.group td .count { float: right; color: var(--muted); font-weight: 400; }
+  tr.group td .caret { display: inline-block; width: 14px; color: var(--muted); }
+  tr.row { cursor: pointer; }
+  tr.row:hover td { background: var(--panel-2); }
+  td .sym { font-weight: 600; }
+  td small { display: block; color: var(--muted); font-size: 11px; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .badge { font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; color: var(--muted); }
+  .badge.open { color: var(--up); border-color: var(--up); font-weight: 600; }
+  .badge.new { color: #fff; background: var(--up); border-color: var(--up); font-weight: 600; }
+  .bar { display: inline-block; width: 60px; height: 6px; background: var(--panel-2); border-radius: 3px; vertical-align: middle; margin-left: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--up); }
+  .warn { color: var(--warn); }
+  .x { border: none; background: none; color: var(--muted); padding: 2px 6px; }
+  .x:hover { color: var(--down); }
+  a.lnk { color: var(--accent); text-decoration: none; font-size: 12px; margin-left: 6px; }
+
+  .pcell b { font-size: 13px; }
+  .pcell .rank1 { color: var(--warn); }
+  td.pcell { border-left: 1px solid var(--border); }
+  th.pgroup { text-align: center; border-left: 1px solid var(--border); cursor: default; }
+  .strats { white-space: normal; min-width: 240px; max-width: 420px; }
+  .chip { display: inline-block; font-size: 11px; border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; margin: 1px 2px 1px 0; color: var(--text); text-decoration: none; }
+  .chip:hover { border-color: var(--accent); }
+  .chip.beat { border-color: var(--up); }
+  .chip.open::before { content: "● "; color: var(--up); }
+  tr.detail td { background: var(--panel-2); white-space: normal; text-align: left; }
+  .dgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; padding: 6px 2px; }
+  .dgrid h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .dgrid table { font-size: 12px; }
+  .dgrid td { padding: 3px 6px; border-bottom: 1px solid var(--border); }
+  .dgrid a { color: var(--text); text-decoration: none; }
+  .dgrid a:hover { color: var(--accent); }
+  .legend { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Backtest Server</h1>
+  <a href="/" class="active">Overzicht</a>
+  <a href="/tool">Backtest</a>
+  <a href="/watchlist">Watchlist-details</a>
+  <a href="/docs">API-documentatie</a>
+</header>
+<main>
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label for="list">Lijst</label><select id="list"></select></div>
+      <div class="field"><label for="group">Groep</label><select id="group"><option value="">Alle groepen</option></select></div>
+      <div class="field"><label for="focus">Strategieën tonen voor</label><select id="focus">
+        <option value="2015">2015 – nu</option><option value="2020" selected>2020 – nu</option><option value="2024">2024 – nu</option></select></div>
+      <button class="primary" id="refresh" title="Alle strategieën opnieuw testen op elke ticker van deze lijst, voor de drie periodes">Vernieuwen</button>
+      <button id="stop" class="hidden">Stoppen</button>
+      <div class="grow"></div>
+      <div class="field"><label for="search">Zoeken</label><input id="search" placeholder="ticker…"></div>
+      <div class="field"><label for="filter">Filter</label>
+        <select id="filter">
+          <option value="">Alles tonen</option>
+          <option value="open">Open buy bij een winstgevende strategie</option>
+          <option value="new">Buy ≤ 5 dagen geleden</option>
+          <option value="beaten">Buy &amp; hold is niet de beste</option>
+        </select>
+      </div>
+    </div>
+    <div class="status" id="status">Laden…</div>
+  </section>
+
+  <section class="panel">
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="left" rowspan="2" data-sort="tv">Symbool</th>
+            <th rowspan="2" data-sort="change_pct">Koers</th>
+            <th class="pgroup" colspan="3">Plaats van buy &amp; hold tussen alle strategieën</th>
+            <th class="left" rowspan="2" data-sort="profitable_count">Winstgevende strategieën</th>
+            <th class="left" rowspan="2" data-sort="bars_since_buy">Laatste buy (open)</th>
+          </tr>
+          <tr>
+            <th data-sort="p2015" class="pcell">2015 – nu</th>
+            <th data-sort="p2020" class="pcell">2020 – nu</th>
+            <th data-sort="p2024" class="pcell">2024 – nu</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+  <div class="desc"><b>Plaats van buy &amp; hold</b>: #1 betekent dat geen enkele strategie meer opbracht dan het aandeel gewoon vasthouden;
+    #15 betekent dat 14 strategieën het beter deden. Daaronder het rendement van vasthouden en hoeveel strategieën winst maakten.
+    <b>Winstgevende strategieën</b>: de beste strategieën met winst in de gekozen periode (groene rand = ook beter dan buy &amp; hold,
+    ● = staat nu in een positie). <b>Laatste buy</b>: het meest recente koopsignaal van een winstgevende strategie dat nog niet verkocht is.
+    Klik op een rij voor alle winstgevende strategieën per periode.</div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const PERIODS = { 2015: '2015-01-01', 2020: '2020-01-01', 2024: '2024-01-01' };
+const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (v, sign) => v == null ? '–' : (sign && v > 0 ? '+' : '') + nl(v * 100, Math.abs(v) >= 10 ? 0 : 1) + '%';
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let data = null, sortKey = 'tv', sortAsc = true, collapsed = new Set(), expanded = new Set(), poll = null;
+try { collapsed = new Set(JSON.parse(localStorage.getItem('ov-collapsed') || '[]')); } catch {}
+
+const per = (s, p) => {
+  const r = s.result;
+  if (!r || r.error) return null;
+  if (r.periods) return r.periods[p] && !r.periods[p].error ? r.periods[p] : null;
+  return null;
+};
+function ago(bars) {
+  if (bars === 0) return 'vandaag';
+  if (bars === 1) return 'gisteren';
+  return bars < 10 ? `${bars} dagen geleden` : bars < 45 ? `${Math.round(bars / 5)} weken geleden` : `${Math.round(bars / 21)} mnd geleden`;
+}
+const toolLink = (s, p, strategy, view) => `/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${PERIODS[p]}` +
+  (strategy ? `&strategy=${encodeURIComponent(strategy)}` : '') + (view ? `&view=${view}` : '');
+
+function value(s, key) {
+  if (key === 'tv') return s.tv;
+  const f = $('focus').value, r = per(s, f);
+  if (key.startsWith('p20')) { const x = per(s, key.slice(1)); return x ? x.bh_rank : null; }
+  if (!r) return null;
+  if (key === 'bars_since_buy') return r.latest_buy_profitable ? r.latest_buy_profitable.bars_since_buy : null;
+  return r[key] ?? null;
+}
+
+function passes(s) {
+  const q = $('search').value.trim().toUpperCase();
+  if (q && !s.tv.toUpperCase().includes(q) && !(s.yahoo || '').toUpperCase().includes(q)) return false;
+  const f = $('filter').value, r = per(s, $('focus').value);
+  if (!f) return true;
+  if (!r) return false;
+  if (f === 'open') return !!r.latest_buy_profitable;
+  if (f === 'new') return !!r.latest_buy_profitable && r.latest_buy_profitable.bars_since_buy <= 5;
+  if (f === 'beaten') return r.bh_rank > 1;
+  return true;
+}
+
+function pcell(s, p) {
+  const r = per(s, p);
+  if (!r) return `<td class="pcell desc">${s.result?.periods?.[p]?.error ? 'geen data' : '–'}</td>`;
+  const expected = (Date.now() - Date.parse(PERIODS[p])) / 864e5;
+  const short = r.history_days != null && r.history_days < expected * 0.8;
+  return `<td class="pcell" title="${r.strategies} strategieën getest vanaf ${r.period?.start || PERIODS[p]}">` +
+    `<b class="${r.bh_rank === 1 ? 'rank1' : ''}">#${r.bh_rank}</b><span class="desc"> / ${r.strategies + 1}</span> ` +
+    `<span class="${cls(r.buy_and_hold_return)}">${pct(r.buy_and_hold_return, true)}</span>` +
+    `<small>${r.profitable_count} winstgevend · ${r.beat_count} beter${short ? ' · <span class="warn">kortere historie</span>' : ''}</small></td>`;
+}
+
+function row(s, g) {
+  const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
+  const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.name || s.tv)}</small>`;
+  if (!s.yahoo) return `<tr><td class="left">${sym}</td><td colspan="6" class="left desc">Geen koersdata (index, future of macro)</td></tr>`;
+  const any = ['2015', '2020', '2024'].map(p => per(s, p)).find(Boolean);
+  if (!s.result || s.result.error || !any) {
+    const msg = s.result?.error ? `<span class="error">Fout: ${esc(s.result.error.slice(0, 90))}</span>` : s.result ? 'Opnieuw vernieuwen voor de drie periodes' : 'Nog niet vernieuwd';
+    return `<tr><td class="left">${sym}</td><td colspan="6" class="left desc">${msg}</td></tr>`;
+  }
+  const f = $('focus').value, r = per(s, f), key = g.list + '/' + g.name + '/' + s.tv;
+  const strats = r ? (r.profitable.length ? r.profitable.slice(0, 4).map(x =>
+      `<a class="chip ${x.beats_buy_and_hold ? 'beat' : ''} ${x.signal_open ? 'open' : ''}" href="${toolLink(s, f, x.strategy)}" onclick="event.stopPropagation()" ` +
+      `title="${esc(x.category_label)} · Sharpe ${nl(x.sharpe)} · max DD ${pct(x.max_drawdown)}">${esc(x.strategy)} ${pct(x.total_return, true)}</a>`).join('') +
+      (r.profitable_count > 4 ? `<span class="desc"> +${r.profitable_count - 4}</span>` : '')
+      : '<span class="desc">geen enkele strategie maakte winst</span>') : '<span class="desc">–</span>';
+  const lb = r?.latest_buy_profitable;
+  const buy = lb ? `<span class="badge ${lb.bars_since_buy <= 5 ? 'new' : 'open'}">OPEN</span> ${esc(lb.strategy)}` +
+      `<small>${lb.last_buy_signal} · ${ago(lb.bars_since_buy)} · strategie ${pct(lb.total_return, true)}</small>`
+    : '<span class="desc">geen open buy</span>';
+  return `<tr class="row" data-key="${esc(key)}"><td class="left">${sym}</td>` +
+    `<td>${nl(any.last_close)}<small class="${cls(any.change_pct)}">${pct(any.change_pct, true)}</small></td>` +
+    pcell(s, '2015') + pcell(s, '2020') + pcell(s, '2024') +
+    `<td class="left strats">${strats}</td><td class="left">${buy}</td></tr>` +
+    (expanded.has(key) ? detail(s) : '');
+}
+
+function detail(s) {
+  const cols = ['2015', '2020', '2024'].map(p => {
+    const r = per(s, p);
+    if (!r) return `<div><h4>${p} – nu</h4><span class="desc">geen resultaat</span></div>`;
+    const rows = r.profitable.map(x => `<tr><td><a href="${toolLink(s, p, x.strategy)}">${esc(x.strategy)}</a>` +
+      (x.signal_open ? ' <span class="badge open">OPEN</span>' : '') + `</td><td class="up">${pct(x.total_return, true)}</td>` +
+      `<td>${x.beats_buy_and_hold ? '<span class="up">beter dan B&amp;H</span>' : ''}</td></tr>`).join('');
+    return `<div><h4>${p} – nu · buy &amp; hold ${pct(r.buy_and_hold_return, true)} op plaats ${r.bh_rank}</h4>` +
+      (rows ? `<table>${rows}</table>` : '<span class="desc">geen winstgevende strategie</span>') +
+      (r.profitable_count > r.profitable.length ? `<div class="desc">+${r.profitable_count - r.profitable.length} andere winstgevend</div>` : '') +
+      `<div style="margin-top:6px"><a class="lnk" style="margin:0" href="${toolLink(s, p, null, 'rank')}">volledige ranglijst</a>` +
+      `<a class="lnk" href="${toolLink(s, p, null, 'auto')}">automatische keuze</a></div></div>`;
+  }).join('');
+  return `<tr class="detail"><td colspan="7"><div class="dgrid">${cols}</div></td></tr>`;
+}
+
+function render() {
+  if (!data) return;
+  const groups = data.groups.filter(g => g.list === $('list').value && (!$('group').value || g.name === $('group').value));
+  $('rows').innerHTML = groups.map(g => {
+    const syms = g.symbols.filter(passes).sort((a, b) => {
+      const va = value(a, sortKey), vb = value(b, sortKey);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      const c = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+      return sortAsc ? c : -c;
+    });
+    const gk = g.list + '/' + g.name, open = !collapsed.has(gk);
+    return `<tr class="group" data-group="${esc(gk)}"><td colspan="7"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
+      `<span class="count">${syms.length}${syms.length !== g.symbols.length ? ' / ' + g.symbols.length : ''}</span></td></tr>` +
+      (open ? syms.map(s => row(s, g)).join('') : '');
+  }).join('') || '<tr><td colspan="7" class="left desc">Deze lijst is leeg. Neem lijsten over via <a href="/watchlist">Watchlist-details</a>.</td></tr>';
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === sortKey);
+    th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
+  });
+}
+
+function renderStatus() {
+  const st = data.scan;
+  $('refresh').disabled = st.running; $('stop').classList.toggle('hidden', !st.running);
+  const lg = data.groups.filter(g => g.list === $('list').value);
+  const total = lg.reduce((n, g) => n + g.symbols.filter(s => s.yahoo).length, 0);
+  const done = lg.reduce((n, g) => n + g.symbols.filter(s => s.result?.periods).length, 0);
+  let txt = `${total} tickers met koersdata · ${done} met resultaten voor 2015, 2020 en 2024`;
+  if (st.running) txt = `Vernieuwen: ${st.done}/${st.total}` + (st.errors ? ` · ${st.errors} fouten` : '') + (st.current ? ` · laatst ${st.current}` : '') + ' — ' + txt;
+  else if (data.finished) txt += ` · laatst vernieuwd ${data.finished.replace('T', ' ')}`;
+  $('status').innerHTML = esc(txt) + (st.running ? `<div class="progress"><div style="width:${st.total ? 100 * st.done / st.total : 0}%"></div></div>` : '');
+}
+
+function fillLists() {
+  const lists = [...new Set(data.groups.map(g => g.list))];
+  let cur = $('list').value;
+  if (!cur) { try { cur = localStorage.getItem('ov-list') || ''; } catch {} }
+  $('list').innerHTML = lists.map(l => `<option>${esc(l)}</option>`).join('');
+  $('list').value = lists.includes(cur) ? cur : (lists.find(l => l.startsWith('TradingView · Watchlist')) || lists[0] || '');
+  const g = $('group').value, names = data.groups.filter(x => x.list === $('list').value).map(x => x.name);
+  $('group').innerHTML = '<option value="">Alle groepen</option>' + names.map(n => `<option>${esc(n)}</option>`).join('');
+  $('group').value = names.includes(g) ? g : '';
+}
+
+async function load() {
+  data = await (await fetch('/api/watchlist')).json();
+  fillLists(); renderStatus(); render();
+  if (data.scan.running && !poll) poll = setInterval(load, 3000);
+  if (!data.scan.running && poll) { clearInterval(poll); poll = null; }
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail; } catch {} throw new Error(m); }
+  return r.json();
+}
+
+$('refresh').addEventListener('click', async () => {
+  try {
+    await api('/api/watchlist/scan', { method: 'POST', body: JSON.stringify({ lists: [$('list').value],
+      groups: $('group').value ? [$('group').value] : null }) });
+    load();
+  } catch (e) { $('status').textContent = 'Vernieuwen mislukt: ' + e.message; }
+});
+$('stop').addEventListener('click', async () => { await api('/api/watchlist/scan/stop', { method: 'POST' }); load(); });
+$('list').addEventListener('change', () => {
+  try { localStorage.setItem('ov-list', $('list').value); } catch {}
+  $('group').value = ''; fillLists(); renderStatus(); render();
+});
+['search', 'filter', 'group', 'focus'].forEach(id => $(id).addEventListener('input', render));
+document.querySelector('thead').addEventListener('click', e => {
+  const th = e.target.closest('th[data-sort]'); if (!th) return;
+  if (sortKey === th.dataset.sort) sortAsc = !sortAsc;
+  else { sortKey = th.dataset.sort; sortAsc = ['tv', 'bars_since_buy'].includes(sortKey) || sortKey.startsWith('p20'); }
+  render();
+});
+$('rows').addEventListener('click', e => {
+  if (e.target.closest('a')) return;
+  const g = e.target.closest('tr.group');
+  if (g) {
+    collapsed.has(g.dataset.group) ? collapsed.delete(g.dataset.group) : collapsed.add(g.dataset.group);
+    try { localStorage.setItem('ov-collapsed', JSON.stringify([...collapsed])); } catch {}
+    return render();
+  }
+  const tr = e.target.closest('tr.row');
+  if (tr) { expanded.has(tr.dataset.key) ? expanded.delete(tr.dataset.key) : expanded.add(tr.dataset.key); render(); }
+});
+
+load().catch(e => $('status').textContent = 'Kon overzicht niet laden: ' + e.message);
+</script>
+</body>
+</html>

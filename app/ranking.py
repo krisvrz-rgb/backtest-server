@@ -6,7 +6,7 @@ import pandas as pd
 from .engine import run_backtest
 from .strategies import CATEGORIES, STRATEGIES
 
-RANK_FIELDS = ("total_return", "cagr", "net_profit", "sharpe", "max_drawdown", "percent_profitable", "num_trades",
+RANK_FIELDS = ("total_return", "cagr", "net_profit", "sharpe", "calmar", "max_drawdown", "percent_profitable", "num_trades",
                "closed_trades", "winning_trades", "profit_factor", "exposure", "last_buy_signal", "last_sell_signal",
                "signal_open", "bars_since_buy", "days_since_buy")
 
@@ -28,6 +28,9 @@ def rank_strategies(prices: pd.DataFrame, start: str | None, initial_capital: fl
             "description": cls.description, "params": dict(cls.params),
             **{k: m[k] for k in RANK_FIELDS},
             "beats_buy_and_hold": m["total_return"] > res.benchmark_metrics["total_return"],
+            # Beter op risico: hogere Sharpe én minder diepe drawdown dan gewoon vasthouden.
+            "beats_bh_risk": m["sharpe"] > res.benchmark_metrics["sharpe"]
+            and m["max_drawdown"] > res.benchmark_metrics["max_drawdown"],
             "period": {"start": res.equity.index[0].date().isoformat(), "end": res.equity.index[-1].date().isoformat()},
         })
     # Hoogste eerst; bij max drawdown de minst diepe (dichtst bij 0) eerst.

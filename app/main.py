@@ -12,12 +12,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .data import DATA_DIR, _normalize, get_prices
+from .adaptive import walk_forward
 from .engine import compute_metrics, monthly_returns, run_backtest
 from .optimize import OBJECTIVES, optimize
 from .pine import to_pine
 from .ranking import rank_strategies
-from .watchlist import PORTFOLIO_URL, SCANNER, import_from_portfolio, load_watchlist, parse_tradingview, save_watchlist, tv_to_yahoo, watchlist_view
+from .watchlist import (PERIODS, PORTFOLIO_LIST, PORTFOLIO_URL, SCANNER, TV_PREFIX, import_from_portfolio, import_from_tradingview,
+                        list_name, load_watchlist, parse_tradingview, replace_lists, save_watchlist, tv_to_yahoo,
+                        watchlist_view)
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
+from .strategies.plot import indicators
 
 app = FastAPI(title="Backtest Server", version="0.1.0",
               description="Backtest handelsstrategieën op aandelen en exporteer ze naar TradingView Pine Script.")
@@ -82,6 +86,7 @@ def _run(req: BacktestRequest, prices: pd.DataFrame | None = None) -> dict:
         raise HTTPException(400, str(e))
     res = run_backtest(prices, strat, req.initial_capital, req.fee_bps, req.slippage_bps, req.allow_short,
                        start=req.start)
+    full_prices = prices
     prices = prices.loc[res.equity.index]
     market = _market_curve(req, prices.index)
     out = {
@@ -102,6 +107,11 @@ def _run(req: BacktestRequest, prices: pd.DataFrame | None = None) -> dict:
         out["prices"] = [{"date": d.date().isoformat(), "open": round(r.open, 4), "high": round(r.high, 4),
                           "low": round(r.low, 4), "close": round(r.close, 4), "volume": float(r.volume)}
                          for d, r in zip(prices.index, prices.itertuples())]
+        try:
+            entry, exit_ = strat.rules()
+            out["indicators"] = indicators(entry, exit_, full_prices, prices.index)
+        except Exception:  # tekenen mag een backtest nooit doen mislukken
+            out["indicators"] = {"overlays": [], "panes": []}
     return out
 
 
@@ -111,7 +121,12 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/", include_in_schema=False)
-def index():
+def overview_page():
+    return FileResponse(STATIC_DIR / "overview.html")
+
+
+@app.get("/tool", include_in_schema=False)
+def tool_page():
     return FileResponse(INDEX_HTML)
 
 
@@ -175,6 +190,33 @@ def compare(req: CompareRequest):
             rows.append({"symbol": r["symbol"], "strategy": r["strategy"], "params": r["params"], **r["metrics"]})
     rows.sort(key=lambda x: x["sharpe"], reverse=True)
     return rows
+
+
+class AdaptiveRequest(BaseModel):
+    symbol: str = Field(..., examples=["AMZN"])
+    source: Source = "csv"
+    start: str = Field("2020-01-01", description="Vanaf hier telt het resultaat; de leerperiode ligt ervoor")
+    end: str | None = None
+    initial_capital: float = 10_000.0
+    fee_bps: float = 5.0
+    train_years: float = Field(3.0, ge=1, le=10, description="Lengte van de leerperiode vóór elk beslismoment")
+    step: Literal["MS", "QS", "YS"] = Field("QS", description="Opnieuw kiezen per maand, kwartaal of jaar")
+    objective: Literal["total_return", "sharpe"] = "total_return"
+    by_regime: bool = Field(True, description="Alleen dagen met dezelfde markttoestand gebruiken om te kiezen")
+    categories: list[str] | None = None
+
+
+@app.post("/adaptive")
+def adaptive_endpoint(req: AdaptiveRequest):
+    """Automatische strategiekeuze per markttoestand, getest met walk-forward (geen kijken naar de uitslag)."""
+    first = (pd.Timestamp(req.start) - pd.Timedelta(days=int(req.train_years * 365.25))).date().isoformat()
+    prices = _load(req.symbol, req.source, first, req.end)
+    try:
+        out = walk_forward(prices, req.start, req.initial_capital, req.fee_bps, req.train_years, req.step,
+                           req.objective, req.by_regime, req.categories)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"symbol": req.symbol.upper(), **out}
 
 
 class OptimizeRequest(BaseModel):
@@ -253,10 +295,12 @@ class WatchlistImport(BaseModel):
 
 @app.post("/api/watchlist/import")
 def import_watchlist(req: WatchlistImport):
-    new = parse_tradingview(req.text, req.group)
-    if req.mode == "merge":
+    parsed = [g | {"list": TV_PREFIX + "Geplakt"} for g in parse_tradingview(req.text, req.group)]
+    if req.mode == "replace":
+        new = replace_lists(load_watchlist(), parsed, lambda name: name == TV_PREFIX + "Geplakt")
+    else:
         groups = load_watchlist()
-        for g in new:
+        for g in parsed:
             target = next((x for x in groups if x["name"] == g["name"]), None)
             if target is None:
                 groups.append(g)
@@ -265,8 +309,8 @@ def import_watchlist(req: WatchlistImport):
                 target["symbols"] += [s for s in g["symbols"] if s["tv"] not in known]
         new = groups
     save_watchlist(new)
-    return {"groups": len(new), "symbols": sum(len(g["symbols"]) for g in new),
-            "without_data": [s["tv"] for g in new for s in g["symbols"] if not s["yahoo"]]}
+    return {"groups": len(parsed), "symbols": sum(len(g["symbols"]) for g in parsed),
+            "without_data": [s["tv"] for g in parsed for s in g["symbols"] if not s["yahoo"]]}
 
 
 class PortfolioImport(BaseModel):
@@ -280,10 +324,31 @@ def import_portfolio(req: PortfolioImport):
         groups = import_from_portfolio(req.url.rstrip("/"))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Portfolio server niet bereikbaar of onverwacht antwoord: {e}")
-    save_watchlist(groups)
+    save_watchlist(replace_lists(load_watchlist(), groups, lambda name: name == PORTFOLIO_LIST))
     return {"groups": [{"name": g["name"], "count": len(g["symbols"])} for g in groups],
             "symbols": sum(len(g["symbols"]) for g in groups)}
 
+
+class TradingViewImport(BaseModel):
+    path: str | None = Field(None, description="Pad naar de TradingView-export; leeg = TV_WATCHLIST_FILE")
+    data: dict[str, Any] | None = Field(None, description="Of de export zelf: {lijsten: [{naam, kleur, symbolen}]}")
+
+
+@app.post("/api/watchlist/import-tradingview")
+def import_tradingview(req: TradingViewImport):
+    """Neem alle TradingView-watchlists over als lijsten (secties worden groepen)."""
+    try:
+        groups = import_from_tradingview(req.data, Path(req.path) if req.path else None)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Kon TradingView-watchlists niet lezen: {e}")
+    if not groups:
+        raise HTTPException(400, "Geen TradingView-lijsten met symbolen gevonden")
+    save_watchlist(replace_lists(load_watchlist(), groups, lambda name: name.startswith(TV_PREFIX)))
+    lists: dict[str, int] = {}
+    for g in groups:
+        lists[g["list"]] = lists.get(g["list"], 0) + len(g["symbols"])
+    return {"lists": [{"name": k, "count": v} for k, v in lists.items()], "groups": len(groups),
+            "without_data": [s["tv"] for g in groups for s in g["symbols"] if not s["yahoo"]]}
 
 class WatchlistSymbol(BaseModel):
     symbol: str = Field(..., examples=["NASDAQ:AAPL"])
@@ -305,19 +370,22 @@ def add_symbol(req: WatchlistSymbol):
 
 
 @app.delete("/api/watchlist/symbols")
-def remove_symbol(group: str, symbol: str):
+def remove_symbol(group: str, symbol: str, list: str | None = None):
     groups = load_watchlist()
     for g in groups:
-        if g["name"] == group:
+        if g["name"] == group and (list is None or list_name(g) == list):
             g["symbols"] = [s for s in g["symbols"] if s["tv"] != symbol]
     save_watchlist([g for g in groups if g["symbols"]])
     return {"ok": True}
 
 
 class ScanRequest(BaseModel):
-    start: str = Field("2021-01-01", description="Begin van de backtestperiode")
+    periods: dict[str, str] = Field(default_factory=lambda: dict(PERIODS),
+                                    description="Testperiodes: naam -> startdatum (einde = vandaag)")
+    start: str | None = Field(None, description="Eén startdatum in plaats van de periodes")
     fee_bps: float = 5.0
     groups: list[str] | None = Field(None, description="Alleen deze groepen; leeg = alles")
+    lists: list[str] | None = Field(None, description="Alleen deze lijsten (bv. 'TradingView · Watchlist')")
     symbols: list[str] | None = Field(None, description="Alleen deze Yahoo-tickers")
     source: Source = "yahoo"
 
@@ -326,11 +394,13 @@ class ScanRequest(BaseModel):
 def start_scan(req: ScanRequest):
     """Start de scanner op de achtergrond: alle strategieën op elke ticker."""
     syms = req.symbols or list(dict.fromkeys(
-        s["yahoo"] for g in load_watchlist() if not req.groups or g["name"] in req.groups
+        s["yahoo"] for g in load_watchlist()
+        if (not req.groups or g["name"] in req.groups) and (not req.lists or list_name(g) in req.lists)
         for s in g["symbols"] if s.get("yahoo")))
     if not syms:
         raise HTTPException(400, "Geen tickers om te scannen")
-    if not SCANNER.start(syms, req.start, req.fee_bps, source=req.source):
+    periods = {req.start[:4]: req.start} if req.start else req.periods
+    if not SCANNER.start(syms, periods, req.fee_bps, source=req.source):
         raise HTTPException(409, "Er loopt al een scan")
     return SCANNER.status()
 
