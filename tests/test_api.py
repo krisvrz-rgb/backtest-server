@@ -61,3 +61,20 @@ def test_upload_tradingview_csv(tmp_path, monkeypatch):
     r = client.post("/data/xyz", files={"file": ("x.csv", csv)})
     assert r.status_code == 200, r.text
     assert (tmp_path / "XYZ.csv").exists()
+
+
+def test_hyperliquid_parsing(monkeypatch):
+    import httpx
+
+    from app import data
+
+    candles = [{"t": 1704067200000 + i * 86_400_000, "o": "100", "h": "110", "l": "90", "c": str(100 + i), "v": "5"}
+               for i in range(10)]
+
+    class Resp:
+        def raise_for_status(self): ...
+        def json(self): return candles
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: Resp())
+    df = data.load_hyperliquid("BTC", "2024-01-01", "2024-01-10")
+    assert len(df) == 10 and df["close"].iloc[-1] == 109.0

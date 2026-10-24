@@ -1,4 +1,4 @@
-"""Koersdata ophalen: Yahoo Finance, lokale CSV-bestanden of synthetische testdata."""
+"""Koersdata ophalen: Yahoo Finance, IBKR, Hyperliquid, lokale CSV-bestanden of synthetische testdata."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,6 +40,61 @@ def load_yahoo(symbol: str, start: str | None, end: str | None) -> pd.DataFrame:
     return _normalize(df)
 
 
+def load_ibkr(symbol: str, start: str | None, end: str | None) -> pd.DataFrame:
+    """Dagkoersen via TWS of IB Gateway (moet lokaal draaien met de API aan).
+
+    Verbinding via omgevingsvariabelen IBKR_HOST (127.0.0.1), IBKR_PORT (7497 = TWS paper,
+    7496 = TWS live, 4002/4001 = Gateway) en IBKR_CLIENT_ID (17).
+    Symboolformaat: 'AAPL' (SMART/USD) of 'ASML:AEB:EUR' (ticker:exchange:valuta).
+    """
+    import os
+
+    from ib_async import IB, Stock, util
+
+    ticker, exchange, currency = (symbol.split(":") + ["SMART", "USD"])[:3] if ":" in symbol else (symbol, "SMART", "USD")
+    years = max(1, int(np.ceil((pd.Timestamp(end or pd.Timestamp.today()) - pd.Timestamp(start or "2015-01-01")).days / 365.25)))
+    ib = IB()
+    ib.connect(os.getenv("IBKR_HOST", "127.0.0.1"), int(os.getenv("IBKR_PORT", "7497")),
+               clientId=int(os.getenv("IBKR_CLIENT_ID", "17")), readonly=True, timeout=10)
+    try:
+        bars = ib.reqHistoricalData(Stock(ticker, exchange, currency), endDateTime="", durationStr=f"{years} Y",
+                                    barSizeSetting="1 day", whatToShow="ADJUSTED_LAST", useRTH=True)
+    finally:
+        ib.disconnect()
+    if not bars:
+        raise ValueError(f"Geen data van IBKR voor {symbol}")
+    return _normalize(util.df(bars).set_index("date"))
+
+
+HYPERLIQUID_URL = "https://api.hyperliquid.xyz/info"
+
+
+def load_hyperliquid(symbol: str, start: str | None, end: str | None) -> pd.DataFrame:
+    """Dagcandles van Hyperliquid (openbare API, geen account nodig). Symbool = coin, bv. 'BTC'."""
+    import httpx
+
+    start_ms = int(pd.Timestamp(start or "2023-01-01").timestamp() * 1000)
+    end_ms = int(pd.Timestamp(end or pd.Timestamp.today()).timestamp() * 1000)
+    rows: list[dict] = []
+    while start_ms < end_ms:  # max 5000 candles per call
+        resp = httpx.post(HYPERLIQUID_URL, timeout=20, json={"type": "candleSnapshot", "req": {
+            "coin": symbol, "interval": "1d", "startTime": start_ms, "endTime": end_ms}})
+        resp.raise_for_status()
+        batch = resp.json()
+        if not batch:
+            break
+        rows += batch
+        start_ms = batch[-1]["t"] + 1
+        if len(batch) < 5000:
+            break
+    if not rows:
+        raise ValueError(f"Geen data van Hyperliquid voor {symbol}")
+    df = pd.DataFrame(rows).drop_duplicates("t")
+    df = df.rename(columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"})
+    df.index = pd.to_datetime(df["t"], unit="ms")
+    return _normalize(df[COLUMNS].astype(float))
+
+
 def synthetic(symbol: str, start: str | None = None, end: str | None = None, seed: int | None = None) -> pd.DataFrame:
     """Geometrische Brownse beweging; handig om de server zonder internet te testen."""
     idx = pd.bdate_range(start or "2018-01-01", end or "2024-12-31")
@@ -60,6 +115,10 @@ def get_prices(symbol: str, source: str = "yahoo", start: str | None = None, end
         df = load_csv(symbol)
     elif source == "yahoo":
         df = load_yahoo(symbol, start, end)
+    elif source == "ibkr":
+        df = load_ibkr(symbol, start, end)
+    elif source == "hyperliquid":
+        df = load_hyperliquid(symbol, start, end)
     elif source == "synthetic":
         df = synthetic(symbol, start, end)
     else:

@@ -35,6 +35,10 @@ curl -X POST localhost:8000/backtest -H 'Content-Type: application/json' -d '{
 - `csv` (standaard): `data/<SYMBOOL>.csv`. Exporteer koersdata uit TradingView
   (grafiek > Export chart data) en upload met `POST /data/{symbol}`.
 - `yahoo`: haalt data op via yfinance.
+- `ibkr`: dagkoersen (dividend-gecorrigeerd) via TWS of IB Gateway op je eigen pc. Zet in TWS
+  *API > Settings > Enable ActiveX and Socket Clients* aan. Instellen met `IBKR_HOST`, `IBKR_PORT`
+  (7497 paper, 7496 live, 4002/4001 Gateway) en `IBKR_CLIENT_ID`. Symbool `AAPL` of `ASML:AEB:EUR`.
+- `hyperliquid`: dagcandles via de openbare Hyperliquid API, symbool = coin (bv. `BTC`, `ETH`).
 - `synthetic`: willekeurige testdata, handig zonder internet.
 
 ## Metrics

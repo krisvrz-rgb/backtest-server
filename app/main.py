@@ -17,11 +17,14 @@ app = FastAPI(title="Backtest Server", version="0.1.0",
               description="Backtest handelsstrategieën op aandelen en exporteer ze naar TradingView Pine Script.")
 
 
+Source = Literal["csv", "yahoo", "ibkr", "hyperliquid", "synthetic"]
+
+
 class BacktestRequest(BaseModel):
     symbol: str = Field(..., examples=["AAPL"])
     strategy: str = Field(..., examples=["sma_crossover"])
     params: dict[str, Any] = Field(default_factory=dict, examples=[{"fast": 50, "slow": 200}])
-    source: Literal["yahoo", "csv", "synthetic"] = "csv"
+    source: Source = "csv"
     start: str | None = Field(None, examples=["2015-01-01"])
     end: str | None = None
     initial_capital: float = 10_000.0
@@ -35,7 +38,7 @@ class CompareRequest(BaseModel):
     symbols: list[str]
     strategies: list[dict[str, Any]] = Field(..., examples=[[{"name": "sma_crossover", "params": {"fast": 20, "slow": 100}},
                                                             {"name": "buy_and_hold"}]])
-    source: Literal["yahoo", "csv", "synthetic"] = "csv"
+    source: Source = "csv"
     start: str | None = None
     end: str | None = None
     fee_bps: float = 5.0
