@@ -415,7 +415,7 @@ class Scanner:
             # Een scan van één periode (bv. een eigen periode) mag de andere periodes niet wissen.
             if old and old.get("periods") and result.get("periods"):
                 # Houdbaarheid en maanden van de vorige scan houden als deze scan ze niet opnieuw berekende.
-                keep = {k: old[k] for k in ("oos", "monthly", "month_wins", "oos_returns") if k in old and k not in result}
+                keep = {k: old[k] for k in ("oos", "monthly", "month_wins", "oos_returns", "open_now") if k in old and k not in result}
                 result = keep | result | {"periods": old["periods"] | result["periods"],
                                           "returns": (old.get("returns") or {}) | (result.get("returns") or {})}
             elif old and old.get("periods") and "error" in result:
@@ -495,17 +495,33 @@ STALL_SECONDS = int(os.getenv("SCAN_STALL_SECONDS", "300"))
 SCANNER = Scanner()
 
 
-HEAVY = ("returns", "monthly", "month_wins", "oos_returns")
+HEAVY = ("returns", "monthly", "month_wins", "oos_returns", "open_now")
+
+
+def _light_period(p: dict[str, Any]) -> dict[str, Any]:
+    if "profitable" not in p:
+        return p
+    return p | {"profitable": [{k: x[k] for k in ("strategy", "total_return", "signal_open")} for x in p["profitable"][:5]]}
 
 
 def _light(result: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Scanresultaat zonder de grote onderdelen (die haalt de pagina apart op per ticker)."""
+    """Scanresultaat zonder de grote onderdelen (die haalt de pagina apart op per ticker).
+
+    Met periodes laten we de oude samenvatting bovenaan weg (die staat ook onder "periods") en houden we per
+    periode alleen de top 5 winstgevende strategieën."""
     if not result:
         return result
-    out = {k: v for k, v in result.items() if k not in HEAVY}
+    if result.get("periods"):
+        out = {k: result[k] for k in ("error", "error_last_scan", "scanned_at", "oos") if k in result}
+        out["periods"] = {k: _light_period(v) for k, v in result["periods"].items()}
+    else:
+        out = {k: v for k, v in result.items() if k not in HEAVY}
     if "oos" in out:
         out["oos"] = oos_summary(out["oos"])
     return out
+
+
+_view_cache: dict[str, Any] = {"key": None, "results": None}
 
 
 def ticker_detail(yahoo: str) -> dict[str, Any]:
@@ -515,14 +531,22 @@ def ticker_detail(yahoo: str) -> dict[str, Any]:
 
 
 def watchlist_view() -> dict[str, Any]:
+    """Groepen met tickers, en de resultaten één keer per ticker onder "results" (een ticker kan in meerdere
+    lijsten staan; de pagina koppelt ze zelf aan elkaar). Zo blijft het antwoord klein."""
     scan = scan_cached()
     groups = load_watchlist()
-    out = []
+    out, syms_all = [], []
     for g in groups:
         # Tickers zonder koersdata (indexen, futures, rentes) tonen we niet.
-        syms = [s | {"result": _light(scan["results"].get(s["yahoo"]))} for s in g["symbols"] if s.get("yahoo")]
+        syms = [s for s in g["symbols"] if s.get("yahoo")]
+        syms_all += [s["yahoo"] for s in syms]
         if syms:
             out.append({"name": g["name"], "list": list_name(g), "symbols": syms})
+    key = (_cache["key"], tuple(dict.fromkeys(syms_all)))
+    if key != _view_cache["key"] or _cache["key"] is None:
+        _view_cache["results"] = {y: _light(scan["results"].get(y)) for y in dict.fromkeys(syms_all)
+                                  if scan["results"].get(y)}
+        _view_cache["key"] = key
     periods = [{"key": k, **v} for k, v in (default_periods() | scan.get("custom_periods", {})).items()]
-    return {"groups": out, "periods": periods, "scan": SCANNER.status(), "settings": scan.get("settings"), "finished": scan.get("finished"),
+    return {"groups": out, "results": _view_cache["results"], "periods": periods, "scan": SCANNER.status(), "settings": scan.get("settings"), "finished": scan.get("finished"),
             "generated": time.time()}

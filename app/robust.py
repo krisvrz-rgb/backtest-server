@@ -50,7 +50,9 @@ def analyze(prices: pd.DataFrame, fee_bps: float = 5.0, today: date | None = Non
         raise ValueError("Te weinig koersen")
 
     curves: dict[str, pd.Series] = {}
+    open_now: dict[str, dict[str, Any]] = {}
     bh = None
+    last_close = float(p["close"].iloc[-1])
     for name, cls in STRATEGIES.items():
         try:
             res = run_backtest(p, cls(), 10_000.0, fee_bps, start=run_start)
@@ -58,8 +60,16 @@ def analyze(prices: pd.DataFrame, fee_bps: float = 5.0, today: date | None = Non
             continue
         if cls.category == "benchmark":
             bh = res.benchmark
-        else:
-            curves[name] = res.equity
+            continue
+        curves[name] = res.equity
+        m = res.metrics
+        if m.get("signal_open") and m.get("last_buy_signal"):
+            # Koopsignaal op de slot van die dag, gevuld op de open van de dag erna (zoals in de backtest).
+            after = p.index[p.index > pd.Timestamp(m["last_buy_signal"])]
+            entry = float(p.loc[after[0], "open"]) if len(after) else last_close
+            open_now[name] = {"bars": m["bars_since_buy"], "date": m["last_buy_signal"], "entry": round(entry, 4),
+                              "trade_return": last_close / entry - 1 if entry else None,
+                              "win_rate": m.get("percent_profitable"), "trades": m.get("num_trades")}
     if bh is None or not curves:
         raise ValueError("Geen strategieën gelukt")
     first = bh.index[0]
@@ -126,7 +136,7 @@ def analyze(prices: pd.DataFrame, fee_bps: float = 5.0, today: date | None = Non
     month_wins = [{"strategy": n, "months": k} for n, k in sorted(wins.items(), key=lambda x: -x[1])[:10]]
 
     return {
-        "oos": oos, "monthly": monthly, "month_wins": month_wins,
+        "oos": oos, "monthly": monthly, "month_wins": month_wins, "open_now": open_now,
         # Compact per strategie: leer- en testrendement (voor de vergelijking over alle tickers).
         "oos_returns": {n: [round(train[n], 4) if train[n] is not None else None,
                             round(test[n], 4) if test[n] is not None else None] for n in curves},

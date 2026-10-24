@@ -7,6 +7,7 @@ import pandas as pd
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -22,11 +23,14 @@ from .watchlist import (PORTFOLIO_LIST, default_periods, PORTFOLIO_URL, SCANNER,
                         list_name, load_watchlist, parse_tradingview, replace_lists, save_watchlist, tv_to_yahoo,
                         scan_cached, ticker_detail, watchlist_view)
 from .robust import cross_ticker
+from .picks import picks
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
 from .strategies.plot import indicators
 
 app = FastAPI(title="Backtest Server", version="0.1.0",
               description="Backtest handelsstrategieën op aandelen en exporteer ze naar TradingView Pine Script.")
+# Grote JSON-antwoorden (watchlist) gecomprimeerd versturen.
+app.add_middleware(GZipMiddleware, minimum_size=2000)
 
 
 Source = Literal["csv", "yahoo", "ibkr", "hyperliquid", "synthetic"]
@@ -135,6 +139,11 @@ def tool_page():
 @app.get("/watchlist", include_in_schema=False)
 def watchlist_page():
     return FileResponse(STATIC_DIR / "watchlist.html")
+
+
+@app.get("/aanraders", include_in_schema=False)
+def picks_page():
+    return FileResponse(STATIC_DIR / "picks.html")
 
 
 @app.get("/health")
@@ -293,6 +302,20 @@ def get_watchlist():
 def get_watchlist_detail(symbol: str):
     """Per ticker: houdbaarheid van de beste strategie en de beste strategie per maand (laatste 24 maanden)."""
     return ticker_detail(symbol)
+
+
+@app.get("/api/picks")
+def get_picks(list_: str | None = Query(None, alias="list"), group: str | None = None, min_score: float = 0.0):
+    """Aanraders: tickers met nu een open koopsignaal van een strategie met bewijs dat ze werkt (geen advies)."""
+    seen, tickers = set(), []
+    for g in load_watchlist():
+        if (list_ and list_name(g) != list_) or (group and g["name"] != group):
+            continue
+        for s in g["symbols"]:
+            if s.get("yahoo") and s["yahoo"] not in seen:
+                seen.add(s["yahoo"])
+                tickers.append({"yahoo": s["yahoo"], "tv": s["tv"], "group": g["name"], "list": list_name(g)})
+    return picks(scan_cached()["results"], tickers, min_score)
 
 
 @app.get("/api/robust")

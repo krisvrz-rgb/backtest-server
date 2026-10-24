@@ -106,6 +106,7 @@
   <a href="/" class="active">Overzicht</a>
   <a href="/tool">Backtest</a>
   <a href="/watchlist">Watchlist-details</a>
+  <a href="/aanraders">Aanraders</a>
   <a href="/docs">API-documentatie</a>
 </header>
 <main>
@@ -341,6 +342,7 @@ function fillLists() {
 
 async function load() {
   data = await (await fetch('/api/watchlist')).json();
+  data.groups.forEach(g => g.symbols.forEach(s => { s.result = data.results?.[s.yahoo] || null; }));
   PERIODS = data.periods || [];
   fillLists(); renderStatus(); render();
   if (data.scan.running && !poll) poll = setInterval(load, 3000);

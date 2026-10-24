@@ -199,11 +199,12 @@ def test_watchlist_scan_end_to_end(tmp_path, monkeypatch):
             break
         _t.sleep(0.5)
     view = client.get("/api/watchlist").json()
-    res = [s["result"] for g in view["groups"] for s in g["symbols"]]
+    res = [view["results"].get(s["yahoo"]) for g in view["groups"] for s in g["symbols"]]
     assert all(x and "error" not in x for x in res), res
     first = res[0]
-    assert 0 <= first["beat_count"] <= first["strategies"] and first["best"]["times_bh"] > 0
     assert set(first["periods"]) == {"2015", "2020"}
+    p15 = first["periods"]["2015"]
+    assert 0 <= p15["beat_count"] <= p15["strategies"] and p15["best"]["times_bh"] > 0 and len(p15["profitable"]) <= 5
     p = first["periods"]["2020"]
     assert p["start"] == "2020-01-01" and 1 <= p["bh_rank"] <= p["strategies"] + 1
     assert p["profitable_count"] >= len(p["profitable"]) and all(x["total_return"] > 0 for x in p["profitable"])
@@ -353,7 +354,7 @@ def test_out_of_sample_monthly_and_cross_ticker(tmp_path, monkeypatch):
     monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
     wl.save_watchlist([{"name": "G", "list": "L", "symbols": [{"tv": "AAA", "yahoo": "AAA"}, {"tv": "BBB", "yahoo": "BBB"}]}])
     (tmp_path / "scan.json").write_text(json.dumps({"results": res}))
-    view = client.get("/api/watchlist").json()["groups"][0]["symbols"][0]["result"]
+    view = client.get("/api/watchlist").json()["results"]["AAA"]
     assert "returns" not in view and "monthly" not in view and view["oos"]["strategy"] == o["strategy"]
     d = client.get("/api/watchlist/detail", params={"symbol": "AAA"}).json()
     assert len(d["monthly"]) == 24 and d["oos"]["top5"]
@@ -361,3 +362,26 @@ def test_out_of_sample_monthly_and_cross_ticker(tmp_path, monkeypatch):
     assert rob["tickers"] == 2 and rob["oos_tickers"] == 2
     top = rob["rows"][0]
     assert top["tickers"] == 2 and 0 <= top["beats"] <= 2 and top["oos_n"] == 2
+
+
+def test_picks(tmp_path, monkeypatch):
+    import json
+    import app.watchlist as wl
+    periods = {"2j": "2023-01-01", "1j": "2024-01-01", "6m": "2024-07-01"}
+    res = {s: wl.scan_one(s, periods, 5, "synthetic") for s in ("AAA", "BBB", "CCC")}
+    assert all(isinstance(r["open_now"], dict) for r in res.values())
+    monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
+    monkeypatch.setattr(wl, "SCAN_FILE", tmp_path / "scan.json")
+    monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
+    wl.save_watchlist([{"name": "G", "list": "L", "symbols": [{"tv": s, "yahoo": s} for s in res]},
+                       {"name": "H", "list": "L", "symbols": [{"tv": "AAA", "yahoo": "AAA"}]}])
+    (tmp_path / "scan.json").write_text(json.dumps({"results": res}))
+    d = client.get("/api/picks", params={"list": "L"}).json()
+    assert d["tickers"] == 3 and d["missing"] == 0
+    scores = [r["score"] for r in d["rows"]]
+    assert scores == sorted(scores, reverse=True)
+    for r in d["rows"]:
+        sig = r["best"]["signal"]
+        assert r["yahoo"] in res and sig["entry"] > 0 and sig["bars"] >= 0 and r["open_count"] >= 1
+        assert r["best"]["strategy"] in res[r["yahoo"]]["open_now"]
+    assert client.get("/aanraders").status_code == 200

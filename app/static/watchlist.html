@@ -98,6 +98,7 @@
   <a href="/">Overzicht</a>
   <a href="/tool">Backtest</a>
   <a href="/watchlist" class="active">Watchlist-details</a>
+  <a href="/aanraders">Aanraders</a>
   <a href="/docs">API-documentatie</a>
 </header>
 <main>
@@ -440,6 +441,7 @@ document.querySelector('#robust thead').addEventListener('click', e => {
 
 async function load(fromPoll) {
   data = await (await fetch('/api/watchlist')).json();
+  data.groups.forEach(g => g.symbols.forEach(s => { s.result = data.results?.[s.yahoo] || null; }));
   if (!fromPoll) Object.keys(detailCache).forEach(k => delete detailCache[k]);
   PERIODS = data.periods || []; fillPeriods();
   fillLists();

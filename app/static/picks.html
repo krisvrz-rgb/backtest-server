@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aanraders · Backtest Server</title>
+<style>
+  :root {
+    --bg: #0d0f13; --panel: #151820; --panel-2: #1b1f29; --text: #e6e8eb; --muted: #8b93a1; --border: #262b36;
+    --accent: #3b82f6; --up: #22c55e; --down: #ef4444; --warn: #f59e0b;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f7f8fa; --text: #1b1f24; --muted: #6b7280; --border: #e3e6ea;
+      --accent: #2563eb; --up: #16a34a; --down: #dc2626; --warn: #d97706;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; display: flex; align-items: baseline; gap: 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header a { color: var(--muted); font-size: 13px; }
+  header a.active { color: var(--text); font-weight: 600; text-decoration: none; }
+  main { padding: 16px 20px 40px; max-width: 1600px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 700px) { main { padding: 12px 16px 40px; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; padding: 12px 14px; }
+  .toolbar .field { display: grid; gap: 4px; }
+  label { font-size: 12px; color: var(--muted); }
+  input, select, textarea { padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-2);
+                            color: var(--text); font: inherit; min-width: 0; }
+  textarea { width: 100%; min-height: 110px; font-family: ui-monospace, monospace; font-size: 12px; }
+  button { font: inherit; border-radius: 5px; padding: 7px 12px; cursor: pointer; border: 1px solid var(--border);
+           background: var(--panel-2); color: var(--text); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .grow { flex: 1; }
+  .progress { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .progress div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+  .status { font-size: 12px; color: var(--muted); padding: 0 14px 12px; }
+  .hidden { display: none !important; }
+  .desc { font-size: 12px; color: var(--muted); }
+  .note { padding: 10px 14px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); }
+  .scroll { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align: right; vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; background: var(--panel); }
+  th.left, td.left { text-align: left; }
+  td small { display: block; color: var(--muted); font-size: 11px; }
+  td.why { white-space: normal; min-width: 260px; text-align: left; }
+  tr.row { cursor: pointer; }
+  tr.row:hover td, tr.row.opened td { background: var(--panel-2); }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .sym { font-weight: 600; font-size: 14px; }
+  .score { display: inline-block; min-width: 42px; text-align: center; font-weight: 700; border-radius: 5px; padding: 3px 6px;
+           background: color-mix(in srgb, var(--up) 18%, transparent); color: var(--up); }
+  .score.mid { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .score.low { background: var(--panel-2); color: var(--muted); }
+  .chip { display: inline-block; font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; margin: 0 4px 3px 0; color: var(--muted); }
+  .chip.good { color: var(--up); border-color: var(--up); }
+  .chip.new { color: #fff; background: var(--up); border-color: var(--up); }
+  .chip.mixed { color: var(--warn); border-color: var(--warn); }
+  .chip.bad { color: var(--down); border-color: var(--down); }
+  tr.detail > td { background: var(--panel-2); white-space: normal; text-align: left; padding: 4px 12px 12px; }
+  .dbox { position: sticky; left: 12px; }
+  .dbox table { width: auto; min-width: 50%; margin: 8px 0; }
+  .dbox th { background: transparent; }
+  .dbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-top: 8px; }
+  .dbar a, .dbar button { font-size: 12px; padding: 4px 10px; border-radius: 5px; border: 1px solid var(--border); background: var(--panel);
+                          color: var(--text); text-decoration: none; cursor: pointer; }
+  .dbox iframe { display: block; width: 100%; height: 900px; border: 0; background: var(--bg); margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Backtest Server</h1>
+  <a href="/">Overzicht</a>
+  <a href="/tool">Backtest</a>
+  <a href="/watchlist">Watchlist-details</a>
+  <a href="/aanraders" class="active">Aanraders</a>
+  <a href="/docs">API-documentatie</a>
+</header>
+<main>
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label for="list">Lijst</label><select id="list"></select></div>
+      <div class="field"><label for="group">Groep</label><select id="group"><option value="">Alle groepen</option></select></div>
+      <div class="field"><label for="fresh">Signaal</label>
+        <select id="fresh"><option value="">Alle open signalen</option><option value="3">Vers: ≤ 3 dagen</option>
+          <option value="10">≤ 10 dagen</option><option value="30">≤ 30 dagen</option></select></div>
+      <div class="field"><label for="min">Minimale score</label>
+        <select id="min"><option value="0">Alles</option><option value="3">3 of meer</option><option value="5" selected>5 of meer</option><option value="7">7 of meer</option></select></div>
+      <div class="field"><label for="search">Zoeken</label><input id="search" placeholder="ticker…"></div>
+      <div class="grow"></div>
+      <button id="reload">Vernieuwen</button>
+    </div>
+    <div class="status" id="status">Laden…</div>
+    <div class="note">Tickers met <b>nu</b> een open koopsignaal, gerangschikt op hoeveel bewijs er is dat die strategie werkt:
+      houdt ze stand in het jaar dat ze niet zag (tot 3 punten), verslaat ze buy &amp; hold over 2 jaar, 1 jaar en 6 maanden (tot 3),
+      werkt ze op minstens de helft van de tickers in deze lijst (1,5), is het signaal vers (tot 1,5). Minpunten voor verlies over 2 jaar,
+      een koers die al ver boven de instap staat en weinig trades. Dit zijn backtestresultaten, geen beleggingsadvies: het verleden is geen garantie.</div>
+  </section>
+  <section class="panel">
+    <div class="scroll" id="scroll">
+      <table>
+        <thead><tr>
+          <th>#</th><th class="left">Ticker</th><th>Score</th><th class="left">Strategie met koopsignaal</th>
+          <th>Signaal</th><th>Instap → nu</th><th>Strategie 2 jaar</th><th>B&amp;H 2 jaar</th>
+          <th title="Aantal andere strategieën met score ≥ 3 die nu ook een koopsignaal geven">Eensgezind</th><th class="left">Waarom</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (v, sign) => v == null ? '–' : (sign && v > 0 ? '+' : '') + nl(v * 100, 1) + '%';
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const back = m => { const d = new Date(); d.setMonth(d.getMonth() - m); return d.toISOString().slice(0, 10); };
+let groups = [], data = null, open = null;
+
+async function loadLists() {
+  groups = (await (await fetch('/api/watchlist')).json()).groups;
+  const lists = [...new Set(groups.map(g => g.list))];
+  let cur = ''; try { cur = localStorage.getItem('pk-list') || localStorage.getItem('wl-list') || ''; } catch {}
+  $('list').innerHTML = lists.map(l => `<option>${esc(l)}</option>`).join('');
+  $('list').value = lists.includes(cur) ? cur : (lists.find(l => l.startsWith('TradingView · Watchlist')) || lists[0] || '');
+  fillGroups();
+}
+function fillGroups() {
+  const names = groups.filter(g => g.list === $('list').value).map(g => g.name);
+  $('group').innerHTML = '<option value="">Alle groepen</option>' + names.map(n => `<option>${esc(n)}</option>`).join('');
+}
+async function load() {
+  $('status').textContent = 'Laden…';
+  const q = new URLSearchParams({ list: $('list').value });
+  if ($('group').value) q.set('group', $('group').value);
+  data = await (await fetch('/api/picks?' + q)).json();
+  render();
+}
+function scoreCls(v) { return v >= 6 ? '' : v >= 3 ? 'mid' : 'low'; }
+function render() {
+  const min = +$('min').value, fresh = +$('fresh').value || null, qs = $('search').value.trim().toUpperCase();
+  const rows = data.rows.filter(r => r.score >= min && (!fresh || (r.best.signal.bars ?? 999) <= fresh) &&
+    (!qs || r.tv.toUpperCase().includes(qs) || r.yahoo.toUpperCase().includes(qs)));
+  $('status').textContent = `${rows.length} aanraders van ${data.tickers} tickers` +
+    (data.missing ? ` · ${data.missing} tickers nog niet (opnieuw) gescand met de nieuwe versie` : '');
+  $('rows').innerHTML = rows.map((r, i) => {
+    const b = r.best, s = b.signal, p2 = b.periods['2j'] || {};
+    const short = r.tv.includes(':') ? r.tv.split(':')[1] : r.tv;
+    const row = `<tr class="row${open === r.yahoo ? ' opened' : ''}" data-sym="${esc(r.yahoo)}"><td>${i + 1}</td>` +
+      `<td class="left"><span class="sym">${esc(short)}</span><small>${esc(r.group)}${r.last_close != null ? ' · ' + nl(r.last_close) : ''}</small></td>` +
+      `<td><span class="score ${scoreCls(r.score)}">${nl(r.score, 1)}</span></td>` +
+      `<td class="left">${esc(b.strategy)}<small>${esc(b.category_label)} · ${s.trades ?? '?'} trades · ${pct(s.win_rate)} rendabel</small></td>` +
+      `<td>${esc(s.date)}<small>${s.bars} handelsdagen geleden</small></td>` +
+      `<td class="${cls(s.trade_return)}">${pct(s.trade_return, true)}<small>instap ${nl(s.entry)}</small></td>` +
+      `<td class="${cls(p2.return)}">${pct(p2.return, true)}</td><td class="${cls(r.bh_2j)}">${pct(r.bh_2j, true)}</td>` +
+      `<td>${r.agree > 1 ? r.agree - 1 : 0}<small>${r.open_count} open signalen</small></td>` +
+      `<td class="why">${b.why.map(w => `<span class="chip ${w.kind}">${esc(w.text)}</span>`).join('')}</td></tr>`;
+    return row + (open === r.yahoo ? detail(r) : '');
+  }).join('') || `<tr><td colspan="10" class="left desc">Geen tickers die aan de filters voldoen.${data.missing ? ' Start een nieuwe scan in Watchlist-details.' : ''}</td></tr>`;
+  const w = $('scroll').clientWidth - 24;
+  document.querySelectorAll('.dbox').forEach(d => d.style.width = w + 'px');
+}
+function detail(r) {
+  const all = [r.best, ...r.others];
+  const tool = st => `/tool?symbol=${encodeURIComponent(r.yahoo)}&source=yahoo&start=${back(24)}&strategy=${encodeURIComponent(st)}`;
+  return `<tr class="detail"><td colspan="10"><div class="dbox">` +
+    `<table><thead><tr><th class="left">Open koopsignaal</th><th>Score</th><th>Sinds</th><th>Instap → nu</th>` +
+    `<th>2 jaar</th><th>1 jaar</th><th>6 maanden</th><th>Leerperiode</th><th>Testjaar</th><th class="left"></th></tr></thead><tbody>` +
+    all.map(x => `<tr><td class="left">${esc(x.strategy)}<small>${esc(x.category_label)}</small></td><td>${nl(x.score, 1)}</td>` +
+      `<td>${esc(x.signal.date)}<small>${x.signal.bars} d</small></td><td class="${cls(x.signal.trade_return)}">${pct(x.signal.trade_return, true)}</td>` +
+      ['2j', '1j', '6m'].map(p => { const v = x.periods[p] || {}; return `<td class="${v.beats ? 'up' : v.beats === false ? 'down' : ''}">${pct(v.return, true)}<small>B&amp;H ${pct(v.bh, true)}</small></td>`; }).join('') +
+      `<td>${pct(x.oos?.train, true)}</td><td>${pct(x.oos?.test, true)}</td>` +
+      `<td class="left"><a href="${tool(x.strategy)}" target="_blank" rel="noopener">backtest</a></td></tr>`).join('') +
+    `</tbody></table><div class="dbar"><button data-show>Backtest hier tonen</button>` +
+    `<a href="/watchlist" target="_blank" rel="noopener">Watchlist-details</a></div></div></td></tr>`;
+}
+$('rows').addEventListener('click', e => {
+  const show = e.target.closest('[data-show]');
+  if (show) {
+    const r = data.rows.find(x => x.yahoo === open), box = show.closest('.dbox');
+    box.querySelector('iframe')?.remove();
+    box.insertAdjacentHTML('beforeend', `<iframe src="/tool?symbol=${encodeURIComponent(r.yahoo)}&source=yahoo&start=${back(24)}&strategy=${encodeURIComponent(r.best.strategy)}&embed=1"></iframe>`);
+    return;
+  }
+  if (e.target.closest('tr.detail')) return;
+  const tr = e.target.closest('tr.row'); if (!tr) return;
+  open = open === tr.dataset.sym ? null : tr.dataset.sym; render();
+});
+window.addEventListener('message', e => {
+  if (e.data?.type !== 'tool-height') return;
+  const f = [...document.querySelectorAll('.dbox iframe')].find(x => x.contentWindow === e.source);
+  if (f) f.style.height = Math.max(400, e.data.h) + 'px';
+});
+$('list').addEventListener('change', () => { try { localStorage.setItem('pk-list', $('list').value); } catch {} fillGroups(); load(); });
+$('group').addEventListener('change', load);
+['min', 'fresh', 'search'].forEach(id => $(id).addEventListener('input', () => data && render()));
+$('reload').addEventListener('click', load);
+loadLists().then(load).catch(e => $('status').textContent = 'Kon niet laden: ' + e.message);
+</script>
+</body>
+</html>
