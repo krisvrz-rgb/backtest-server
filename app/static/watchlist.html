@@ -81,8 +81,7 @@
   <section class="panel">
     <div class="toolbar">
       <div class="field"><label for="list-filter">Lijst</label><select id="list-filter"></select></div>
-      <div class="field"><label for="start">Testperiode</label><select id="start">
-        <option value="2015">2015 – nu</option><option value="2020" selected>2020 – nu</option><option value="2024">2024 – nu</option></select></div>
+      <div class="field"><label for="start">Testperiode</label><select id="start"></select></div>
       <div class="field"><label for="group-filter">Groep</label><select id="group-filter"><option value="">Alle groepen</option></select></div>
       <button class="primary" id="scan">Scan starten</button>
       <button id="stop" class="hidden">Stoppen</button>
@@ -143,8 +142,9 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const PERIODS = { 2015: '2015-01-01', 2020: '2020-01-01', 2024: '2024-01-01' };
-const per = () => $('start').value, startDate = () => PERIODS[per()];
+let PERIODS = [];
+const per = () => $('start').value, pinfo = () => PERIODS.find(p => p.key === per()) || { start: '2020-01-01' };
+const startDate = () => pinfo().start + (pinfo().end ? '&end=' + pinfo().end : '');
 // Resultaat voor de gekozen testperiode (oudere scans hebben alleen één periode).
 const res = s => !s.result ? null : s.result.error ? s.result : (s.result.periods ? s.result.periods[per()] || null : s.result);
 let data = null, sortKey = 'beat_count', sortAsc = false, collapsed = new Set(), poll = null;
@@ -234,10 +234,16 @@ function renderStatus() {
   const lg = data.groups.filter(g => g.list === $('list-filter').value);
   const total = lg.reduce((n, g) => n + g.symbols.length, 0);
   const scanned = lg.reduce((n, g) => n + g.symbols.filter(x => res(x) && !res(x).error).length, 0);
-  let txt = `${total} tickers in ${lg.length} groepen · ${scanned} gescand voor ${per()} – nu`;
+  let txt = `${total} tickers in ${lg.length} groepen · ${scanned} gescand voor ${pinfo().label || per()}`;
   if (st.running) txt = `Scannen: ${st.done}/${st.total}` + (st.errors ? ` · ${st.errors} fouten` : '') + (st.current ? ` · laatst ${st.current}` : '') + ' — ' + txt;
   else if (data.finished) txt += ` · laatste scan ${data.finished.replace('T', ' ')}`;
   $('status').innerHTML = esc(txt) + (st.running ? `<div class="progress"><div style="width:${st.total ? 100 * st.done / st.total : 0}%"></div></div>` : '');
+}
+
+function fillPeriods() {
+  const cur = $('start').value || '2020';
+  $('start').innerHTML = PERIODS.map(p => `<option value="${p.key}">${esc(p.label)}</option>`).join('');
+  $('start').value = PERIODS.some(p => p.key === cur) ? cur : (PERIODS[0]?.key || '');
 }
 
 function fillLists() {
@@ -255,6 +261,7 @@ function fillLists() {
 
 async function load() {
   data = await (await fetch('/api/watchlist')).json();
+  PERIODS = data.periods || []; fillPeriods();
   fillLists();
   renderStatus(); render();
   if (data.scan.running && !poll) poll = setInterval(load, 3000);

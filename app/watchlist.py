@@ -13,7 +13,7 @@ import os
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -240,7 +240,9 @@ def summarize(rank: dict[str, Any], prices) -> dict[str, Any]:
     best_info = None
     if best:
         best_info = {k: best[k] for k in ("strategy", "category_label", "total_return", "sharpe", "percent_profitable",
-                                          "num_trades", "max_drawdown")}
+                                          "num_trades", "max_drawdown", "signal_open", "bars_since_buy",
+                                          "last_buy_signal", "beats_bh_risk")}
+        best_info["vs_bh"] = best["total_return"] - bh_ret
         # "Hoeveel keer beter dan buy & hold": eindkapitaal strategie / eindkapitaal vasthouden.
         best_info["times_bh"] = (1 + best["total_return"]) / (1 + bh_ret) if bh_ret > -1 else None
     # Plaats van buy & hold tussen alle strategieën (1 = niets doet beter dan gewoon vasthouden).
@@ -278,11 +280,29 @@ def summarize(rank: dict[str, Any], prices) -> dict[str, Any]:
     }
 
 
-# Standaard testperiodes: tot vandaag vanaf 2015, 2020 en 2024.
-PERIODS = {"2015": "2015-01-01", "2020": "2020-01-01", "2024": "2024-01-01"}
+def default_periods(today: date | None = None) -> dict[str, dict[str, Any]]:
+    """Standaard testperiodes: vanaf 2015, 2020 en 2024 tot nu, de laatste 2 jaar, vorig jaar en dit jaar."""
+    today = today or date.today()
+    y = today.year
+    two = today.replace(year=y - 2) if not (today.month == 2 and today.day == 29) else today.replace(year=y - 2, day=28)
+    return {
+        "2015": {"start": "2015-01-01", "label": "2015 – nu"},
+        "2020": {"start": "2020-01-01", "label": "2020 – nu"},
+        "2024": {"start": "2024-01-01", "label": "2024 – nu"},
+        "2j": {"start": two.isoformat(), "label": "Laatste 2 jaar"},
+        str(y - 1): {"start": f"{y - 1}-01-01", "end": f"{y - 1}-12-31", "label": f"Jaar {y - 1}"},
+        str(y): {"start": f"{y}-01-01", "label": f"{y} tot nu"},
+    }
 
 
-def scan_one(yahoo: str, periods: dict[str, str] | str, fee_bps: float, source: str = "yahoo") -> dict[str, Any]:
+PERIODS = default_periods()
+
+
+def _period(v: dict[str, Any] | str) -> tuple[str, str | None]:
+    return (v, None) if isinstance(v, str) else (v["start"], v.get("end"))
+
+
+def scan_one(yahoo: str, periods: dict[str, Any] | str, fee_bps: float, source: str = "yahoo") -> dict[str, Any]:
     """Draait in een apart proces: koersen één keer ophalen, alle strategieën testen per periode, samenvatten.
 
     Het resultaat bevat de samenvatting per periode onder "periods"; de eerste periode staat ook bovenaan
@@ -290,15 +310,19 @@ def scan_one(yahoo: str, periods: dict[str, str] | str, fee_bps: float, source: 
     """
     if isinstance(periods, str):
         periods = {periods[:4]: periods}
-    first = min(periods.values())
+    first = min(_period(v)[0] for v in periods.values())
     prices = get_prices(yahoo, source, first, None, warmup=True)
     out: dict[str, Any] = {"periods": {}}
-    for key, start in periods.items():
+    for key, v in periods.items():
+        start, end = _period(v)
         try:
-            rank = rank_strategies(prices, start, fee_bps=fee_bps)
-            out["periods"][key] = summarize(rank, prices[prices.index >= start]) | {"start": start}
+            p = prices[prices.index <= end] if end else prices
+            if not (p.index >= start).any():
+                raise ValueError("Geen koersen in deze periode")
+            rank = rank_strategies(p, start, fee_bps=fee_bps)
+            out["periods"][key] = summarize(rank, p[p.index >= start]) | {"start": start, "end": end}
         except Exception as e:  # noqa: BLE001 - bv. geen koersen in deze periode
-            out["periods"][key] = {"error": str(e)[:200], "start": start}
+            out["periods"][key] = {"error": str(e)[:200], "start": start, "end": end}
     ok = [v for v in out["periods"].values() if "error" not in v]
     if not ok:
         raise ValueError(next(iter(out["periods"].values()))["error"])
@@ -322,7 +346,7 @@ class Scanner:
     def stop(self) -> None:
         self._stop = True
 
-    def start(self, symbols: list[str], start: dict[str, str] | str, fee_bps: float = 5.0, workers: int | None = None,
+    def start(self, symbols: list[str], start: dict[str, Any] | str, fee_bps: float = 5.0, workers: int | None = None,
               source: str = "yahoo") -> bool:
         with self.lock:
             if self.state["running"]:
@@ -341,10 +365,11 @@ class Scanner:
                 self.state["errors"] += 1
             _save_scan(scan)
 
-    def _run(self, symbols: list[str], start: dict[str, str] | str, fee_bps: float, workers: int | None, source: str) -> None:
+    def _run(self, symbols: list[str], start: dict[str, Any] | str, fee_bps: float, workers: int | None, source: str) -> None:
         scan = load_scan()
         periods = start if isinstance(start, dict) else {start[:4]: start}
-        scan["settings"] = {"start": min(periods.values()), "periods": periods, "fee_bps": fee_bps, "source": source}
+        scan["settings"] = {"start": min(_period(v)[0] for v in periods.values()), "periods": periods,
+                            "fee_bps": fee_bps, "source": source}
         workers = workers or max(1, min(4, (os.cpu_count() or 2) - 1))
         try:
             with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn")) as pool:
@@ -378,7 +403,10 @@ def watchlist_view() -> dict[str, Any]:
     groups = load_watchlist()
     out = []
     for g in groups:
-        out.append({"name": g["name"], "list": list_name(g), "symbols": [s | {"result": scan["results"].get(s["yahoo"]) if s.get("yahoo") else None}
-                                                   for s in g["symbols"]]})
-    return {"groups": out, "scan": SCANNER.status(), "settings": scan.get("settings"), "finished": scan.get("finished"),
+        # Tickers zonder koersdata (indexen, futures, rentes) tonen we niet.
+        syms = [s | {"result": scan["results"].get(s["yahoo"])} for s in g["symbols"] if s.get("yahoo")]
+        if syms:
+            out.append({"name": g["name"], "list": list_name(g), "symbols": syms})
+    periods = [{"key": k, **v} for k, v in default_periods().items()]
+    return {"groups": out, "periods": periods, "scan": SCANNER.status(), "settings": scan.get("settings"), "finished": scan.get("finished"),
             "generated": time.time()}

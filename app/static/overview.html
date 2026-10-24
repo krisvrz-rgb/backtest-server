@@ -81,10 +81,14 @@
   .dgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; padding: 6px 2px; }
   .dgrid h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
   .dgrid table { font-size: 12px; }
-  .dgrid td { padding: 3px 6px; border-bottom: 1px solid var(--border); }
+  .dgrid td { padding: 3px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
   .dgrid a { color: var(--text); text-decoration: none; }
   .dgrid a:hover { color: var(--accent); }
   .legend { font-size: 12px; color: var(--muted); }
+  td.pcell { padding: 7px 8px; }
+  td.best { white-space: normal; min-width: 230px; text-align: left; }
+  td.best .nm { font-weight: 600; }
+  th.focus { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -100,18 +104,17 @@
     <div class="toolbar">
       <div class="field"><label for="list">Lijst</label><select id="list"></select></div>
       <div class="field"><label for="group">Groep</label><select id="group"><option value="">Alle groepen</option></select></div>
-      <div class="field"><label for="focus">Strategieën tonen voor</label><select id="focus">
-        <option value="2015">2015 – nu</option><option value="2020" selected>2020 – nu</option><option value="2024">2024 – nu</option></select></div>
-      <button class="primary" id="refresh" title="Alle strategieën opnieuw testen op elke ticker van deze lijst, voor de drie periodes">Vernieuwen</button>
+      <div class="field"><label for="focus">Beste strategie voor</label><select id="focus"></select></div>
+      <button class="primary" id="refresh" title="Alle strategieën opnieuw testen op elke ticker van deze lijst, voor alle periodes">Vernieuwen</button>
       <button id="stop" class="hidden">Stoppen</button>
       <div class="grow"></div>
       <div class="field"><label for="search">Zoeken</label><input id="search" placeholder="ticker…"></div>
       <div class="field"><label for="filter">Filter</label>
         <select id="filter">
           <option value="">Alles tonen</option>
-          <option value="open">Open buy bij een winstgevende strategie</option>
-          <option value="new">Buy ≤ 5 dagen geleden</option>
-          <option value="beaten">Buy &amp; hold is niet de beste</option>
+          <option value="open">Beste strategie staat in een open buy</option>
+          <option value="new">Open buy ≤ 5 dagen geleden</option>
+          <option value="beaten">Beste strategie verslaat buy &amp; hold</option>
         </select>
       </div>
     </div>
@@ -121,131 +124,136 @@
   <section class="panel">
     <div class="scroll">
       <table>
-        <thead>
-          <tr>
-            <th class="left" rowspan="2" data-sort="tv">Symbool</th>
-            <th rowspan="2" data-sort="change_pct">Koers</th>
-            <th class="pgroup" colspan="3">Plaats van buy &amp; hold tussen alle strategieën</th>
-            <th class="left" rowspan="2" data-sort="profitable_count">Winstgevende strategieën</th>
-            <th class="left" rowspan="2" data-sort="bars_since_buy">Laatste buy (open)</th>
-          </tr>
-          <tr>
-            <th data-sort="p2015" class="pcell">2015 – nu</th>
-            <th data-sort="p2020" class="pcell">2020 – nu</th>
-            <th data-sort="p2024" class="pcell">2024 – nu</th>
-          </tr>
-        </thead>
+        <thead id="thead"></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
   </section>
   <div class="desc"><b>Plaats van buy &amp; hold</b>: #1 betekent dat geen enkele strategie meer opbracht dan het aandeel gewoon vasthouden;
-    #15 betekent dat 14 strategieën het beter deden. Daaronder het rendement van vasthouden en hoeveel strategieën winst maakten.
-    <b>Winstgevende strategieën</b>: de beste strategieën met winst in de gekozen periode (groene rand = ook beter dan buy &amp; hold,
-    ● = staat nu in een positie). <b>Laatste buy</b>: het meest recente koopsignaal van een winstgevende strategie dat nog niet verkocht is.
-    Klik op een rij voor alle winstgevende strategieën per periode.</div>
+    #15 betekent dat 14 strategieën het beter deden. Ernaast het rendement van vasthouden, daaronder hoeveel strategieën winst maakten.
+    <b>Beste strategie</b>: de strategie met het hoogste rendement in de gekozen periode, hoeveel procentpunt dat meer (of minder) is dan
+    buy &amp; hold, en of die strategie nu in een open buy zit. Klik op een rij voor de top per periode.</div>
 </main>
 
 <script>
 const $ = id => document.getElementById(id);
-const PERIODS = { 2015: '2015-01-01', 2020: '2020-01-01', 2024: '2024-01-01' };
 const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
 const pct = (v, sign) => v == null ? '–' : (sign && v > 0 ? '+' : '') + nl(v * 100, Math.abs(v) >= 10 ? 0 : 1) + '%';
+const pp = v => v == null ? '–' : (v > 0 ? '+' : '') + nl(v * 100, Math.abs(v) >= 10 ? 0 : 1) + ' pp';
 const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-let data = null, sortKey = 'tv', sortAsc = true, collapsed = new Set(), expanded = new Set(), poll = null;
+let data = null, PERIODS = [], sortKey = 'tv', sortAsc = true, collapsed = new Set(), expanded = new Set(), poll = null;
 try { collapsed = new Set(JSON.parse(localStorage.getItem('ov-collapsed') || '[]')); } catch {}
+const pinfo = k => PERIODS.find(p => p.key === k) || { key: k, start: k + '-01-01', label: k };
 
 const per = (s, p) => {
   const r = s.result;
-  if (!r || r.error) return null;
-  if (r.periods) return r.periods[p] && !r.periods[p].error ? r.periods[p] : null;
-  return null;
+  if (!r || r.error || !r.periods) return null;
+  return r.periods[p] && !r.periods[p].error ? r.periods[p] : null;
 };
 function ago(bars) {
   if (bars === 0) return 'vandaag';
   if (bars === 1) return 'gisteren';
   return bars < 10 ? `${bars} dagen geleden` : bars < 45 ? `${Math.round(bars / 5)} weken geleden` : `${Math.round(bars / 21)} mnd geleden`;
 }
-const toolLink = (s, p, strategy, view) => `/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${PERIODS[p]}` +
-  (strategy ? `&strategy=${encodeURIComponent(strategy)}` : '') + (view ? `&view=${view}` : '');
+const toolLink = (s, p, strategy, view) => {
+  const i = pinfo(p);
+  return `/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${i.start}` + (i.end ? `&end=${i.end}` : '') +
+    (strategy ? `&strategy=${encodeURIComponent(strategy)}` : '') + (view ? `&view=${view}` : '');
+};
 
 function value(s, key) {
   if (key === 'tv') return s.tv;
-  const f = $('focus').value, r = per(s, f);
-  if (key.startsWith('p20')) { const x = per(s, key.slice(1)); return x ? x.bh_rank : null; }
-  if (!r) return null;
-  if (key === 'bars_since_buy') return r.latest_buy_profitable ? r.latest_buy_profitable.bars_since_buy : null;
-  return r[key] ?? null;
+  if (key.startsWith('p:')) { const x = per(s, key.slice(2)); return x ? x.bh_rank : null; }
+  const r = per(s, $('focus').value);
+  if (!r || !r.best) return null;
+  if (key === 'vs_bh') return r.best.vs_bh ?? null;
+  return null;
 }
 
 function passes(s) {
   const q = $('search').value.trim().toUpperCase();
   if (q && !s.tv.toUpperCase().includes(q) && !(s.yahoo || '').toUpperCase().includes(q)) return false;
-  const f = $('filter').value, r = per(s, $('focus').value);
+  const f = $('filter').value, b = per(s, $('focus').value)?.best;
   if (!f) return true;
-  if (!r) return false;
-  if (f === 'open') return !!r.latest_buy_profitable;
-  if (f === 'new') return !!r.latest_buy_profitable && r.latest_buy_profitable.bars_since_buy <= 5;
-  if (f === 'beaten') return r.bh_rank > 1;
+  if (!b) return false;
+  if (f === 'open') return !!b.signal_open;
+  if (f === 'new') return !!b.signal_open && b.bars_since_buy <= 5;
+  if (f === 'beaten') return b.vs_bh > 0;
   return true;
 }
 
+function renderHead() {
+  const f = $('focus').value;
+  $('thead').innerHTML = `<tr><th class="left" rowspan="2" data-sort="tv">Symbool</th><th rowspan="2">Koers</th>` +
+    `<th class="pgroup" colspan="${PERIODS.length}">Plaats van buy &amp; hold tussen alle strategieën en rendement van vasthouden</th>` +
+    `<th class="left" rowspan="2" data-sort="vs_bh">Beste strategie (${esc(pinfo(f).label)})</th></tr><tr>` +
+    PERIODS.map(p => `<th class="pcell ${p.key === f ? 'focus' : ''}" data-sort="p:${p.key}">${esc(p.label)}</th>`).join('') + '</tr>';
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === sortKey);
+    th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
+  });
+}
+
 function pcell(s, p) {
-  const r = per(s, p);
-  if (!r) return `<td class="pcell desc">${s.result?.periods?.[p]?.error ? 'geen data' : '–'}</td>`;
-  const expected = (Date.now() - Date.parse(PERIODS[p])) / 864e5;
+  const r = per(s, p.key);
+  if (!r) return `<td class="pcell desc">${s.result?.periods?.[p.key]?.error ? 'geen data' : '–'}</td>`;
+  const end = p.end ? Date.parse(p.end) : Date.now();
+  const expected = (Math.min(end, Date.now()) - Date.parse(p.start)) / 864e5;
   const short = r.history_days != null && r.history_days < expected * 0.8;
-  return `<td class="pcell" title="${r.strategies} strategieën getest vanaf ${r.period?.start || PERIODS[p]}">` +
-    `<b class="${r.bh_rank === 1 ? 'rank1' : ''}">#${r.bh_rank}</b><span class="desc"> / ${r.strategies + 1}</span> ` +
+  return `<td class="pcell" title="${r.strategies} strategieën · ${r.period?.start || p.start} t/m ${r.period?.end || ''}">` +
+    `<b class="${r.bh_rank === 1 ? 'rank1' : ''}">#${r.bh_rank}</b> ` +
     `<span class="${cls(r.buy_and_hold_return)}">${pct(r.buy_and_hold_return, true)}</span>` +
-    `<small>${r.profitable_count} winstgevend · ${r.beat_count} beter${short ? ' · <span class="warn">kortere historie</span>' : ''}</small></td>`;
+    `<small>${r.profitable_count}/${r.strategies} winst${short ? ' · <span class="warn">korter</span>' : ''}</small></td>`;
+}
+
+function bestCell(s, f) {
+  const r = per(s, f), b = r?.best;
+  if (!b) return '<td class="best desc">–</td>';
+  const open = b.signal_open
+    ? ` <span class="badge ${b.bars_since_buy <= 5 ? 'new' : 'open'}">OPEN</span><small>buy ${b.last_buy_signal} · ${ago(b.bars_since_buy)}</small>`
+    : `<small>geen open buy${b.last_buy_signal ? ' · laatste buy ' + b.last_buy_signal : ''}</small>`;
+  return `<td class="best"><a class="nm" style="color:inherit;text-decoration:none" href="${toolLink(s, f, b.strategy)}" onclick="event.stopPropagation()">${esc(b.strategy)}</a> ` +
+    `<span class="${cls(b.total_return)}">${pct(b.total_return, true)}</span> · ` +
+    `<span class="${cls(b.vs_bh)}" title="Verschil met buy &amp; hold">${pp(b.vs_bh)} t.o.v. B&amp;H</span>${open}</td>`;
 }
 
 function row(s, g) {
   const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
   const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.name || s.tv)}</small>`;
-  if (!s.yahoo) return `<tr><td class="left">${sym}</td><td colspan="6" class="left desc">Geen koersdata (index, future of macro)</td></tr>`;
-  const any = ['2015', '2020', '2024'].map(p => per(s, p)).find(Boolean);
+  const cols = PERIODS.length + 3;
+  const any = PERIODS.map(p => per(s, p.key)).find(Boolean);
   if (!s.result || s.result.error || !any) {
-    const msg = s.result?.error ? `<span class="error">Fout: ${esc(s.result.error.slice(0, 90))}</span>` : s.result ? 'Opnieuw vernieuwen voor de drie periodes' : 'Nog niet vernieuwd';
-    return `<tr><td class="left">${sym}</td><td colspan="6" class="left desc">${msg}</td></tr>`;
+    const msg = s.result?.error ? `<span class="error">Fout: ${esc(s.result.error.slice(0, 90))}</span>` : s.result ? 'Opnieuw vernieuwen voor alle periodes' : 'Nog niet vernieuwd';
+    return `<tr><td class="left">${sym}</td><td colspan="${cols - 1}" class="left desc">${msg}</td></tr>`;
   }
-  const f = $('focus').value, r = per(s, f), key = g.list + '/' + g.name + '/' + s.tv;
-  const strats = r ? (r.profitable.length ? r.profitable.slice(0, 4).map(x =>
-      `<a class="chip ${x.beats_buy_and_hold ? 'beat' : ''} ${x.signal_open ? 'open' : ''}" href="${toolLink(s, f, x.strategy)}" onclick="event.stopPropagation()" ` +
-      `title="${esc(x.category_label)} · Sharpe ${nl(x.sharpe)} · max DD ${pct(x.max_drawdown)}">${esc(x.strategy)} ${pct(x.total_return, true)}</a>`).join('') +
-      (r.profitable_count > 4 ? `<span class="desc"> +${r.profitable_count - 4}</span>` : '')
-      : '<span class="desc">geen enkele strategie maakte winst</span>') : '<span class="desc">–</span>';
-  const lb = r?.latest_buy_profitable;
-  const buy = lb ? `<span class="badge ${lb.bars_since_buy <= 5 ? 'new' : 'open'}">OPEN</span> ${esc(lb.strategy)}` +
-      `<small>${lb.last_buy_signal} · ${ago(lb.bars_since_buy)} · strategie ${pct(lb.total_return, true)}</small>`
-    : '<span class="desc">geen open buy</span>';
+  const key = g.list + '/' + g.name + '/' + s.tv;
+  const last = per(s, PERIODS[0].key) || any;
   return `<tr class="row" data-key="${esc(key)}"><td class="left">${sym}</td>` +
-    `<td>${nl(any.last_close)}<small class="${cls(any.change_pct)}">${pct(any.change_pct, true)}</small></td>` +
-    pcell(s, '2015') + pcell(s, '2020') + pcell(s, '2024') +
-    `<td class="left strats">${strats}</td><td class="left">${buy}</td></tr>` +
-    (expanded.has(key) ? detail(s) : '');
+    `<td>${nl(last.last_close)}<small class="${cls(last.change_pct)}">${pct(last.change_pct, true)}</small></td>` +
+    PERIODS.map(p => pcell(s, p)).join('') + bestCell(s, $('focus').value) + '</tr>' +
+    (expanded.has(key) ? detail(s, cols) : '');
 }
 
-function detail(s) {
-  const cols = ['2015', '2020', '2024'].map(p => {
-    const r = per(s, p);
-    if (!r) return `<div><h4>${p} – nu</h4><span class="desc">geen resultaat</span></div>`;
-    const rows = r.profitable.map(x => `<tr><td><a href="${toolLink(s, p, x.strategy)}">${esc(x.strategy)}</a>` +
+function detail(s, cols) {
+  const blocks = PERIODS.map(p => {
+    const r = per(s, p.key);
+    if (!r) return `<div><h4>${esc(p.label)}</h4><span class="desc">geen resultaat</span></div>`;
+    const rows = r.profitable.slice(0, 5).map(x => `<tr><td><a href="${toolLink(s, p.key, x.strategy)}">${esc(x.strategy)}</a>` +
       (x.signal_open ? ' <span class="badge open">OPEN</span>' : '') + `</td><td class="up">${pct(x.total_return, true)}</td>` +
-      `<td>${x.beats_buy_and_hold ? '<span class="up">beter dan B&amp;H</span>' : ''}</td></tr>`).join('');
-    return `<div><h4>${p} – nu · buy &amp; hold ${pct(r.buy_and_hold_return, true)} op plaats ${r.bh_rank}</h4>` +
+      `<td class="${cls(x.total_return - r.buy_and_hold_return)}">${pp(x.total_return - r.buy_and_hold_return)}</td></tr>`).join('');
+    return `<div><h4>${esc(p.label)} · buy &amp; hold ${pct(r.buy_and_hold_return, true)} op plaats ${r.bh_rank}</h4>` +
       (rows ? `<table>${rows}</table>` : '<span class="desc">geen winstgevende strategie</span>') +
-      (r.profitable_count > r.profitable.length ? `<div class="desc">+${r.profitable_count - r.profitable.length} andere winstgevend</div>` : '') +
-      `<div style="margin-top:6px"><a class="lnk" style="margin:0" href="${toolLink(s, p, null, 'rank')}">volledige ranglijst</a>` +
-      `<a class="lnk" href="${toolLink(s, p, null, 'auto')}">automatische keuze</a></div></div>`;
+      `<div style="margin-top:6px"><a class="lnk" style="margin:0" href="${toolLink(s, p.key, null, 'rank')}">volledige ranglijst</a>` +
+      `<a class="lnk" href="${toolLink(s, p.key, null, 'auto')}">automatische keuze</a></div></div>`;
   }).join('');
-  return `<tr class="detail"><td colspan="7"><div class="dgrid">${cols}</div></td></tr>`;
+  return `<tr class="detail"><td colspan="${cols}"><div class="dgrid">${blocks}</div></td></tr>`;
 }
 
 function render() {
   if (!data) return;
+  renderHead();
+  const cols = PERIODS.length + 3;
   const groups = data.groups.filter(g => g.list === $('list').value && (!$('group').value || g.name === $('group').value));
   $('rows').innerHTML = groups.map(g => {
     const syms = g.symbols.filter(passes).sort((a, b) => {
@@ -257,23 +265,19 @@ function render() {
       return sortAsc ? c : -c;
     });
     const gk = g.list + '/' + g.name, open = !collapsed.has(gk);
-    return `<tr class="group" data-group="${esc(gk)}"><td colspan="7"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
+    return `<tr class="group" data-group="${esc(gk)}"><td colspan="${cols}"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
       `<span class="count">${syms.length}${syms.length !== g.symbols.length ? ' / ' + g.symbols.length : ''}</span></td></tr>` +
       (open ? syms.map(s => row(s, g)).join('') : '');
-  }).join('') || '<tr><td colspan="7" class="left desc">Deze lijst is leeg. Neem lijsten over via <a href="/watchlist">Watchlist-details</a>.</td></tr>';
-  document.querySelectorAll('th[data-sort]').forEach(th => {
-    th.classList.toggle('sorted', th.dataset.sort === sortKey);
-    th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
-  });
+  }).join('') || `<tr><td colspan="${cols}" class="left desc">Deze lijst is leeg. Neem lijsten over via <a href="/watchlist">Watchlist-details</a>.</td></tr>`;
 }
 
 function renderStatus() {
   const st = data.scan;
   $('refresh').disabled = st.running; $('stop').classList.toggle('hidden', !st.running);
   const lg = data.groups.filter(g => g.list === $('list').value);
-  const total = lg.reduce((n, g) => n + g.symbols.filter(s => s.yahoo).length, 0);
-  const done = lg.reduce((n, g) => n + g.symbols.filter(s => s.result?.periods).length, 0);
-  let txt = `${total} tickers met koersdata · ${done} met resultaten voor 2015, 2020 en 2024`;
+  const total = lg.reduce((n, g) => n + g.symbols.length, 0);
+  const done = lg.reduce((n, g) => n + g.symbols.filter(s => PERIODS.every(p => s.result?.periods?.[p.key])).length, 0);
+  let txt = `${total} tickers · ${done} met resultaten voor alle ${PERIODS.length} periodes`;
   if (st.running) txt = `Vernieuwen: ${st.done}/${st.total}` + (st.errors ? ` · ${st.errors} fouten` : '') + (st.current ? ` · laatst ${st.current}` : '') + ' — ' + txt;
   else if (data.finished) txt += ` · laatst vernieuwd ${data.finished.replace('T', ' ')}`;
   $('status').innerHTML = esc(txt) + (st.running ? `<div class="progress"><div style="width:${st.total ? 100 * st.done / st.total : 0}%"></div></div>` : '');
@@ -288,10 +292,15 @@ function fillLists() {
   const g = $('group').value, names = data.groups.filter(x => x.list === $('list').value).map(x => x.name);
   $('group').innerHTML = '<option value="">Alle groepen</option>' + names.map(n => `<option>${esc(n)}</option>`).join('');
   $('group').value = names.includes(g) ? g : '';
+  let f = $('focus').value;
+  if (!f) { try { f = localStorage.getItem('ov-focus') || ''; } catch {} }
+  $('focus').innerHTML = PERIODS.map(p => `<option value="${p.key}">${esc(p.label)}</option>`).join('');
+  $('focus').value = PERIODS.some(p => p.key === f) ? f : (PERIODS.find(p => p.key === '2j') || PERIODS[0]).key;
 }
 
 async function load() {
   data = await (await fetch('/api/watchlist')).json();
+  PERIODS = data.periods || [];
   fillLists(); renderStatus(); render();
   if (data.scan.running && !poll) poll = setInterval(load, 3000);
   if (!data.scan.running && poll) { clearInterval(poll); poll = null; }
@@ -315,11 +324,12 @@ $('list').addEventListener('change', () => {
   try { localStorage.setItem('ov-list', $('list').value); } catch {}
   $('group').value = ''; fillLists(); renderStatus(); render();
 });
-['search', 'filter', 'group', 'focus'].forEach(id => $(id).addEventListener('input', render));
-document.querySelector('thead').addEventListener('click', e => {
+$('focus').addEventListener('change', () => { try { localStorage.setItem('ov-focus', $('focus').value); } catch {} render(); });
+['search', 'filter', 'group'].forEach(id => $(id).addEventListener('input', render));
+$('thead').addEventListener('click', e => {
   const th = e.target.closest('th[data-sort]'); if (!th) return;
   if (sortKey === th.dataset.sort) sortAsc = !sortAsc;
-  else { sortKey = th.dataset.sort; sortAsc = ['tv', 'bars_since_buy'].includes(sortKey) || sortKey.startsWith('p20'); }
+  else { sortKey = th.dataset.sort; sortAsc = sortKey === 'tv' || sortKey.startsWith('p:'); }
   render();
 });
 $('rows').addEventListener('click', e => {

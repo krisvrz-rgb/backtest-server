@@ -208,6 +208,22 @@ def test_watchlist_scan_end_to_end(tmp_path, monkeypatch):
     assert p["start"] == "2020-01-01" and 1 <= p["bh_rank"] <= p["strategies"] + 1
     assert p["profitable_count"] >= len(p["profitable"]) and all(x["total_return"] > 0 for x in p["profitable"])
     assert view["groups"][0]["list"] == "TradingView · Geplakt"
+    assert [p["key"] for p in view["periods"]][:3] == ["2015", "2020", "2024"]
+
+
+def test_scan_one_closed_period_and_hidden_symbols(tmp_path, monkeypatch):
+    import app.watchlist as wl
+    r = wl.scan_one("AAA", {"2019": {"start": "2019-01-01", "end": "2019-12-31"}, "2018": "2018-01-01"}, 5, "synthetic")
+    y = r["periods"]["2019"]
+    assert y["end"] == "2019-12-31" and y["last_date"] <= "2019-12-31" and y["best"]["vs_bh"] is not None
+    assert "signal_open" in y["best"]
+    monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
+    monkeypatch.setattr(wl, "SCAN_FILE", tmp_path / "scan.json")
+    monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
+    wl.save_watchlist([{"name": "G", "symbols": [{"tv": "TVC:VIX", "yahoo": None}, {"tv": "NASDAQ:MU", "yahoo": "MU"}]},
+                       {"name": "LEEG", "symbols": [{"tv": "CME_MINI:ES1!", "yahoo": None}]}])
+    groups = wl.watchlist_view()["groups"]
+    assert [g["name"] for g in groups] == ["G"] and [s["tv"] for s in groups[0]["symbols"]] == ["NASDAQ:MU"]
 
 
 def test_import_tradingview_lists(tmp_path, monkeypatch):

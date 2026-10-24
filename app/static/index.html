@@ -775,7 +775,7 @@ function applyQuery() {
   const q = new URLSearchParams(location.search);
   if (!q.get('symbol')) return;
   $('symbol').value = q.get('symbol');
-  for (const k of ['source', 'start']) if (q.get(k)) $(k).value = q.get(k);
+  for (const k of ['source', 'start', 'end']) if (q.get(k)) $(k).value = q.get(k);
   if (q.get('strategy') && strategies.some(s => s.name === q.get('strategy'))) { $('strategy').value = q.get('strategy'); renderParams(); }
   if (q.get('view') === 'rank') runRank(); else if (q.get('view') === 'auto') runAuto(); else $('form').requestSubmit();
 }

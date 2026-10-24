@@ -17,7 +17,7 @@ from .engine import compute_metrics, monthly_returns, run_backtest
 from .optimize import OBJECTIVES, optimize
 from .pine import to_pine
 from .ranking import rank_strategies
-from .watchlist import (PERIODS, PORTFOLIO_LIST, PORTFOLIO_URL, SCANNER, TV_PREFIX, import_from_portfolio, import_from_tradingview,
+from .watchlist import (PORTFOLIO_LIST, default_periods, PORTFOLIO_URL, SCANNER, TV_PREFIX, import_from_portfolio, import_from_tradingview,
                         list_name, load_watchlist, parse_tradingview, replace_lists, save_watchlist, tv_to_yahoo,
                         watchlist_view)
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
@@ -380,8 +380,8 @@ def remove_symbol(group: str, symbol: str, list: str | None = None):
 
 
 class ScanRequest(BaseModel):
-    periods: dict[str, str] = Field(default_factory=lambda: dict(PERIODS),
-                                    description="Testperiodes: naam -> startdatum (einde = vandaag)")
+    periods: dict[str, Any] = Field(default_factory=lambda: default_periods(),
+                                    description="Testperiodes: naam -> startdatum of {start, end}; zonder end = tot vandaag")
     start: str | None = Field(None, description="Eén startdatum in plaats van de periodes")
     fee_bps: float = 5.0
     groups: list[str] | None = Field(None, description="Alleen deze groepen; leeg = alles")
