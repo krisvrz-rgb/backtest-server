@@ -30,8 +30,9 @@ EXCHANGE_SUFFIX = {
     "XETR": ".DE", "GETTEX": ".DE", "FWB": ".F", "LSE": ".L", "MIL": ".MI", "OMXSTO": ".ST", "TSX": ".TO",
     "TSXV": ".V", "EURONEXT": ".AS", "SIX": ".SW", "HKEX": ".HK",
 }
-# Euronext-aandelen die niet in Amsterdam noteren.
-EURONEXT_OVERRIDES = {"SOF": "SOF.BR", "ACKB": "ACKB.BR", "UCB": "UCB.BR", "ABI": "ABI.BR", "KBC": "KBC.BR"}
+# Euronext-noteringen die niet in Amsterdam zitten (Brussel .BR, Parijs .PA).
+EURONEXT_OVERRIDES = {"SOF": "SOF.BR", "ACKB": "ACKB.BR", "UCB": "UCB.BR", "ABI": "ABI.BR", "KBC": "KBC.BR",
+                      "NRJ": "NRJ.PA", "VAC": "VAC.PA"}
 # Yahoo gebruikt voor sommige munten een id-achtervoegsel.
 CRYPTO_OVERRIDES = {"UNI": "UNI7083", "HYPE": "HYPE32196", "SUI": "SUI20947", "TAO": "TAO22974"}
 CRYPTO_EXCHANGES = {"BITSTAMP", "COINBASE", "BINANCE", "KRAKEN", "BYBIT"}
