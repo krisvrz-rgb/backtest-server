@@ -1,6 +1,7 @@
 """Koersdata ophalen: Yahoo Finance, IBKR, Hyperliquid, lokale CSV-bestanden of synthetische testdata."""
 from __future__ import annotations
 
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -98,7 +99,7 @@ def load_hyperliquid(symbol: str, start: str | None, end: str | None) -> pd.Data
 def synthetic(symbol: str, start: str | None = None, end: str | None = None, seed: int | None = None) -> pd.DataFrame:
     """Geometrische Brownse beweging; handig om de server zonder internet te testen."""
     idx = pd.bdate_range(start or "2010-01-01", end or "2024-12-31")
-    rng = np.random.default_rng(seed if seed is not None else abs(hash(symbol)) % 2**32)
+    rng = np.random.default_rng(seed if seed is not None else zlib.crc32(symbol.upper().encode()))
     rets = rng.normal(0.0004, 0.015, len(idx))
     close = 100 * np.exp(np.cumsum(rets))
     open_ = close * (1 + rng.normal(0, 0.003, len(idx)))

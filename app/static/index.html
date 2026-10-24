@@ -89,12 +89,14 @@
   #rank-table td.name, #opt-table td.name { text-align: left; }
   #rank-table td.name small { display: block; color: var(--muted); font-size: 11px; }
   .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
+  .badge.open { color: var(--up); border-color: var(--up); font-weight: 600; }
   tr.bh td { background: color-mix(in srgb, var(--market) 12%, transparent); }
 </style>
 </head>
 <body>
 <header>
   <h1>Backtest Server</h1>
+  <a href="/watchlist">Watchlist</a>
   <a href="/docs">API-documentatie</a>
 </header>
 <main>
@@ -150,6 +152,7 @@
             <option value="sharpe">Sharpe</option>
             <option value="profit_factor">Profit factor</option>
             <option value="max_drawdown">Kleinste drawdown</option>
+            <option value="recent_buy">Recentste open buy-signaal</option>
           </select>
           <button type="button" id="rank-close">Sluiten</button>
         </div>
@@ -527,14 +530,16 @@ function renderRank() {
   $('rank-cats').innerHTML = `<button type="button" class="chip ${rankCats.size ? '' : 'on'}" data-cat="">Alle (${d.results.length - 1})</button>` +
     cats.map(([k, label]) => `<button type="button" class="chip ${rankCats.has(k) ? 'on' : ''}" data-cat="${k}">${label} (${d.results.filter(x => x.category === k).length})</button>`).join('');
   const rows = d.results.filter(x => !rankCats.size || rankCats.has(x.category) || x.category === 'benchmark')
-    .sort((a, b) => (b[key] ?? -Infinity) - (a[key] ?? -Infinity));
+    .sort(key === 'recent_buy'
+      ? (a, b) => (b.signal_open - a.signal_open) || ((a.bars_since_buy ?? 1e9) - (b.bars_since_buy ?? 1e9))
+      : (a, b) => (b[key] ?? -Infinity) - (a[key] ?? -Infinity));
   const bh = d.buy_and_hold;
   const beat = d.results.filter(x => x.category !== 'benchmark' && x.beats_buy_and_hold).length;
   $('rank-title').textContent = `Ranglijst ${d.symbol}`;
   $('rank-sub').textContent = `${d.results.length - 1} strategieën · ${d.results[0]?.period.start} t/m ${d.results[0]?.period.end} · ` +
     `${beat} doen beter dan buy & hold (${bh ? pct(bh.total_return, true) : '–'})`;
   let rank = 0;
-  $('rank-table').innerHTML = '<thead><tr><th>#</th><th style="text-align:left">Strategie</th><th>Rendement</th><th>Netto winst</th>' +
+  $('rank-table').innerHTML = '<thead><tr><th>#</th><th style="text-align:left">Strategie</th><th>Rendement</th><th>Laatste buy</th><th>Netto winst</th>' +
     '<th>% rendabel</th><th>Trades</th><th>Sharpe</th><th>Max DD</th><th>Profit factor</th></tr></thead><tbody>' +
     rows.map(x => {
       const isBh = x.category === 'benchmark';
@@ -542,11 +547,24 @@ function renderRank() {
       return `<tr data-name="${x.strategy}" class="${isBh ? 'bh' : ''}"><td>${isBh ? '–' : rank}</td>` +
         `<td class="name">${x.strategy} <span class="badge">${x.category_label}</span><small>${x.description}</small></td>` +
         `<td class="${cls(x.total_return)}">${pct(x.total_return, true)}</td>` +
+        `<td>${buyCell(x)}</td>` +
         `<td class="${cls(x.net_profit)}">${money(x.net_profit, true)}</td>` +
         `<td>${x.closed_trades ? pct(x.percent_profitable) : '–'}<small style="display:block;color:var(--muted)">${x.winning_trades}/${x.closed_trades}</small></td>` +
         `<td>${x.num_trades}</td><td>${nl(x.sharpe)}</td><td class="down">${pct(x.max_drawdown)}</td>` +
         `<td>${x.profit_factor == null ? '–' : nl(x.profit_factor)}</td></tr>`;
     }).join('') + '</tbody>';
+}
+
+function ago(bars, days) {
+  if (bars === 0) return 'vandaag';
+  if (bars === 1) return 'gisteren';
+  return days < 14 ? `${bars} handelsdagen geleden` : days < 60 ? `${Math.round(days / 7)} weken geleden` : `${Math.round(days / 30)} maanden geleden`;
+}
+
+function buyCell(x) {
+  if (!x.last_buy_signal) return '<span class="desc">geen</span>';
+  const badge = x.signal_open ? '<span class="badge open">OPEN</span>' : `<span class="badge">verkocht ${x.last_sell_signal}</span>`;
+  return `${badge}<small style="display:block;color:var(--muted)">${x.last_buy_signal} · ${ago(x.bars_since_buy, x.days_since_buy)}</small>`;
 }
 
 $('rank-btn').addEventListener('click', runRank);
@@ -570,7 +588,17 @@ $('copy').addEventListener('click', async () => {
   $('copy').textContent = 'Gekopieerd'; setTimeout(() => $('copy').textContent = 'Kopiëren', 1500);
 });
 
-loadStrategies().catch(err => $('error').textContent = 'Kon strategieën niet laden: ' + err.message);
+// Link vanaf de watchlist: /?symbol=HOOD&strategy=donchian_20_10&source=yahoo&start=2021-01-01
+function applyQuery() {
+  const q = new URLSearchParams(location.search);
+  if (!q.get('symbol')) return;
+  $('symbol').value = q.get('symbol');
+  for (const k of ['source', 'start']) if (q.get(k)) $(k).value = q.get(k);
+  if (q.get('strategy') && strategies.some(s => s.name === q.get('strategy'))) { $('strategy').value = q.get('strategy'); renderParams(); }
+  if (q.get('view') === 'rank') runRank(); else $('form').requestSubmit();
+}
+
+loadStrategies().then(applyQuery).catch(err => $('error').textContent = 'Kon strategieën niet laden: ' + err.message);
 </script>
 </body>
 </html>

@@ -159,3 +159,45 @@ def test_optimize_splits_train_and_test():
     scores = [x["score"] for x in d["results"] if x["score"] is not None]
     assert scores == sorted(scores, reverse=True)
     assert all(x["params"]["fast"] < x["params"]["slow"] for x in d["results"])
+
+
+def test_last_signals():
+    from app.engine import last_signals
+    idx = pd.bdate_range("2024-01-01", periods=10)
+    s = pd.Series([0, 1, 1, 0, 0, 1, 1, 1, 1, 1], index=idx, dtype=float)
+    r = last_signals(s)
+    assert r["last_buy_signal"] == idx[5].date().isoformat() and r["signal_open"] and r["bars_since_buy"] == 4
+    assert r["last_sell_signal"] == idx[3].date().isoformat()
+    r = last_signals(pd.Series([0, 1, 0], index=idx[:3], dtype=float))
+    assert not r["signal_open"] and r["bars_since_buy"] == 1
+
+
+def test_tradingview_symbol_mapping_and_parsing():
+    from app.watchlist import parse_tradingview, tv_to_yahoo
+    assert tv_to_yahoo("NASDAQ:AAPL") == "AAPL" and tv_to_yahoo("NYSE:BRK.B") == "BRK-B"
+    assert tv_to_yahoo("XETR:AIXA") == "AIXA.DE" and tv_to_yahoo("EURONEXT:SOF") == "SOF.BR"
+    assert tv_to_yahoo("BITSTAMP:BTCUSD") == "BTC-USD" and tv_to_yahoo("COINBASE:SOLEUR") == "SOL-EUR"
+    assert tv_to_yahoo("TVC:VIX") is None and tv_to_yahoo("CME_MINI:NQ1!") is None
+    groups = parse_tradingview("###AANDELEN,NASDAQ:MU,NYSE:ANET,###CRYPTO,BITSTAMP:BTCUSD")
+    assert [g["name"] for g in groups] == ["AANDELEN", "CRYPTO"] and len(groups[0]["symbols"]) == 2
+
+
+def test_watchlist_scan_end_to_end(tmp_path, monkeypatch):
+    import time as _t
+    import app.watchlist as wl
+    monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
+    monkeypatch.setattr(wl, "SCAN_FILE", tmp_path / "scan.json")
+    monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
+    r = client.post("/api/watchlist/import", json={"text": "###TEST,NASDAQ:AAA,NASDAQ:BBB"})
+    assert r.json()["symbols"] == 2
+    r = client.post("/api/watchlist/scan", json={"start": "2019-01-01", "source": "synthetic"})
+    assert r.status_code == 200, r.text
+    for _ in range(120):
+        if not client.get("/api/watchlist/scan").json()["running"]:
+            break
+        _t.sleep(0.5)
+    view = client.get("/api/watchlist").json()
+    res = [s["result"] for g in view["groups"] for s in g["symbols"]]
+    assert all(x and "error" not in x for x in res), res
+    first = res[0]
+    assert 0 <= first["beat_count"] <= first["strategies"] and first["best"]["times_bh"] > 0

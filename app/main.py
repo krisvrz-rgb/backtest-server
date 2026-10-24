@@ -15,6 +15,8 @@ from .data import DATA_DIR, _normalize, get_prices
 from .engine import compute_metrics, monthly_returns, run_backtest
 from .optimize import OBJECTIVES, optimize
 from .pine import to_pine
+from .ranking import rank_strategies
+from .watchlist import SCANNER, load_watchlist, parse_tradingview, save_watchlist, tv_to_yahoo, watchlist_view
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
 
 app = FastAPI(title="Backtest Server", version="0.1.0",
@@ -113,6 +115,11 @@ def index():
     return FileResponse(INDEX_HTML)
 
 
+@app.get("/watchlist", include_in_schema=False)
+def watchlist_page():
+    return FileResponse(STATIC_DIR / "watchlist.html")
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -148,32 +155,8 @@ class RankRequest(BaseModel):
 def rank(req: RankRequest):
     """Test alle strategieën (met standaardinstellingen) op één ticker en rangschik ze."""
     prices = _load(req.symbol, req.source, req.start, req.end)
-    rows = []
-    for name, cls in STRATEGIES.items():
-        if req.categories and cls.category not in req.categories and cls.category != "benchmark":
-            continue
-        try:
-            r = _run(BacktestRequest(symbol=req.symbol, strategy=name, source=req.source, start=req.start, end=req.end,
-                                     initial_capital=req.initial_capital, fee_bps=req.fee_bps,
-                                     include_equity=False, market_benchmark=None), prices)
-        except Exception as e:  # noqa: BLE001 - één kapotte strategie mag de ranglijst niet breken
-            rows.append({"strategy": name, "category": cls.category, "error": str(e)})
-            continue
-        m = r["metrics"]
-        rows.append({
-            "strategy": name, "category": cls.category, "category_label": CATEGORIES.get(cls.category, cls.category),
-            "description": cls.description, "params": r["params"],
-            **{k: m[k] for k in ("total_return", "cagr", "net_profit", "sharpe", "max_drawdown", "percent_profitable",
-                                 "num_trades", "closed_trades", "winning_trades", "profit_factor", "exposure")},
-            "beats_buy_and_hold": m["total_return"] > r["benchmark_metrics"]["total_return"],
-            "period": r["period"],
-        })
-    ok = [x for x in rows if "error" not in x]
-    # Hoogste eerst; bij max drawdown de minst diepe (dichtst bij 0) eerst.
-    ok.sort(key=lambda x: x[req.sort_by] if x[req.sort_by] is not None else float("-inf"), reverse=True)
-    bh = next((x for x in ok if x["strategy"] == "buy_and_hold"), None)
-    return {"symbol": req.symbol.upper(), "sort_by": req.sort_by, "count": len(ok),
-            "buy_and_hold": bh, "results": ok, "errors": [x for x in rows if "error" in x]}
+    out = rank_strategies(prices, req.start, req.initial_capital, req.fee_bps, req.categories, req.sort_by)
+    return {"symbol": req.symbol.upper(), **out}
 
 
 @app.post("/backtest")
@@ -251,3 +234,97 @@ async def upload_data(symbol: str, file: UploadFile = File(...)):
     DATA_DIR.mkdir(exist_ok=True)
     df.to_csv(DATA_DIR / f"{symbol.upper()}.csv")
     return {"symbol": symbol.upper(), "rows": len(df), "start": str(df.index[0].date()), "end": str(df.index[-1].date())}
+
+
+# --------------------------------------------------------------------------- watchlist
+
+
+@app.get("/api/watchlist")
+def get_watchlist():
+    """Watchlist met groepen en per ticker de laatste scanresultaten."""
+    return watchlist_view()
+
+
+class WatchlistImport(BaseModel):
+    text: str = Field(..., description="TradingView-export (###SECTIE,NASDAQ:AAPL,...) of één ticker per regel")
+    mode: Literal["replace", "merge"] = "replace"
+    group: str = Field("WATCHLIST", description="Groepsnaam voor tickers zonder ###SECTIE")
+
+
+@app.post("/api/watchlist/import")
+def import_watchlist(req: WatchlistImport):
+    new = parse_tradingview(req.text, req.group)
+    if req.mode == "merge":
+        groups = load_watchlist()
+        for g in new:
+            target = next((x for x in groups if x["name"] == g["name"]), None)
+            if target is None:
+                groups.append(g)
+            else:
+                known = {s["tv"] for s in target["symbols"]}
+                target["symbols"] += [s for s in g["symbols"] if s["tv"] not in known]
+        new = groups
+    save_watchlist(new)
+    return {"groups": len(new), "symbols": sum(len(g["symbols"]) for g in new),
+            "without_data": [s["tv"] for g in new for s in g["symbols"] if not s["yahoo"]]}
+
+
+class WatchlistSymbol(BaseModel):
+    symbol: str = Field(..., examples=["NASDAQ:AAPL"])
+    group: str = "WATCHLIST"
+    yahoo: str | None = Field(None, description="Yahoo-ticker als de automatische omzetting niet klopt (bv. SOF.BR)")
+
+
+@app.post("/api/watchlist/symbols")
+def add_symbol(req: WatchlistSymbol):
+    groups = load_watchlist()
+    target = next((g for g in groups if g["name"] == req.group), None)
+    if target is None:
+        target = {"name": req.group, "symbols": []}
+        groups.append(target)
+    target["symbols"] = [s for s in target["symbols"] if s["tv"] != req.symbol]
+    target["symbols"].append({"tv": req.symbol, "yahoo": req.yahoo or tv_to_yahoo(req.symbol)})
+    save_watchlist(groups)
+    return target
+
+
+@app.delete("/api/watchlist/symbols")
+def remove_symbol(group: str, symbol: str):
+    groups = load_watchlist()
+    for g in groups:
+        if g["name"] == group:
+            g["symbols"] = [s for s in g["symbols"] if s["tv"] != symbol]
+    save_watchlist([g for g in groups if g["symbols"]])
+    return {"ok": True}
+
+
+class ScanRequest(BaseModel):
+    start: str = Field("2021-01-01", description="Begin van de backtestperiode")
+    fee_bps: float = 5.0
+    groups: list[str] | None = Field(None, description="Alleen deze groepen; leeg = alles")
+    symbols: list[str] | None = Field(None, description="Alleen deze Yahoo-tickers")
+    source: Source = "yahoo"
+
+
+@app.post("/api/watchlist/scan")
+def start_scan(req: ScanRequest):
+    """Start de scanner op de achtergrond: alle strategieën op elke ticker."""
+    syms = req.symbols or list(dict.fromkeys(
+        s["yahoo"] for g in load_watchlist() if not req.groups or g["name"] in req.groups
+        for s in g["symbols"] if s.get("yahoo")))
+    if not syms:
+        raise HTTPException(400, "Geen tickers om te scannen")
+    if not SCANNER.start(syms, req.start, req.fee_bps, source=req.source):
+        raise HTTPException(409, "Er loopt al een scan")
+    return SCANNER.status()
+
+
+@app.get("/api/watchlist/scan")
+def scan_status():
+    return SCANNER.status()
+
+
+@app.post("/api/watchlist/scan/stop")
+def stop_scan():
+    SCANNER.stop()
+    return SCANNER.status()

@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watchlist · Backtest Server</title>
+<style>
+  :root {
+    --bg: #0d0f13; --panel: #151820; --panel-2: #1b1f29; --text: #e6e8eb; --muted: #8b93a1; --border: #262b36;
+    --accent: #3b82f6; --up: #22c55e; --down: #ef4444; --warn: #f59e0b;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f7f8fa; --text: #1b1f24; --muted: #6b7280; --border: #e3e6ea;
+      --accent: #2563eb; --up: #16a34a; --down: #dc2626; --warn: #d97706;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; display: flex; align-items: baseline; gap: 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header a { color: var(--muted); font-size: 13px; }
+  header a.active { color: var(--text); font-weight: 600; text-decoration: none; }
+  main { padding: 16px 20px 40px; max-width: 1600px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 700px) { main { padding: 12px 16px 40px; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; padding: 12px 14px; }
+  .toolbar .field { display: grid; gap: 4px; }
+  label { font-size: 12px; color: var(--muted); }
+  input, select, textarea { padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-2);
+                            color: var(--text); font: inherit; min-width: 0; }
+  textarea { width: 100%; min-height: 110px; font-family: ui-monospace, monospace; font-size: 12px; }
+  button { font: inherit; border-radius: 5px; padding: 7px 12px; cursor: pointer; border: 1px solid var(--border);
+           background: var(--panel-2); color: var(--text); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .grow { flex: 1; }
+  .progress { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .progress div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+  .status { font-size: 12px; color: var(--muted); padding: 0 14px 12px; }
+  .hidden { display: none !important; }
+  .import { padding: 12px 14px; display: grid; gap: 8px; border-top: 1px solid var(--border); }
+  .desc { font-size: 12px; color: var(--muted); }
+  .error { color: var(--down); }
+
+  .scroll { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align: right; }
+  th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--panel); cursor: pointer; user-select: none; }
+  th.left, td.left { text-align: left; }
+  th.sorted::after { content: " ↓"; color: var(--accent); }
+  th.sorted.asc::after { content: " ↑"; }
+  tr.group td { background: var(--panel-2); font-weight: 600; cursor: pointer; text-align: left; letter-spacing: .03em; }
+  tr.group td .count { float: right; color: var(--muted); font-weight: 400; }
+  tr.group td .caret { display: inline-block; width: 14px; color: var(--muted); }
+  tr.row { cursor: pointer; }
+  tr.row:hover td { background: var(--panel-2); }
+  td .sym { font-weight: 600; }
+  td small { display: block; color: var(--muted); font-size: 11px; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .badge { font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; color: var(--muted); }
+  .badge.open { color: var(--up); border-color: var(--up); font-weight: 600; }
+  .badge.new { color: #fff; background: var(--up); border-color: var(--up); font-weight: 600; }
+  .bar { display: inline-block; width: 60px; height: 6px; background: var(--panel-2); border-radius: 3px; vertical-align: middle; margin-left: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--up); }
+  .x { border: none; background: none; color: var(--muted); padding: 2px 6px; }
+  .x:hover { color: var(--down); }
+  a.lnk { color: var(--accent); text-decoration: none; font-size: 12px; margin-left: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Backtest Server</h1>
+  <a href="/">Backtest</a>
+  <a href="/watchlist" class="active">Watchlist</a>
+  <a href="/docs">API-documentatie</a>
+</header>
+<main>
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label for="start">Backtest vanaf</label><input id="start" type="date" value="2021-01-01"></div>
+      <div class="field"><label for="group-filter">Groep</label><select id="group-filter"><option value="">Alle groepen</option></select></div>
+      <button class="primary" id="scan">Scan starten</button>
+      <button id="stop" class="hidden">Stoppen</button>
+      <div class="grow"></div>
+      <div class="field"><label for="search">Zoeken</label><input id="search" placeholder="ticker…"></div>
+      <div class="field"><label for="only-open">Filter</label>
+        <select id="only-open">
+          <option value="">Alles tonen</option>
+          <option value="open">Alleen open buy-signalen</option>
+          <option value="new">Buy-signaal ≤ 5 dagen</option>
+          <option value="beat">Minstens 1 strategie beter dan B&amp;H</option>
+        </select>
+      </div>
+      <button id="toggle-import">Importeren / toevoegen</button>
+    </div>
+    <div class="status" id="status">Nog niet gescand.</div>
+    <div class="import hidden" id="import">
+      <div class="desc">Plak een TradingView-watchlist (in TradingView: watchlist-menu → <i>Lijst exporteren</i>, of kopieer de tickers).
+        Secties (###NAAM) worden groepen. Eén ticker per regel mag ook.</div>
+      <textarea id="import-text" placeholder="###AANDELEN,NASDAQ:MU,NYSE:ANET,###CRYPTO,BITSTAMP:BTCUSD"></textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="import-mode"><option value="merge">Toevoegen aan huidige lijst</option><option value="replace">Huidige lijst vervangen</option></select>
+        <input id="import-group" value="WATCHLIST" title="Groep voor tickers zonder ###sectie" style="width:140px">
+        <button class="primary" id="do-import">Importeren</button>
+        <span class="desc" id="import-result"></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th class="left" data-sort="tv">Symbool</th>
+          <th data-sort="last_close">Koers</th>
+          <th data-sort="change_pct">Wijz.%</th>
+          <th data-sort="beat_count">Beter dan B&amp;H</th>
+          <th class="left" data-sort="best_return">Beste strategie</th>
+          <th data-sort="times_bh">× B&amp;H</th>
+          <th data-sort="bh_return">Buy &amp; hold</th>
+          <th class="left" data-sort="bars_since_buy">Laatste buy-signaal</th>
+          <th data-sort="open_signals">Open signalen</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+  <div class="desc">Per ticker worden alle strategieën met hun standaardinstellingen getest. <b>× B&amp;H</b> = eindkapitaal van de beste strategie
+    gedeeld door dat van gewoon vasthouden. <b>Laatste buy-signaal</b> = het meest recente koopsignaal dat nog niet gevolgd werd door een verkoop,
+    bij de strategieën die buy &amp; hold verslaan. <b>Open signalen</b> = hoeveel van die strategieën nu in het aandeel zitten.
+    Klik op een ticker voor de backtest met de beste strategie.</div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let data = null, sortKey = 'beat_count', sortAsc = false, collapsed = new Set(), poll = null;
+const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (v, sign) => v == null ? '–' : (sign && v > 0 ? '+' : '') + nl(v * 100, 1) + '%';
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+try { collapsed = new Set(JSON.parse(localStorage.getItem('wl-collapsed') || '[]')); } catch {}
+
+function ago(bars, days) {
+  if (bars === 0) return 'vandaag';
+  if (bars === 1) return 'gisteren';
+  return days < 14 ? `${bars} dagen geleden` : days < 60 ? `${Math.round(days / 7)} weken geleden` : `${Math.round(days / 30)} mnd geleden`;
+}
+
+function value(s, key) {
+  const r = s.result;
+  if (key === 'tv') return s.tv;
+  if (!r || r.error) return null;
+  return { best_return: r.best?.total_return, times_bh: r.best?.times_bh, bh_return: r.buy_and_hold_return,
+           bars_since_buy: r.latest_buy ? r.latest_buy.bars_since_buy : null }[key] ?? r[key] ?? null;
+}
+
+function passes(s) {
+  const q = $('search').value.trim().toUpperCase();
+  if (q && !s.tv.toUpperCase().includes(q) && !(s.yahoo || '').toUpperCase().includes(q)) return false;
+  const f = $('only-open').value, r = s.result;
+  if (!f) return true;
+  if (!r || r.error) return false;
+  if (f === 'open') return !!r.latest_buy;
+  if (f === 'new') return !!r.latest_buy && r.latest_buy.bars_since_buy <= 5;
+  if (f === 'beat') return r.beat_count > 0;
+  return true;
+}
+
+function row(s, group) {
+  const r = s.result, link = `/?symbol=${encodeURIComponent(s.yahoo || '')}&source=yahoo&start=${$('start').value}`;
+  const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
+  const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.tv)}${s.yahoo && s.yahoo !== tvShort ? ' · ' + esc(s.yahoo) : ''}</small>`;
+  const del = `<button class="x" title="Verwijderen" data-del="${esc(s.tv)}" data-group="${esc(group)}">×</button>`;
+  if (!s.yahoo) return `<tr><td class="left">${sym}</td><td colspan="8" class="left desc">Geen koersdata (index, future of macro)</td><td>${del}</td></tr>`;
+  if (!r) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="8" class="left desc">Nog niet gescand</td><td>${del}</td></tr>`;
+  if (r.error) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="8" class="left error" title="${esc(r.error)}">Fout: ${esc(r.error.slice(0, 90))}</td><td>${del}</td></tr>`;
+  const b = r.best, lb = r.latest_buy;
+  const share = r.strategies ? r.beat_count / r.strategies : 0;
+  const buy = lb ? `<span class="badge ${lb.bars_since_buy <= 5 ? 'new' : 'open'}">OPEN</span> ${esc(lb.strategy)}` +
+      `<small>${lb.last_buy_signal} · ${ago(lb.bars_since_buy, lb.days_since_buy)} · ${pct(lb.total_return, true)}</small>`
+    : '<span class="desc">geen open signaal</span>';
+  return `<tr class="row" data-link="${link}&strategy=${encodeURIComponent(b?.strategy || '')}">` +
+    `<td class="left">${sym}</td><td>${nl(r.last_close)}</td><td class="${cls(r.change_pct)}">${pct(r.change_pct, true)}</td>` +
+    `<td>${r.beat_count}/${r.strategies}<span class="bar"><i style="width:${Math.round(share * 100)}%"></i></span></td>` +
+    `<td class="left">${b ? esc(b.strategy) + `<small>${pct(b.total_return, true)} · ${b.num_trades} trades · ${pct(b.percent_profitable)} rendabel</small>` : '–'}</td>` +
+    `<td class="${b && b.times_bh >= 1 ? 'up' : 'down'}">${b && b.times_bh != null ? nl(b.times_bh) + '×' : '–'}</td>` +
+    `<td class="${cls(r.buy_and_hold_return)}">${pct(r.buy_and_hold_return, true)}</td>` +
+    `<td class="left">${buy}</td><td>${r.open_signals}${r.recent_buys ? `<small>${r.recent_buys} nieuw</small>` : ''}</td>` +
+    `<td><a class="lnk" href="/?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${$('start').value}&view=rank" title="Ranglijst" onclick="event.stopPropagation()">ranglijst</a>${del}</td></tr>`;
+}
+
+function render() {
+  if (!data) return;
+  const groups = data.groups.filter(g => !$('group-filter').value || g.name === $('group-filter').value);
+  $('rows').innerHTML = groups.map(g => {
+    const syms = g.symbols.filter(passes).sort((a, b) => {
+      const va = value(a, sortKey), vb = value(b, sortKey);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      const c = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+      return sortKey === 'bars_since_buy' || sortKey === 'tv' ? (sortAsc ? -c : c) : (sortAsc ? c : -c);
+    });
+    const open = !collapsed.has(g.name);
+    return `<tr class="group" data-group="${esc(g.name)}"><td colspan="10"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
+      `<span class="count">${syms.length}${syms.length !== g.symbols.length ? ' / ' + g.symbols.length : ''}</span></td></tr>` +
+      (open ? syms.map(s => row(s, g.name)).join('') : '');
+  }).join('');
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === sortKey);
+    th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
+  });
+}
+
+function renderStatus() {
+  const st = data.scan, s = data.settings;
+  $('scan').disabled = st.running; $('stop').classList.toggle('hidden', !st.running);
+  const total = data.groups.reduce((n, g) => n + g.symbols.length, 0);
+  const scanned = data.groups.reduce((n, g) => n + g.symbols.filter(x => x.result && !x.result.error).length, 0);
+  let txt = `${total} tickers in ${data.groups.length} groepen · ${scanned} gescand`;
+  if (st.running) txt = `Scannen: ${st.done}/${st.total}` + (st.errors ? ` · ${st.errors} fouten` : '') + (st.current ? ` · laatst ${st.current}` : '') + ' — ' + txt;
+  else if (data.finished) txt += ` · laatste scan ${data.finished.replace('T', ' ')}` + (s ? ` (vanaf ${s.start})` : '');
+  $('status').innerHTML = esc(txt) + (st.running ? `<div class="progress"><div style="width:${st.total ? 100 * st.done / st.total : 0}%"></div></div>` : '');
+  if (s?.start && !st.running && !$('start').dataset.touched) $('start').value = s.start;
+}
+
+async function load() {
+  data = await (await fetch('/api/watchlist')).json();
+  const sel = $('group-filter'), cur = sel.value;
+  sel.innerHTML = '<option value="">Alle groepen</option>' + data.groups.map(g => `<option>${esc(g.name)}</option>`).join('');
+  sel.value = cur;
+  renderStatus(); render();
+  if (data.scan.running && !poll) poll = setInterval(load, 3000);
+  if (!data.scan.running && poll) { clearInterval(poll); poll = null; }
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail; } catch {} throw new Error(m); }
+  return r.json();
+}
+
+$('scan').addEventListener('click', async () => {
+  try {
+    await api('/api/watchlist/scan', { method: 'POST', body: JSON.stringify({ start: $('start').value,
+      groups: $('group-filter').value ? [$('group-filter').value] : null }) });
+    load();
+  } catch (e) { $('status').textContent = 'Scan starten mislukt: ' + e.message; }
+});
+$('stop').addEventListener('click', async () => { await api('/api/watchlist/scan/stop', { method: 'POST' }); load(); });
+$('start').addEventListener('change', () => $('start').dataset.touched = '1');
+$('toggle-import').addEventListener('click', () => $('import').classList.toggle('hidden'));
+$('do-import').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/watchlist/import', { method: 'POST', body: JSON.stringify({ text: $('import-text').value,
+      mode: $('import-mode').value, group: $('import-group').value || 'WATCHLIST' }) });
+    $('import-result').textContent = `${r.symbols} tickers in ${r.groups} groepen` + (r.without_data.length ? ` · ${r.without_data.length} zonder koersdata` : '') + '. Start daarna een scan.';
+    load();
+  } catch (e) { $('import-result').textContent = 'Mislukt: ' + e.message; }
+});
+['search', 'only-open', 'group-filter'].forEach(id => $(id).addEventListener('input', render));
+document.querySelector('thead').addEventListener('click', e => {
+  const th = e.target.closest('th[data-sort]'); if (!th) return;
+  if (sortKey === th.dataset.sort) sortAsc = !sortAsc; else { sortKey = th.dataset.sort; sortAsc = false; }
+  render();
+});
+$('rows').addEventListener('click', async e => {
+  const del = e.target.closest('[data-del]');
+  if (del) {
+    e.stopPropagation();
+    if (!confirm(`${del.dataset.del} uit ${del.dataset.group} verwijderen?`)) return;
+    await api(`/api/watchlist/symbols?group=${encodeURIComponent(del.dataset.group)}&symbol=${encodeURIComponent(del.dataset.del)}`, { method: 'DELETE' });
+    return load();
+  }
+  const g = e.target.closest('tr.group');
+  if (g) {
+    collapsed.has(g.dataset.group) ? collapsed.delete(g.dataset.group) : collapsed.add(g.dataset.group);
+    try { localStorage.setItem('wl-collapsed', JSON.stringify([...collapsed])); } catch {}
+    return render();
+  }
+  const tr = e.target.closest('tr.row');
+  if (tr) location.href = tr.dataset.link;
+});
+
+load().catch(e => $('status').textContent = 'Kon watchlist niet laden: ' + e.message);
+</script>
+</body>
+</html>

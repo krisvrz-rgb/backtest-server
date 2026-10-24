@@ -129,6 +129,24 @@ def _simulate(open_: pd.Series, close: pd.Series, position: pd.Series, initial_c
     return equity, equity_open
 
 
+def last_signals(signal: pd.Series) -> dict:
+    """Laatste koop- en verkoopsignaal (op de slot; de order volgt op de open van de dag erna)."""
+    sig = (signal > 0).astype(int)
+    change = sig.diff().fillna(sig.iloc[0] if len(sig) else 0)
+    buys, sells = sig.index[change > 0], sig.index[change < 0]
+    last_buy = buys[-1] if len(buys) else None
+    last_sell = sells[-1] if len(sells) else None
+    is_open = bool(sig.iloc[-1]) if len(sig) else False
+    end = sig.index[-1] if len(sig) else None
+    return {
+        "last_buy_signal": last_buy.date().isoformat() if last_buy is not None else None,
+        "last_sell_signal": last_sell.date().isoformat() if last_sell is not None else None,
+        "signal_open": is_open,
+        "bars_since_buy": int(len(sig) - 1 - sig.index.get_loc(last_buy)) if last_buy is not None else None,
+        "days_since_buy": int((end - last_buy).days) if last_buy is not None else None,
+    }
+
+
 def run_backtest(prices: pd.DataFrame, strategy: Strategy, initial_capital: float = 10_000.0,
                  fee_bps: float = 5.0, slippage_bps: float = 0.0, allow_short: bool = False,
                  start: str | pd.Timestamp | None = None) -> BacktestResult:
@@ -165,6 +183,7 @@ def run_backtest(prices: pd.DataFrame, strategy: Strategy, initial_capital: floa
         "excess_profit": float(equity.iloc[-1] - benchmark.iloc[-1]),
         "excess_return": float((equity.iloc[-1] - benchmark.iloc[-1]) / initial_capital),
         **{k: v for k, v in stats.items() if k not in metrics},
+        **last_signals(signal),
     })
     bench_metrics = compute_metrics(benchmark)
     bench_metrics["net_profit"] = float(benchmark.iloc[-1] - initial_capital)

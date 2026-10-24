@@ -23,6 +23,10 @@ De server draait standaard op poort **9000** (poort 8000 is al de portfolio serv
 | POST | `/backtest` | Eén backtest: metrics, trades en equity curve |
 | POST | `/compare` | Meerdere symbolen x strategieën, gesorteerd op Sharpe |
 | POST | `/optimize` | Instellingen van één strategie fine-tunen: zoeken op 70% van de periode, controleren op de laatste 30% |
+| GET | `/watchlist` | Watchlist-pagina: alle tickers met backtestcijfers per groep |
+| GET | `/api/watchlist` | Watchlist met groepen en laatste scanresultaten |
+| POST | `/api/watchlist/import` | TradingView-export importeren (###SECTIE = groep) |
+| POST | `/api/watchlist/scan` | Scanner starten: alle strategieën op elke ticker (achtergrond, cache in data/scan.json) |
 | POST | `/pine` | Pine Script v6 voor een strategie, klaar voor de Pine Editor |
 | GET/POST | `/data`, `/data/{symbol}` | Koersdata (CSV) bekijken of uploaden |
 

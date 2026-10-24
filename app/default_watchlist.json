@@ -1,0 +1,617 @@
+{
+ "source": "TradingView-watchlist 'Watchlist' (2026-10-24)",
+ "groups": [
+  {
+   "name": "GENERAL",
+   "symbols": [
+    {
+     "tv": "NASDAQ:QQQ",
+     "yahoo": "QQQ"
+    },
+    {
+     "tv": "AMEX:SPY",
+     "yahoo": "SPY"
+    }
+   ]
+  },
+  {
+   "name": "AANDELEN",
+   "symbols": [
+    {
+     "tv": "NASDAQ:NAUT",
+     "yahoo": "NAUT"
+    },
+    {
+     "tv": "NYSE:VG",
+     "yahoo": "VG"
+    },
+    {
+     "tv": "NASDAQ:OUST",
+     "yahoo": "OUST"
+    },
+    {
+     "tv": "NYSE:AMPX",
+     "yahoo": "AMPX"
+    },
+    {
+     "tv": "NASDAQ:ASTS",
+     "yahoo": "ASTS"
+    },
+    {
+     "tv": "NASDAQ:RKLB",
+     "yahoo": "RKLB"
+    },
+    {
+     "tv": "NASDAQ:POET",
+     "yahoo": "POET"
+    },
+    {
+     "tv": "NASDAQ:MU",
+     "yahoo": "MU"
+    },
+    {
+     "tv": "NASDAQ:SPCX",
+     "yahoo": "SPCX"
+    },
+    {
+     "tv": "NASDAQ:QCOM",
+     "yahoo": "QCOM"
+    },
+    {
+     "tv": "NASDAQ:INTC",
+     "yahoo": "INTC"
+    },
+    {
+     "tv": "NYSE:ZETA",
+     "yahoo": "ZETA"
+    },
+    {
+     "tv": "NASDAQ:DUOL",
+     "yahoo": "DUOL"
+    },
+    {
+     "tv": "NYSE:ANET",
+     "yahoo": "ANET"
+    },
+    {
+     "tv": "NYSE:COHR",
+     "yahoo": "COHR"
+    },
+    {
+     "tv": "EURONEXT:SOF",
+     "yahoo": "SOF.BR"
+    },
+    {
+     "tv": "NASDAQ:STRC",
+     "yahoo": "STRC"
+    },
+    {
+     "tv": "NASDAQ:MSFT",
+     "yahoo": "MSFT"
+    },
+    {
+     "tv": "NASDAQ:LITE",
+     "yahoo": "LITE"
+    },
+    {
+     "tv": "NASDAQ:PLTR",
+     "yahoo": "PLTR"
+    },
+    {
+     "tv": "NASDAQ:MSTR",
+     "yahoo": "MSTR"
+    },
+    {
+     "tv": "NASDAQ:TSEM",
+     "yahoo": "TSEM"
+    },
+    {
+     "tv": "NASDAQ:ALAB",
+     "yahoo": "ALAB"
+    },
+    {
+     "tv": "NASDAQ:NBIS",
+     "yahoo": "NBIS"
+    },
+    {
+     "tv": "NASDAQ:AVGO",
+     "yahoo": "AVGO"
+    },
+    {
+     "tv": "NYSE:BMNR",
+     "yahoo": "BMNR"
+    },
+    {
+     "tv": "NASDAQ:NVDA",
+     "yahoo": "NVDA"
+    },
+    {
+     "tv": "NYSE:SPGI",
+     "yahoo": "SPGI"
+    },
+    {
+     "tv": "NASDAQ:TSLA",
+     "yahoo": "TSLA"
+    },
+    {
+     "tv": "NYSE:VRT",
+     "yahoo": "VRT"
+    },
+    {
+     "tv": "NYSE:ELF",
+     "yahoo": "ELF"
+    },
+    {
+     "tv": "NYSE:CRM",
+     "yahoo": "CRM"
+    },
+    {
+     "tv": "NASDAQ:MELI",
+     "yahoo": "MELI"
+    },
+    {
+     "tv": "NYSE:BN",
+     "yahoo": "BN"
+    },
+    {
+     "tv": "NASDAQ:AMZN",
+     "yahoo": "AMZN"
+    },
+    {
+     "tv": "NASDAQ:META",
+     "yahoo": "META"
+    },
+    {
+     "tv": "NASDAQ:SOFI",
+     "yahoo": "SOFI"
+    },
+    {
+     "tv": "NASDAQ:NVTS",
+     "yahoo": "NVTS"
+    },
+    {
+     "tv": "NASDAQ:GOOGL",
+     "yahoo": "GOOGL"
+    },
+    {
+     "tv": "NYSE:MA",
+     "yahoo": "MA"
+    },
+    {
+     "tv": "NASDAQ:HOOD",
+     "yahoo": "HOOD"
+    },
+    {
+     "tv": "NYSE:LEU",
+     "yahoo": "LEU"
+    },
+    {
+     "tv": "NASDAQ:GRAB",
+     "yahoo": "GRAB"
+    },
+    {
+     "tv": "NASDAQ:NFLX",
+     "yahoo": "NFLX"
+    },
+    {
+     "tv": "NASDAQ:SNDK",
+     "yahoo": "SNDK"
+    },
+    {
+     "tv": "NYSE:BABA",
+     "yahoo": "BABA"
+    },
+    {
+     "tv": "NASDAQ:IREN",
+     "yahoo": "IREN"
+    },
+    {
+     "tv": "NASDAQ:IBKR",
+     "yahoo": "IBKR"
+    },
+    {
+     "tv": "NASDAQ:CRWV",
+     "yahoo": "CRWV"
+    },
+    {
+     "tv": "NYSE:LLY",
+     "yahoo": "LLY"
+    },
+    {
+     "tv": "NYSE:NKE",
+     "yahoo": "NKE"
+    },
+    {
+     "tv": "NASDAQ:KEEL",
+     "yahoo": "KEEL"
+    },
+    {
+     "tv": "NASDAQ:MAMA",
+     "yahoo": "MAMA"
+    },
+    {
+     "tv": "NYSE:UBER",
+     "yahoo": "UBER"
+    },
+    {
+     "tv": "NASDAQ:ALMU",
+     "yahoo": "ALMU"
+    },
+    {
+     "tv": "NYSE:RDDT",
+     "yahoo": "RDDT"
+    },
+    {
+     "tv": "NYSE:HIMS",
+     "yahoo": "HIMS"
+    },
+    {
+     "tv": "NASDAQ:WYFI",
+     "yahoo": "WYFI"
+    }
+   ]
+  },
+  {
+   "name": "CRYPTO",
+   "symbols": [
+    {
+     "tv": "BITSTAMP:UNIUSD",
+     "yahoo": "UNI-USD"
+    },
+    {
+     "tv": "BITSTAMP:ETHEUR",
+     "yahoo": "ETH-EUR"
+    },
+    {
+     "tv": "BITSTAMP:ETHUSD",
+     "yahoo": "ETH-USD"
+    },
+    {
+     "tv": "COINBASE:SOLEUR",
+     "yahoo": "SOL-EUR"
+    },
+    {
+     "tv": "BITSTAMP:BTCEUR",
+     "yahoo": "BTC-EUR"
+    },
+    {
+     "tv": "COINBASE:SOLUSD",
+     "yahoo": "SOL-USD"
+    },
+    {
+     "tv": "BITSTAMP:HYPEUSD",
+     "yahoo": "HYPE-USD"
+    },
+    {
+     "tv": "BITSTAMP:BTCUSD",
+     "yahoo": "BTC-USD"
+    },
+    {
+     "tv": "NASDAQ:DFDV",
+     "yahoo": "DFDV"
+    },
+    {
+     "tv": "NASDAQ:UPXI",
+     "yahoo": "UPXI"
+    }
+   ]
+  },
+  {
+   "name": "ETFS",
+   "symbols": [
+    {
+     "tv": "GETTEX:DRAM",
+     "yahoo": "DRAM.DE"
+    },
+    {
+     "tv": "EURONEXT:SEMI",
+     "yahoo": "SEMI.AS"
+    },
+    {
+     "tv": "EURONEXT:ICHN",
+     "yahoo": "ICHN.AS"
+    },
+    {
+     "tv": "XETR:EUVL",
+     "yahoo": "EUVL.DE"
+    },
+    {
+     "tv": "EURONEXT:SPYL",
+     "yahoo": "SPYL.AS"
+    },
+    {
+     "tv": "EURONEXT:IWDA",
+     "yahoo": "IWDA.AS"
+    },
+    {
+     "tv": "EURONEXT:IMAE",
+     "yahoo": "IMAE.AS"
+    },
+    {
+     "tv": "EURONEXT:NRJ",
+     "yahoo": "NRJ.AS"
+    },
+    {
+     "tv": "EURONEXT:SGLD",
+     "yahoo": "SGLD.AS"
+    },
+    {
+     "tv": "EURONEXT:FLXI",
+     "yahoo": "FLXI.AS"
+    }
+   ]
+  },
+  {
+   "name": "INTRESTING",
+   "symbols": [
+    {
+     "tv": "NYSE:NET",
+     "yahoo": "NET"
+    },
+    {
+     "tv": "NYSE:RBRK",
+     "yahoo": "RBRK"
+    },
+    {
+     "tv": "NASDAQ:NEXT",
+     "yahoo": "NEXT"
+    },
+    {
+     "tv": "NYSE:LNG",
+     "yahoo": "LNG"
+    },
+    {
+     "tv": "NASDAQ:RXRX",
+     "yahoo": "RXRX"
+    },
+    {
+     "tv": "NYSE:NOK",
+     "yahoo": "NOK"
+    },
+    {
+     "tv": "NASDAQ:ONDS",
+     "yahoo": "ONDS"
+    },
+    {
+     "tv": "NYSE:NU",
+     "yahoo": "NU"
+    },
+    {
+     "tv": "NASDAQ:MRVL",
+     "yahoo": "MRVL"
+    },
+    {
+     "tv": "NASDAQ:AMD",
+     "yahoo": "AMD"
+    },
+    {
+     "tv": "NYSE:TSM",
+     "yahoo": "TSM"
+    },
+    {
+     "tv": "NYSE:PATH",
+     "yahoo": "PATH"
+    },
+    {
+     "tv": "NYSE:DOCN",
+     "yahoo": "DOCN"
+    },
+    {
+     "tv": "NASDAQ:RCAT",
+     "yahoo": "RCAT"
+    },
+    {
+     "tv": "NASDAQ:ASML",
+     "yahoo": "ASML"
+    },
+    {
+     "tv": "NASDAQ:AMKR",
+     "yahoo": "AMKR"
+    },
+    {
+     "tv": "NYSE:ORCL",
+     "yahoo": "ORCL"
+    },
+    {
+     "tv": "NASDAQ:OSS",
+     "yahoo": "OSS"
+    },
+    {
+     "tv": "NASDAQ:LMB",
+     "yahoo": "LMB"
+    },
+    {
+     "tv": "NASDAQ:SHOP",
+     "yahoo": "SHOP"
+    },
+    {
+     "tv": "NYSE:TUYA",
+     "yahoo": "TUYA"
+    },
+    {
+     "tv": "NYSE:OTIS",
+     "yahoo": "OTIS"
+    },
+    {
+     "tv": "NASDAQ:CEG",
+     "yahoo": "CEG"
+    },
+    {
+     "tv": "NYSE:MSCI",
+     "yahoo": "MSCI"
+    },
+    {
+     "tv": "NYSE:FICO",
+     "yahoo": "FICO"
+    },
+    {
+     "tv": "NYSE:NVO",
+     "yahoo": "NVO"
+    },
+    {
+     "tv": "NASDAQ:BIDU",
+     "yahoo": "BIDU"
+    },
+    {
+     "tv": "NASDAQ:IBRX",
+     "yahoo": "IBRX"
+    },
+    {
+     "tv": "EURONEXT:VAC",
+     "yahoo": "VAC.AS"
+    },
+    {
+     "tv": "NYSE:MCO",
+     "yahoo": "MCO"
+    },
+    {
+     "tv": "NYSE:UNH",
+     "yahoo": "UNH"
+    },
+    {
+     "tv": "NASDAQ:ABNB",
+     "yahoo": "ABNB"
+    },
+    {
+     "tv": "NASDAQ:SMCI",
+     "yahoo": "SMCI"
+    },
+    {
+     "tv": "NYSE:EFX",
+     "yahoo": "EFX"
+    },
+    {
+     "tv": "NASDAQ:SBET",
+     "yahoo": "SBET"
+    },
+    {
+     "tv": "NASDAQ:ADUR",
+     "yahoo": "ADUR"
+    },
+    {
+     "tv": "NASDAQ:APLD",
+     "yahoo": "APLD"
+    }
+   ]
+  },
+  {
+   "name": "INVESTMENT HOLDINGS",
+   "symbols": [
+    {
+     "tv": "EURONEXT:HAL",
+     "yahoo": "HAL.AS"
+    },
+    {
+     "tv": "EURONEXT:PRX",
+     "yahoo": "PRX.AS"
+    },
+    {
+     "tv": "EURONEXT:ACKB",
+     "yahoo": "ACKB.BR"
+    },
+    {
+     "tv": "EURONEXT:EXO",
+     "yahoo": "EXO.AS"
+    }
+   ]
+  },
+  {
+   "name": "SECTION 3",
+   "symbols": [
+    {
+     "tv": "NASDAQ:SMTC",
+     "yahoo": "SMTC"
+    },
+    {
+     "tv": "NASDAQ:BKR",
+     "yahoo": "BKR"
+    },
+    {
+     "tv": "NASDAQ:ACMR",
+     "yahoo": "ACMR"
+    },
+    {
+     "tv": "NYSE:WMB",
+     "yahoo": "WMB"
+    },
+    {
+     "tv": "NYSE:LBRT",
+     "yahoo": "LBRT"
+    },
+    {
+     "tv": "NASDAQ:AIRJ",
+     "yahoo": "AIRJ"
+    },
+    {
+     "tv": "NYSE:ONTO",
+     "yahoo": "ONTO"
+    },
+    {
+     "tv": "NYSE:CMI",
+     "yahoo": "CMI"
+    },
+    {
+     "tv": "NASDAQ:AEHR",
+     "yahoo": "AEHR"
+    },
+    {
+     "tv": "NASDAQ:AAOI",
+     "yahoo": "AAOI"
+    },
+    {
+     "tv": "NYSE:ETN",
+     "yahoo": "ETN"
+    },
+    {
+     "tv": "NYSE:FN",
+     "yahoo": "FN"
+    },
+    {
+     "tv": "NASDAQ:ON",
+     "yahoo": "ON"
+    },
+    {
+     "tv": "NYSE:GEV",
+     "yahoo": "GEV"
+    },
+    {
+     "tv": "XETR:AIXA",
+     "yahoo": "AIXA.DE"
+    },
+    {
+     "tv": "NASDAQ:LWLG",
+     "yahoo": "LWLG"
+    },
+    {
+     "tv": "NYSE:HWM",
+     "yahoo": "HWM"
+    },
+    {
+     "tv": "OMXSTO:SIVE",
+     "yahoo": "SIVE.ST"
+    }
+   ]
+  },
+  {
+   "name": "ENERGY",
+   "symbols": [
+    {
+     "tv": "CBOE:POEL",
+     "yahoo": "POEL"
+    },
+    {
+     "tv": "NASDAQ:ARM",
+     "yahoo": "ARM"
+    },
+    {
+     "tv": "NASDAQ:PDD",
+     "yahoo": "PDD"
+    },
+    {
+     "tv": "NYSE:BE",
+     "yahoo": "BE"
+    }
+   ]
+  }
+ ]
+}
