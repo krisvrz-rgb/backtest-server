@@ -67,6 +67,15 @@
   .x { border: none; background: none; color: var(--muted); padding: 2px 6px; }
   .x:hover { color: var(--down); }
   a.lnk { color: var(--accent); text-decoration: none; font-size: 12px; margin-left: 6px; }
+  tr.row.opened td { background: var(--panel-2); }
+  tr.detail > td { padding: 0 12px 12px; background: var(--panel-2); white-space: normal; text-align: left; }
+  .detail-box { position: sticky; left: 12px; }
+  .detail-bar { display: flex; gap: 8px; align-items: center; padding: 8px 0 0; flex-wrap: wrap; }
+  .detail-bar b { margin-right: auto; }
+  .detail-bar button, .detail-bar a { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 5px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); text-decoration: none; cursor: pointer; }
+  .detail-bar button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .detail iframe { display: block; width: 100%; height: 900px; border: 0; background: var(--bg); }
 </style>
 </head>
 <body>
@@ -153,6 +162,8 @@ const startDate = () => pinfo().start + (pinfo().end ? '&end=' + pinfo().end : '
 // Resultaat voor de gekozen testperiode (oudere scans hebben alleen één periode).
 const res = s => !s.result ? null : s.result.error ? s.result : (s.result.periods ? s.result.periods[per()] || null : s.result);
 let data = null, sortKey = 'diff_value', sortAsc = false, collapsed = new Set(), poll = null;
+// Opengeklapte ticker: de volledige backtest staat dan in een kader onder de rij.
+let openKey = null, openView = 'bt';
 const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
 const pct = (v, sign) => v == null ? '–' : (sign && v > 0 ? '+' : '') + nl(v * 100, 1) + '%';
 const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
@@ -191,6 +202,31 @@ function passes(s) {
 }
 
 function row(s, group) {
+  const key = group.list + '|' + group.name + '|' + s.tv;
+  return rowHtml(s, group).replace('<tr class="row"', `<tr class="row${key === openKey ? ' opened' : ''}" data-key="${esc(key)}"`) +
+    (key === openKey ? detailRow(s, group) : '');
+}
+
+// Backtestpagina ingebed; de periode volgt de gekozen testperiode en is in het kader te wisselen (1M t/m 2J en meer).
+function detailRow(s, group) {
+  const r = res(s), best = r && !r.error ? r.best?.strategy : '';
+  const base = `/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${startDate()}` +
+    (best ? '&strategy=' + encodeURIComponent(best) : '');
+  const src = base + (openView === 'bt' ? '' : '&view=' + openView);
+  const tab = (v, label) => `<button type="button" data-view="${v}" class="${openView === v ? 'active' : ''}">${label}</button>`;
+  return `<tr class="detail"><td colspan="12"><div class="detail-box">` +
+    `<div class="detail-bar"><b>${esc(s.tv)}${best ? ' · ' + esc(best) : ''}</b>` +
+    tab('bt', 'Backtest') + tab('rank', 'Ranglijst') + tab('auto', 'Automatische keuze') +
+    `<a href="${src}" target="_blank" rel="noopener">Nieuw tabblad</a><button type="button" data-close>Sluiten</button></div>` +
+    `<iframe src="${src}&embed=1" title="Backtest ${esc(s.tv)}"></iframe></div></td></tr>`;
+}
+
+function sizeDetail() {
+  const w = document.querySelector('.scroll').clientWidth - 24;
+  document.querySelectorAll('.detail-box').forEach(d => d.style.width = w + 'px');
+}
+
+function rowHtml(s, group) {
   const r = res(s), link = `/tool?symbol=${encodeURIComponent(s.yahoo || '')}&source=yahoo&start=${startDate()}`;
   const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
   const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.tv)}${s.yahoo && s.yahoo !== tvShort ? ' · ' + esc(s.yahoo) : ''}</small>`;
@@ -214,7 +250,7 @@ function row(s, group) {
     (r.avg_return == null ? '<td class="desc">opnieuw scannen</td>'
       : `<td class="${cls(r.avg_return)}">${eurDiff(r.avg_return)}<small>totaal ${eurDiff(r.sum_return)} over ${r.strategies}</small></td>`) +
     `<td class="left">${buy}</td><td>${r.open_signals}${r.recent_buys ? `<small>${r.recent_buys} nieuw</small>` : ''}</td>` +
-    `<td><a class="lnk" href="/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${startDate()}&view=rank" title="Ranglijst" onclick="event.stopPropagation()">ranglijst</a>${del}</td></tr>`;
+    `<td><a class="lnk" href="/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${startDate()}&view=rank" title="Ranglijst" data-rank>ranglijst</a>${del}</td></tr>`;
 }
 
 function render() {
@@ -234,6 +270,7 @@ function render() {
       `<span class="count">${syms.length}${syms.length !== g.symbols.length ? ' / ' + g.symbols.length : ''}</span></td></tr>` +
       (open ? syms.map(s => row(s, g)).join('') : '');
   }).join('');
+  sizeDetail();
   document.querySelectorAll('th[data-sort]').forEach(th => {
     th.classList.toggle('sorted', th.dataset.sort === sortKey);
     th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
@@ -275,12 +312,14 @@ function fillLists() {
   sel.value = names.includes(g) ? g : '';
 }
 
-async function load() {
+async function load(fromPoll) {
   data = await (await fetch('/api/watchlist')).json();
   PERIODS = data.periods || []; fillPeriods();
   fillLists();
-  renderStatus(); render();
-  if (data.scan.running && !poll) poll = setInterval(load, 3000);
+  renderStatus();
+  // Tijdens een scan niet telkens de tabel hertekenen als er een backtest open staat (het kader zou herladen).
+  if (!(fromPoll && openKey)) render();
+  if (data.scan.running && !poll) poll = setInterval(() => load(true), 3000);
   if (!data.scan.running && poll) { clearInterval(poll); poll = null; }
 }
 
@@ -360,9 +399,27 @@ $('rows').addEventListener('click', async e => {
     try { localStorage.setItem('wl-collapsed', JSON.stringify([...collapsed])); } catch {}
     return render();
   }
+  const d = e.target.closest('tr.detail');
+  if (d) {
+    const v = e.target.closest('[data-view]');
+    if (e.target.closest('[data-close]')) { openKey = null; return render(); }
+    if (v) { openView = v.dataset.view; render(); }
+    return;
+  }
   const tr = e.target.closest('tr.row');
-  if (tr) location.href = tr.dataset.link;
+  if (!tr) return;
+  if (e.target.closest('[data-rank]')) { e.preventDefault(); openView = 'rank'; openKey = tr.dataset.key; }
+  else if (openKey === tr.dataset.key) openKey = null;
+  else { openKey = tr.dataset.key; openView = 'bt'; }
+  render();
+  document.querySelector('tr.row.opened')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
+window.addEventListener('message', e => {
+  if (e.data?.type !== 'tool-height') return;
+  const f = [...document.querySelectorAll('.detail iframe')].find(x => x.contentWindow === e.source);
+  if (f) f.style.height = Math.max(400, e.data.h) + 'px';
+});
+window.addEventListener('resize', sizeDetail);
 
 load().catch(e => $('status').textContent = 'Kon watchlist niet laden: ' + e.message);
 </script>

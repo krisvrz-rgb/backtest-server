@@ -100,6 +100,12 @@
   .badge.risk { color: var(--accent); border-color: var(--accent); }
   .badge.open { color: var(--up); border-color: var(--up); font-weight: 600; }
   tr.bh td { background: color-mix(in srgb, var(--market) 12%, transparent); }
+  .quick { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .quick button { padding: 3px 8px; font-size: 12px; background: var(--panel-2); color: var(--text); }
+  .quick button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* Ingebed in watchlist-details: geen kop, minder rand. */
+  body.embed header { display: none; }
+  body.embed main { padding: 10px 0 12px; max-width: none; }
 </style>
 </head>
 <body>
@@ -129,6 +135,12 @@
     <div class="row">
       <div><label for="start">Start</label><input id="start" type="date" value="2015-01-01"></div>
       <div><label for="end">Einde</label><input id="end" type="date"></div>
+    </div>
+    <div class="quick" id="quick" title="Testperiode tot vandaag">
+      <button type="button" data-q="1m">1M</button><button type="button" data-q="3m">3M</button>
+      <button type="button" data-q="6m">6M</button><button type="button" data-q="1j">1J</button>
+      <button type="button" data-q="2j">2J</button><button type="button" data-q="5j">5J</button>
+      <button type="button" data-q="2020">2020</button><button type="button" data-q="2015">2015</button>
     </div>
     <div class="row">
       <div><label for="capital">Startkapitaal</label><input id="capital" type="number" value="10000" min="1"></div>
@@ -575,8 +587,10 @@ $('tabs').addEventListener('click', e => {
 
 $('strategy').addEventListener('change', renderParams);
 
+let view = 'bt';  // wat laatst getoond is, zodat een snelknop voor de periode dat opnieuw draait
+
 $('form').addEventListener('submit', async e => {
-  e.preventDefault();
+  e.preventDefault(); view = 'bt';
   $('error').textContent = ''; $('run').disabled = true; $('run').textContent = 'Bezig...';
   try { render(await (await post('/backtest', request())).json()); }
   catch (err) { $('error').textContent = err.message; }
@@ -639,6 +653,7 @@ $('opt-table').addEventListener('click', e => {
 
 // ---------------------------------------------------------------- automatische keuze
 async function runAuto() {
+  view = 'auto';
   $('error').textContent = ''; $('auto-btn').disabled = true; $('auto-btn').textContent = 'Bezig met kiezen...';
   const r = request();
   try {
@@ -700,6 +715,7 @@ $('auto-table').addEventListener('click', e => {
 let rankData = null, rankCats = new Set();
 
 async function runRank() {
+  view = 'rank';
   $('error').textContent = ''; $('rank-btn').disabled = true; $('rank-btn').textContent = 'Bezig met testen...';
   const r = request();
   try {
@@ -794,7 +810,36 @@ function applyQuery() {
   if (q.get('view') === 'rank') runRank(); else if (q.get('view') === 'auto') runAuto(); else $('form').requestSubmit();
 }
 
-loadStrategies().then(applyQuery).catch(err => $('error').textContent = 'Kon strategieën niet laden: ' + err.message);
+// Snelknoppen: start = vandaag min de periode, einde leeg (= vandaag), en meteen opnieuw draaien.
+function quickStart(q) {
+  const d = new Date();
+  if (/^\d{4}$/.test(q)) return q + '-01-01';
+  const n = parseInt(q, 10);
+  if (q.endsWith('m')) d.setMonth(d.getMonth() - n); else d.setFullYear(d.getFullYear() - n);
+  return d.toISOString().slice(0, 10);
+}
+function markQuick() {
+  document.querySelectorAll('#quick button').forEach(b =>
+    b.classList.toggle('active', !$('end').value && $('start').value === quickStart(b.dataset.q)));
+}
+$('quick').addEventListener('click', e => {
+  const b = e.target.closest('button[data-q]'); if (!b) return;
+  $('start').value = quickStart(b.dataset.q); $('end').value = ''; markQuick();
+  if (view === 'rank') runRank(); else if (view === 'auto') runAuto(); else $('form').requestSubmit();
+});
+['start', 'end'].forEach(id => $(id).addEventListener('input', markQuick));
+
+// Ingebed (watchlist-details): hoogte doorgeven zodat het kader meegroeit met de inhoud.
+if (new URLSearchParams(location.search).get('embed')) {
+  document.body.classList.add('embed');
+  let last = 0;
+  new ResizeObserver(() => {
+    const h = Math.ceil(document.body.getBoundingClientRect().height);
+    if (Math.abs(h - last) > 2) { last = h; parent.postMessage({ type: 'tool-height', h }, '*'); }
+  }).observe(document.body);
+}
+
+loadStrategies().then(() => { applyQuery(); markQuick(); }).catch(err => $('error').textContent = 'Kon strategieën niet laden: ' + err.message);
 </script>
 </body>
 </html>
