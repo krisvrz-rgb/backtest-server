@@ -126,6 +126,7 @@
           <th data-sort="best_value" title="Eindwaarde van €10.000 met de beste strategie">€10.000 → beste</th>
           <th data-sort="bh_value" title="Eindwaarde van €10.000 met gewoon vasthouden">€10.000 → B&amp;H</th>
           <th data-sort="diff_value" title="Wat de beste strategie meer opleverde dan vasthouden, op €10.000">Verschil</th>
+          <th data-sort="avg_return" title="Winst van alle strategieën samen op €10.000 elk, gedeeld door het aantal strategieën">Gem. winst / strategie</th>
           <th class="left" data-sort="bars_since_buy">Laatste buy-signaal</th>
           <th data-sort="open_signals">Open signalen</th>
           <th></th>
@@ -135,7 +136,8 @@
     </div>
   </section>
   <div class="desc">Per ticker worden alle strategieën met hun standaardinstellingen getest. <b>€10.000 →</b> = wat €10.000 aan het begin van de periode op het einde waard was, met de beste strategie en met gewoon vasthouden;
-    <b>Verschil</b> = hoeveel euro de beste strategie meer (of minder) opleverde. Daalde het aandeel zelf sterk, dan verslaat bijna elke strategie buy &amp; hold
+    <b>Verschil</b> = hoeveel euro de beste strategie meer (of minder) opleverde.
+    <b>Gem. winst / strategie</b> = de winst van alle strategieën samen (elk met €10.000) gedeeld door het aantal strategieën: hoe goed strategieën in het algemeen werken op deze ticker. Daalde het aandeel zelf sterk, dan verslaat bijna elke strategie buy &amp; hold
     (ze zitten deels in cash); kijk dan naar <b>ook winstgevend</b> en het rendement van de beste strategie. <b>Laatste buy-signaal</b> = het meest recente koopsignaal dat nog niet gevolgd werd door een verkoop,
     bij de strategieën die buy &amp; hold verslaan. <b>Open signalen</b> = hoeveel van die strategieën nu in het aandeel zitten.
     Klik op een ticker voor de backtest met de beste strategie.</div>
@@ -191,9 +193,9 @@ function row(s, group) {
   const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
   const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.tv)}${s.yahoo && s.yahoo !== tvShort ? ' · ' + esc(s.yahoo) : ''}</small>`;
   const del = `<button class="x" title="Verwijderen" data-del="${esc(s.tv)}" data-group="${esc(group.name)}" data-list="${esc(group.list)}">×</button>`;
-  if (!s.yahoo) return `<tr><td class="left">${sym}</td><td colspan="9" class="left desc">Geen koersdata (index, future of macro)</td><td>${del}</td></tr>`;
-  if (!r) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="9" class="left desc">Nog niet gescand${s.result ? ' voor deze periode' : ''}</td><td>${del}</td></tr>`;
-  if (r.error) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="9" class="left error" title="${esc(r.error)}">Fout: ${esc(r.error.slice(0, 90))}</td><td>${del}</td></tr>`;
+  if (!s.yahoo) return `<tr><td class="left">${sym}</td><td colspan="10" class="left desc">Geen koersdata (index, future of macro)</td><td>${del}</td></tr>`;
+  if (!r) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="10" class="left desc">Nog niet gescand${s.result ? ' voor deze periode' : ''}</td><td>${del}</td></tr>`;
+  if (r.error) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="10" class="left error" title="${esc(r.error)}">Fout: ${esc(r.error.slice(0, 90))}</td><td>${del}</td></tr>`;
   const b = r.best, lb = r.latest_buy;
   const share = r.strategies ? r.beat_count / r.strategies : 0;
   const buy = lb ? `<span class="badge ${lb.bars_since_buy <= 5 ? 'new' : 'open'}">OPEN</span> ${esc(lb.strategy)}` +
@@ -207,6 +209,8 @@ function row(s, group) {
     `<td>${b ? eur(b.total_return) : '–'}<small class="${cls(b?.total_return)}">${b ? pct(b.total_return, true) : ''}</small></td>` +
     `<td>${eur(r.buy_and_hold_return)}<small class="${cls(r.buy_and_hold_return)}">${pct(r.buy_and_hold_return, true)}</small></td>` +
     `<td class="${cls(b ? b.total_return - r.buy_and_hold_return : 0)}">${b ? eurDiff(b.total_return - r.buy_and_hold_return) : '–'}</td>` +
+    (r.avg_return == null ? '<td class="desc">opnieuw scannen</td>'
+      : `<td class="${cls(r.avg_return)}">${eurDiff(r.avg_return)}<small>totaal ${eurDiff(r.sum_return)} over ${r.strategies}</small></td>`) +
     `<td class="left">${buy}</td><td>${r.open_signals}${r.recent_buys ? `<small>${r.recent_buys} nieuw</small>` : ''}</td>` +
     `<td><a class="lnk" href="/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${startDate()}&view=rank" title="Ranglijst" onclick="event.stopPropagation()">ranglijst</a>${del}</td></tr>`;
 }
@@ -224,7 +228,7 @@ function render() {
       return sortKey === 'bars_since_buy' || sortKey === 'tv' ? (sortAsc ? -c : c) : (sortAsc ? c : -c);
     });
     const key = g.list + '/' + g.name, open = !collapsed.has(key);
-    return `<tr class="group" data-group="${esc(key)}"><td colspan="11"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
+    return `<tr class="group" data-group="${esc(key)}"><td colspan="12"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
       `<span class="count">${syms.length}${syms.length !== g.symbols.length ? ' / ' + g.symbols.length : ''}</span></td></tr>` +
       (open ? syms.map(s => row(s, g)).join('') : '');
   }).join('');

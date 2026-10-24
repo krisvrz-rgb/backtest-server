@@ -217,6 +217,7 @@ def test_scan_one_closed_period_and_hidden_symbols(tmp_path, monkeypatch):
     y = r["periods"]["2019"]
     assert y["end"] == "2019-12-31" and y["last_date"] <= "2019-12-31" and y["best"]["vs_bh"] is not None
     assert "signal_open" in y["best"]
+    assert abs(y["avg_return"] * y["strategies"] - y["sum_return"]) < 1e-9
     monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
     monkeypatch.setattr(wl, "SCAN_FILE", tmp_path / "scan.json")
     monkeypatch.setattr(wl, "DATA_DIR", tmp_path)

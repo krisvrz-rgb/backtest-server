@@ -252,6 +252,9 @@ def summarize(rank: dict[str, Any], prices) -> dict[str, Any]:
     latest_prof = min(open_prof, key=lambda x: (x["bars_since_buy"], -x["total_return"])) if open_prof else None
     return {
         "bh_rank": bh_rank,
+        # Hoe "strategievriendelijk" is deze ticker: gemiddeld rendement van alle strategieën samen.
+        "avg_return": float(sum(x["total_return"] for x in strategies) / len(strategies)) if strategies else None,
+        "sum_return": float(sum(x["total_return"] for x in strategies)),
         "profitable_count": len(profitable),
         "profitable": [{k: x[k] for k in ("strategy", "category_label", "total_return", "beats_buy_and_hold",
                                           "signal_open", "bars_since_buy", "last_buy_signal", "sharpe", "max_drawdown")}
