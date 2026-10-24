@@ -4,55 +4,78 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Backtest Server</title>
-<script src="/static/chart.umd.min.js"></script>
+<script src="/static/lightweight-charts.js"></script>
 <style>
   :root {
-    --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --muted: #6b7280; --border: #e3e6ea;
-    --accent: #2563eb; --pos: #15803d; --neg: #b91c1c; --bench: #9ca3af; --code: #f1f3f5;
+    --bg: #0d0f13; --panel: #151820; --panel-2: #1b1f29; --text: #e6e8eb; --muted: #8b93a1; --border: #262b36;
+    --accent: #3b82f6; --up: #22c55e; --down: #ef4444; --bench: #9ca3af; --market: #f59e0b; --code: #0a0c10;
   }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #0f1115; --card: #171a20; --text: #e6e8eb; --muted: #9aa3ae; --border: #2a2f37;
-            --accent: #60a5fa; --pos: #4ade80; --neg: #f87171; --bench: #6b7280; --code: #0c0e12; }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f7f8fa; --text: #1b1f24; --muted: #6b7280; --border: #e3e6ea;
+      --accent: #2563eb; --up: #16a34a; --down: #dc2626; --bench: #9ca3af; --market: #d97706; --code: #f1f3f5;
+    }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
-         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { padding: 20px 24px 8px; max-width: 1200px; margin: 0 auto; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
-  header h1 { font-size: 22px; margin: 0; }
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; display: flex; align-items: baseline; gap: 16px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; }
   header a { color: var(--muted); font-size: 13px; }
-  main { max-width: 1200px; margin: 0 auto; padding: 8px 24px 40px; display: grid; grid-template-columns: 320px 1fr; gap: 20px; }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; padding: 8px 16px 40px; } header { padding: 16px 16px 8px; } }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
-  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
-  input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
-                  background: var(--bg); color: var(--text); font: inherit; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .desc { font-size: 13px; color: var(--muted); margin-top: 6px; }
-  button { font: inherit; border-radius: 6px; padding: 9px 14px; cursor: pointer; border: 1px solid var(--border);
-           background: var(--card); color: var(--text); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; width: 100%; margin-top: 16px; font-weight: 600; }
+  main { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 16px; padding: 16px 20px 40px; max-width: 1600px; margin: 0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); padding: 12px 16px 40px; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  form.panel { padding: 14px; align-self: start; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  input, select { width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px;
+                  background: var(--panel-2); color: var(--text); font: inherit; }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+  .desc { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  button { font: inherit; border-radius: 5px; padding: 8px 12px; cursor: pointer; border: 1px solid var(--border);
+           background: var(--panel-2); color: var(--text); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; width: 100%; margin-top: 14px; font-weight: 600; }
   button:disabled { opacity: .6; cursor: wait; }
-  .actions { display: flex; gap: 8px; margin-top: 8px; }
-  .actions button { flex: 1; }
-  .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-  .metric { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
-  .metric .k { font-size: 12px; color: var(--muted); }
-  .metric .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .metric .b { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .pos { color: var(--pos); } .neg { color: var(--neg); }
-  .stack { display: grid; gap: 20px; align-content: start; }
-  h2 { font-size: 15px; margin: 0 0 12px; }
-  .chart-wrap { position: relative; height: 320px; }
+  .error { color: var(--down); margin-top: 10px; white-space: pre-wrap; }
+
+  .result { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; }
+  #out { overflow: hidden; }
+  .empty { color: var(--muted); text-align: center; padding: 80px 20px; }
+  .titlebar { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
+              border-bottom: 1px solid var(--border); gap: 12px; flex-wrap: wrap; }
+  .titlebar b { font-size: 15px; }
+  .titlebar span { color: var(--muted); font-size: 12px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+  #price-chart { height: 380px; }
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); padding: 0 10px; overflow-x: auto; }
+  .tab { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 12px; color: var(--muted); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tabpane { padding: 14px; }
+  .tabpane:not(.active) { display: none; }
+  h3 { font-size: 13px; margin: 18px 0 8px; color: var(--muted); font-weight: 600; }
+  h3:first-child { margin-top: 0; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1px;
+          background: var(--border); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .kpi { background: var(--panel); padding: 10px 12px; }
+  .kpi .k { font-size: 11px; color: var(--muted); text-transform: none; }
+  .kpi .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .kpi .s { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  #equity-chart, #pnl-chart { height: 260px; }
+
   table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
   th { color: var(--muted); font-weight: 500; }
-  .scroll { max-height: 320px; overflow: auto; }
-  pre { background: var(--code); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto;
-        font-size: 12.5px; max-height: 420px; margin: 0; }
-  .error { color: var(--neg); margin-top: 10px; font-size: 14px; white-space: pre-wrap; }
-  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
-  .hidden { display: none; }
-  .summary { font-size: 14px; margin-bottom: 12px; }
+  .scroll { overflow: auto; max-height: 520px; }
+  #trades tr { cursor: pointer; }
+  #trades tr:hover td { background: var(--panel-2); }
+  .heat td { text-align: center; font-size: 12px; }
+  .heat td:first-child { text-align: left; }
+  pre { background: var(--code); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow: auto;
+        font-size: 12px; max-height: 480px; margin: 0; }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
@@ -61,10 +84,9 @@
   <a href="/docs">API-documentatie</a>
 </header>
 <main>
-  <form class="card" id="form">
+  <form class="panel" id="form">
     <label for="symbol">Symbool</label>
     <input id="symbol" value="AAPL" required>
-
     <label for="source">Databron</label>
     <select id="source">
       <option value="yahoo">Yahoo Finance</option>
@@ -73,12 +95,10 @@
       <option value="csv">CSV (data-map)</option>
       <option value="synthetic">Synthetisch (test)</option>
     </select>
-
     <label for="strategy">Strategie</label>
     <select id="strategy"></select>
     <div class="desc" id="strategy-desc"></div>
     <div id="params"></div>
-
     <div class="row">
       <div><label for="start">Start</label><input id="start" type="date" value="2015-01-01"></div>
       <div><label for="end">Einde</label><input id="end" type="date"></div>
@@ -87,51 +107,89 @@
       <div><label for="capital">Startkapitaal</label><input id="capital" type="number" value="10000" min="1"></div>
       <div><label for="fee">Kosten (bps)</label><input id="fee" type="number" value="5" min="0" step="0.5"></div>
     </div>
-
+    <label for="market">Vergelijk met markt</label>
+    <select id="market">
+      <option value="SPY">S&amp;P 500 (SPY)</option>
+      <option value="QQQ">Nasdaq 100 (QQQ)</option>
+      <option value="">Geen</option>
+    </select>
     <button class="primary" type="submit" id="run">Backtest draaien</button>
-    <div class="actions"><button type="button" id="pine-btn">Pine Script</button></div>
     <div class="error" id="error"></div>
   </form>
 
-  <div class="stack">
-    <section class="card" id="results">
-      <div class="empty" id="empty">Kies een strategie en klik op <b>Backtest draaien</b>.</div>
-      <div id="out" class="hidden">
-        <div class="summary" id="summary"></div>
-        <div class="metrics" id="metrics"></div>
+  <div class="result">
+    <div class="panel empty" id="empty">Kies een strategie en klik op <b>Backtest draaien</b>.</div>
+
+    <section class="panel hidden" id="out">
+      <div class="titlebar">
+        <div><b id="title"></b> <span id="period"></span></div>
+        <div class="legend"><span><i style="background:var(--up)"></i>B = koop</span><span><i style="background:var(--down)"></i>S = verkoop</span></div>
       </div>
-    </section>
-    <section class="card hidden" id="chart-card">
-      <h2>Equity curve</h2>
-      <div class="chart-wrap"><canvas id="chart"></canvas></div>
-    </section>
-    <section class="card hidden" id="trades-card">
-      <h2>Trades</h2>
-      <div class="scroll"><table><thead><tr><th>In</th><th>Uit</th><th>Kant</th><th>Instap</th><th>Uitstap</th><th>Rendement</th></tr></thead><tbody id="trades"></tbody></table></div>
-    </section>
-    <section class="card hidden" id="pine-card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px">
-        <h2 style="margin:0">Pine Script voor TradingView</h2>
-        <button type="button" id="copy">Kopiëren</button>
+      <div id="price-chart"></div>
+
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-tab="summary">Overzicht</button>
+        <button class="tab" data-tab="returns">Rendementen</button>
+        <button class="tab" data-tab="analysis">Trade-analyse</button>
+        <button class="tab" data-tab="trades">Trades</button>
+        <button class="tab" data-tab="pine">Pine Script</button>
+      </nav>
+
+      <div class="tabpane active" id="tab-summary">
+        <div class="kpis" id="kpis"></div>
+        <h3>Rendement tegenover buy &amp; hold en de markt</h3>
+        <div class="legend" id="equity-legend" style="margin-bottom:6px"></div>
+        <div id="equity-chart"></div>
+        <h3>Vergelijking</h3>
+        <div class="scroll"><table id="compare"></table></div>
       </div>
-      <pre id="pine"></pre>
-      <div class="desc">Plak in de Pine Editor van TradingView en klik op "Add to chart". Je ziet de resultaten in de Strategy Tester.</div>
+
+      <div class="tabpane" id="tab-returns">
+        <h3>Rendement per maand</h3>
+        <div class="scroll"><table class="heat" id="monthly"></table></div>
+      </div>
+
+      <div class="tabpane" id="tab-analysis">
+        <div class="kpis" id="analysis"></div>
+        <h3>Winst/verlies per trade</h3>
+        <div id="pnl-chart"></div>
+      </div>
+
+      <div class="tabpane" id="tab-trades">
+        <div class="scroll"><table>
+          <thead><tr><th>#</th><th>Instap</th><th>Uitstap</th><th>Kant</th><th>Instapprijs</th><th>Uitstapprijs</th>
+          <th>Winst/verlies</th><th>Rendement</th><th>Dagen</th></tr></thead>
+          <tbody id="trades"></tbody>
+        </table></div>
+        <div class="desc">Klik op een trade om in te zoomen op de grafiek. Winst/verlies is na kosten.</div>
+      </div>
+
+      <div class="tabpane" id="tab-pine">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px">
+          <div class="desc" style="margin:0">Plak in de Pine Editor van TradingView en klik op "Add to chart".</div>
+          <button type="button" id="copy">Kopiëren</button>
+        </div>
+        <pre id="pine"></pre>
+      </div>
     </section>
   </div>
 </main>
 
 <script>
 const $ = id => document.getElementById(id);
-let strategies = [], chart;
-const pct = v => (v * 100).toFixed(1).replace('.', ',') + '%';
-const num = v => v.toFixed(2).replace('.', ',');
-const money = v => v.toLocaleString('nl-BE', { maximumFractionDigits: 0 });
+const LWC = window.LightweightCharts;
+let strategies = [], last = null, charts = [];
+const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (v, sign) => (sign && v > 0 ? '+' : '') + nl(v * 100, 2) + '%';
+const money = (v, sign) => (sign && v > 0 ? '+' : '') + nl(v, 2);
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const MONTHS = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
 
 async function loadStrategies() {
   strategies = await (await fetch('/strategies')).json();
   $('strategy').innerHTML = strategies.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
-  $('strategy').value = strategies.find(s => s.name === 'sma_crossover') ? 'sma_crossover' : strategies[0].name;
+  $('strategy').value = strategies.some(s => s.name === 'sma_crossover') ? 'sma_crossover' : strategies[0].name;
   renderParams();
 }
 
@@ -151,6 +209,7 @@ function request() {
     symbol: $('symbol').value.trim(), strategy: $('strategy').value, params, source: $('source').value,
     start: $('start').value || null, end: $('end').value || null,
     initial_capital: Number($('capital').value), fee_bps: Number($('fee').value),
+    market_benchmark: $('market').value || null, include_prices: true,
   };
 }
 
@@ -164,53 +223,153 @@ async function post(path, body) {
   return r;
 }
 
-function metric(label, v, b, fmt, signed) {
-  const cls = signed ? (v >= 0 ? 'pos' : 'neg') : '';
-  const bench = b === undefined ? '' : `<div class="b">Buy &amp; hold: ${fmt(b)}</div>`;
-  return `<div class="metric"><div class="k">${label}</div><div class="v ${cls}">${fmt(v)}</div>${bench}</div>`;
+function baseChart(el, extra = {}) {
+  const c = LWC.createChart(el, {
+    autoSize: true,
+    layout: { background: { type: 'solid', color: css('--panel') }, textColor: css('--muted'), fontSize: 11 },
+    grid: { vertLines: { color: css('--border') }, horzLines: { color: css('--border') } },
+    rightPriceScale: { borderColor: css('--border') },
+    timeScale: { borderColor: css('--border'), minBarSpacing: 0.05 },
+    crosshair: { mode: LWC.CrosshairMode.Normal },
+    ...extra,
+  });
+  charts.push(c);
+  return c;
+}
+
+function kpi(label, value, sub, colorVal) {
+  return `<div class="kpi"><div class="k">${label}</div><div class="v ${colorVal === undefined ? '' : cls(colorVal)}">${value}</div>` +
+         (sub ? `<div class="s">${sub}</div>` : '') + '</div>';
 }
 
 function render(d) {
-  const m = d.metrics, b = d.benchmark_metrics;
+  last = d;
+  charts.forEach(c => c.remove()); charts = [];
   $('empty').classList.add('hidden'); $('out').classList.remove('hidden');
-  const beat = m.total_return > b.total_return;
-  $('summary').innerHTML = `<b>${d.symbol}</b> · ${d.strategy} · ${d.period.start} t/m ${d.period.end} · ` +
-    (beat ? '<span class="pos">beter dan buy &amp; hold</span>' : '<span class="neg">slechter dan buy &amp; hold</span>');
-  $('metrics').innerHTML = [
-    metric('Totaal rendement', m.total_return, b.total_return, pct, true),
-    metric('Rendement per jaar', m.cagr, b.cagr, pct, true),
-    metric('Sharpe', m.sharpe, b.sharpe, num),
-    metric('Sortino', m.sortino, b.sortino, num),
-    metric('Max drawdown', m.max_drawdown, b.max_drawdown, pct, true),
-    metric('Volatiliteit', m.volatility, b.volatility, pct),
-    metric('Eindkapitaal', m.final_equity, undefined, money),
-    metric('Trades', m.num_trades, undefined, v => v),
-    metric('Win rate', m.win_rate, undefined, pct),
-    metric('Tijd in de markt', m.exposure, undefined, pct),
+  $('title').textContent = `${d.symbol} · ${d.strategy}`;
+  $('period').textContent = `${d.period.start} t/m ${d.period.end}`;
+  const m = d.metrics, b = d.benchmark_metrics, mk = d.market_metrics;
+
+  // Koersgrafiek met B/S-markers
+  const pc = baseChart($('price-chart'));
+  const candles = pc.addCandlestickSeries({ upColor: css('--up'), downColor: css('--down'), borderVisible: false,
+    wickUpColor: css('--up'), wickDownColor: css('--down') });
+  candles.setData(d.prices.map(p => ({ time: p.date, open: p.open, high: p.high, low: p.low, close: p.close })));
+  const vol = pc.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false });
+  pc.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+  vol.setData(d.prices.map(p => ({ time: p.date, value: p.volume,
+    color: (p.close >= p.open ? css('--up') : css('--down')) + '55' })));
+  const markers = [];
+  d.trades.forEach(t => {
+    markers.push({ time: t.entry_date, position: 'belowBar', color: css('--up'), shape: 'arrowUp', text: 'B' });
+    if (t.exit_date) markers.push({ time: t.exit_date, position: 'aboveBar', color: css('--down'), shape: 'arrowDown',
+      text: 'S ' + pct(t.pnl_pct, true) });
+  });
+  candles.setMarkers(markers.sort((a, c) => a.time.localeCompare(c.time)));
+  pc.timeScale().fitContent();
+
+  // Overzicht
+  $('kpis').innerHTML = [
+    kpi('Netto winst', money(m.net_profit, true), pct(m.total_return, true), m.net_profit),
+    kpi('Gerealiseerde winst', money(m.realized_pnl, true), pct(m.realized_return, true) + ' · afgesloten trades', m.realized_pnl),
+    kpi('Open positie', m.open_pnl ? money(m.open_pnl, true) : '–', m.open_pnl ? 'nog niet verkocht' : 'geen', m.open_pnl),
+    kpi('Rendabele trades', pct(m.percent_profitable), `${m.winning_trades} van ${m.closed_trades} afgesloten`),
+    kpi('Aantal trades', m.num_trades, m.num_trades - m.closed_trades ? '1 nog open' : ''),
+    kpi('Profit factor', m.profit_factor == null ? '–' : nl(m.profit_factor), 'winst / verlies'),
+    kpi('Sharpe', nl(m.sharpe), 'B&amp;H ' + nl(b.sharpe)),
+    kpi('Max drawdown', pct(m.max_drawdown), 'B&amp;H ' + pct(b.max_drawdown), m.max_drawdown),
+    kpi('Rendement per jaar', pct(m.cagr, true), 'B&amp;H ' + pct(b.cagr, true), m.cagr),
+    kpi('Eindkapitaal', money(m.final_equity), 'start ' + money(d.equity_curve[0].equity)),
   ].join('');
 
-  $('chart-card').classList.remove('hidden');
-  const eq = d.equity_curve;
-  chart?.destroy();
-  chart = new Chart($('chart'), {
-    type: 'line',
-    data: { labels: eq.map(p => p.date), datasets: [
-      { label: d.strategy, data: eq.map(p => p.equity), borderColor: css('--accent'), borderWidth: 2, pointRadius: 0 },
-      { label: 'Buy & hold', data: eq.map(p => p.benchmark), borderColor: css('--bench'), borderWidth: 1.5, pointRadius: 0 },
-    ]},
-    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-      scales: { x: { ticks: { maxTicksLimit: 8, color: css('--muted') }, grid: { display: false } },
-                y: { ticks: { color: css('--muted'), callback: v => money(v) }, grid: { color: css('--border') } } },
-      plugins: { legend: { labels: { color: css('--text') } },
-                 tooltip: { callbacks: { label: c => `${c.dataset.label}: ${money(c.parsed.y)}` } } } },
+  const ec = baseChart($('equity-chart'), { rightPriceScale: { borderColor: css('--border'), mode: LWC.PriceScaleMode.Percentage } });
+  const series = [
+    ['Strategie', 'equity', css('--accent'), 2],
+    ['Buy & hold ' + d.symbol, 'benchmark', css('--bench'), 1],
+  ];
+  if (d.market_benchmark) series.push([d.market_benchmark, 'market', css('--market'), 1]);
+  series.forEach(([name, key, color, w]) => {
+    const s = ec.addLineSeries({ color, lineWidth: w, title: name, priceLineVisible: false });
+    s.setData(d.equity_curve.filter(p => p[key] != null).map(p => ({ time: p.date, value: p[key] })));
   });
+  ec.timeScale().fitContent();
+  $('equity-legend').innerHTML = series.map(([n, , c]) => `<span><i style="background:${c}"></i>${n}</span>`).join('');
 
-  $('trades-card').classList.remove('hidden');
-  $('trades').innerHTML = d.trades.slice().reverse().map(t => `<tr><td>${t.entry_date}</td><td>${t.exit_date ?? 'open'}</td>` +
-    `<td>${t.side}</td><td>${num(t.entry_price)}</td><td>${num(t.exit_price)}</td>` +
-    `<td class="${t.return >= 0 ? 'pos' : 'neg'}">${pct(t.return)}</td></tr>`).join('') ||
-    '<tr><td colspan="6" class="desc">Geen trades</td></tr>';
+  const cols = [['Strategie', m], ['Buy & hold ' + d.symbol, b]];
+  if (mk) cols.push([d.market_benchmark, mk]);
+  const rows = [['Totaal rendement', 'total_return', v => pct(v, true), true], ['Rendement per jaar', 'cagr', v => pct(v, true), true],
+    ['Sharpe', 'sharpe', nl], ['Sortino', 'sortino', nl], ['Max drawdown', 'max_drawdown', v => pct(v), true],
+    ['Volatiliteit', 'volatility', v => pct(v)], ['Calmar', 'calmar', nl]];
+  $('compare').innerHTML = '<thead><tr><th></th>' + cols.map(c => `<th>${c[0]}</th>`).join('') + '</tr></thead><tbody>' +
+    rows.map(([label, key, f, color]) => `<tr><td>${label}</td>` +
+      cols.map(([, src]) => `<td class="${color ? cls(src[key]) : ''}">${f(src[key])}</td>`).join('') + '</tr>').join('') + '</tbody>';
+
+  // Rendementen per maand
+  const years = {};
+  d.monthly_returns.forEach(r => (years[r.year] ??= {})[r.month] = r.return);
+  const heat = v => {
+    if (v === undefined) return '<td></td>';
+    const a = Math.min(Math.abs(v) / 0.1, 1) * 0.55 + 0.08;
+    const bg = v >= 0 ? `rgba(34,197,94,${a})` : `rgba(239,68,68,${a})`;
+    return `<td style="background:${bg}">${nl(v * 100, 1)}</td>`;
+  };
+  $('monthly').innerHTML = '<thead><tr><th>Jaar</th>' + MONTHS.map(x => `<th>${x}</th>`).join('') + '<th>Jaar</th></tr></thead><tbody>' +
+    Object.keys(years).sort().reverse().map(y => {
+      const total = Object.values(years[y]).reduce((acc, v) => acc * (1 + v), 1) - 1;
+      return `<tr><td>${y}</td>` + MONTHS.map((_, i) => heat(years[y][i + 1])).join('') + heat(total) + '</tr>';
+    }).join('') + '</tbody>';
+
+  // Trade-analyse
+  $('analysis').innerHTML = [
+    kpi('Rendabele trades', pct(m.percent_profitable), `${m.winning_trades} winst · ${m.losing_trades} verlies`),
+    kpi('Brutowinst', money(m.gross_profit), '', m.gross_profit),
+    kpi('Brutoverlies', money(-m.gross_loss), '', -m.gross_loss),
+    kpi('Profit factor', m.profit_factor == null ? '–' : nl(m.profit_factor)),
+    kpi('Gem. winst', money(m.avg_win, true), '', m.avg_win),
+    kpi('Gem. verlies', money(m.avg_loss, true), '', m.avg_loss),
+    kpi('Grootste winst', money(m.largest_win, true), '', m.largest_win),
+    kpi('Grootste verlies', money(m.largest_loss, true), '', m.largest_loss),
+    kpi('Gem. duur', nl(m.avg_bars_in_trade, 0) + ' dagen'),
+    kpi('Tijd in de markt', pct(m.exposure)),
+  ].join('');
+  const pl = baseChart($('pnl-chart'));
+  const hist = pl.addHistogramSeries({ priceLineVisible: false });
+  const byDay = new Map();
+  d.trades.forEach(t => { const k = t.exit_date ?? d.period.end; byDay.set(k, (byDay.get(k) ?? 0) + t.pnl); });
+  hist.setData([...byDay.entries()].sort((a, c) => a[0].localeCompare(c[0]))
+    .map(([time, v]) => ({ time, value: v, color: v >= 0 ? css('--up') : css('--down') })));
+  pl.timeScale().fitContent();
+
+  // Trades
+  $('trades').innerHTML = d.trades.map((t, i) => ({ t, i })).reverse().map(({ t, i }) =>
+    `<tr data-i="${i}"><td>${i + 1}</td><td>${t.entry_date}</td><td>${t.exit_date ?? 'open'}</td><td>${t.side}</td>` +
+    `<td>${nl(t.entry_price)}</td><td>${nl(t.exit_price)}</td>` +
+    `<td class="${cls(t.pnl)}">${money(t.pnl, true)}</td><td class="${cls(t.pnl_pct)}">${pct(t.pnl_pct, true)}</td>` +
+    `<td>${t.bars}</td></tr>`).join('') || '<tr><td colspan="9" class="desc">Geen trades</td></tr>';
+  document.querySelectorAll('#trades tr[data-i]').forEach(tr => tr.addEventListener('click', () => {
+    const t = d.trades[tr.dataset.i];
+    const idx = d.prices.findIndex(p => p.date === t.entry_date);
+    const end = t.exit_date ? d.prices.findIndex(p => p.date === t.exit_date) : d.prices.length - 1;
+    const pad = Math.max(10, Math.round((end - idx) * 0.5));
+    pc.timeScale().setVisibleLogicalRange({ from: idx - pad, to: end + pad });
+    $('price-chart').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }));
+
+  loadPine();
 }
+
+async function loadPine() {
+  try { $('pine').textContent = await (await post('/pine', request())).text(); }
+  catch (err) { $('pine').textContent = 'Kon Pine Script niet maken: ' + err.message; }
+}
+
+$('tabs').addEventListener('click', e => {
+  const tab = e.target.closest('.tab'); if (!tab) return;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+  document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab.dataset.tab));
+  // Grafieken in een verborgen tab hebben nog geen breedte: opnieuw passend maken zodra ze zichtbaar zijn.
+  requestAnimationFrame(() => charts.slice(1).forEach(c => c.timeScale().fitContent()));
+});
 
 $('strategy').addEventListener('change', renderParams);
 
@@ -220,15 +379,6 @@ $('form').addEventListener('submit', async e => {
   try { render(await (await post('/backtest', request())).json()); }
   catch (err) { $('error').textContent = err.message; }
   finally { $('run').disabled = false; $('run').textContent = 'Backtest draaien'; }
-});
-
-$('pine-btn').addEventListener('click', async () => {
-  $('error').textContent = '';
-  try {
-    $('pine').textContent = await (await post('/pine', request())).text();
-    $('pine-card').classList.remove('hidden');
-    $('pine-card').scrollIntoView({ behavior: 'smooth' });
-  } catch (err) { $('error').textContent = err.message; }
 });
 
 $('copy').addEventListener('click', async () => {

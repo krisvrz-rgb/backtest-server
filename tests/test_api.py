@@ -83,3 +83,23 @@ def test_hyperliquid_parsing(monkeypatch):
 def test_start_page():
     r = client.get("/")
     assert r.status_code == 200 and "Backtest Server" in r.text
+
+
+def test_trade_pnl_adds_up_to_net_profit():
+    prices = synthetic("X", "2015-01-01", "2024-12-31", seed=5)
+    res = run_backtest(prices, get_strategy("rsi_mean_reversion"), 10_000, fee_bps=10)
+    total = sum(t["pnl"] for t in res.trades)
+    assert np.isclose(total, res.metrics["net_profit"], rtol=1e-9, atol=1e-6)
+    m = res.metrics
+    assert m["winning_trades"] + m["losing_trades"] == m["closed_trades"]
+    assert np.isclose(m["realized_pnl"] + m["open_pnl"], m["net_profit"])
+
+
+def test_api_includes_prices_market_and_monthly():
+    r = client.post("/backtest", json={"symbol": "TEST", "strategy": "sma_crossover", "source": "synthetic",
+                                       "params": {"fast": 20, "slow": 50}, "include_prices": True})
+    body = r.json()
+    assert body["market_benchmark"] == "SPY" and body["market_metrics"]["sharpe"] is not None
+    assert body["equity_curve"][0]["market"] == 10_000
+    assert len(body["prices"]) == len(body["equity_curve"])
+    assert body["monthly_returns"][0]["year"] == 2018

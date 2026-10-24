@@ -45,28 +45,75 @@ def compute_metrics(equity: pd.Series, risk_free: float = 0.0) -> dict:
     }
 
 
-def _extract_trades(open_: pd.Series, close: pd.Series, position: pd.Series) -> list[dict]:
+def _extract_trades(open_: pd.Series, close: pd.Series, position: pd.Series,
+                    equity: pd.Series, equity_open: pd.Series) -> list[dict]:
+    """Trades met prijsrendement en echte winst/verlies in geld (na kosten).
+
+    Instap en uitstap gebeuren op de opening. De P&L is het verschil in kapitaal tussen de slotkoers
+    voor de instap en de opening van de uitstap, dus inclusief kosten van beide transacties.
+    """
     trades, entry = [], None
+    dates = position.index
     prev = 0.0
-    for date, pos in position.items():
+
+    def make(entry, exit_date, exit_price, exit_equity, side_sign):
+        i, entry_date, entry_price = entry
+        start_equity = equity.iloc[i - 1] if i > 0 else equity.iloc[0]
+        pnl = float(exit_equity - start_equity)
+        return {
+            "entry_date": entry_date.date().isoformat(),
+            "exit_date": exit_date.date().isoformat() if exit_date is not None else None,
+            "side": "long" if side_sign > 0 else "short",
+            "entry_price": float(entry_price), "exit_price": float(exit_price),
+            "return": float((exit_price / entry_price - 1) * side_sign),
+            "pnl": pnl, "pnl_pct": pnl / float(start_equity),
+            "bars": int((dates.get_loc(exit_date) if exit_date is not None else len(dates) - 1) - i),
+        }
+
+    for i, (date, pos) in enumerate(position.items()):
         if pos != prev:
             if prev != 0 and entry is not None:
-                ret = (open_[date] / entry[1] - 1) * np.sign(prev)
-                trades.append({"entry_date": entry[0].date().isoformat(), "exit_date": date.date().isoformat(),
-                               "side": "long" if prev > 0 else "short",
-                               "entry_price": float(entry[1]), "exit_price": float(open_[date]),
-                               "return": float(ret)})
+                trades.append(make(entry, date, open_[date], equity_open[date], np.sign(prev)))
                 entry = None
             if pos != 0:
-                entry = (date, open_[date])
+                entry = (i, date, open_[date])
         prev = pos
     if entry is not None:
-        last = close.index[-1]
-        trades.append({"entry_date": entry[0].date().isoformat(), "exit_date": None,
-                       "side": "long" if prev > 0 else "short",
-                       "entry_price": float(entry[1]), "exit_price": float(close[last]),
-                       "return": float((close[last] / entry[1] - 1) * np.sign(prev))})
+        trades.append(make(entry, None, close.iloc[-1], equity.iloc[-1], np.sign(prev)))
     return trades
+
+
+def trade_stats(trades: list[dict], initial_capital: float) -> dict:
+    """Statistieken over afgesloten trades; een nog openstaande trade telt niet mee."""
+    closed = [t for t in trades if t["exit_date"] is not None]
+    pnls = np.array([t["pnl"] for t in closed])
+    wins, losses = pnls[pnls > 0], pnls[pnls <= 0]
+    open_trade = next((t for t in trades if t["exit_date"] is None), None)
+    gross_profit, gross_loss = float(wins.sum()), float(-losses.sum())
+    return {
+        "closed_trades": len(closed),
+        "winning_trades": int(len(wins)),
+        "losing_trades": int(len(losses)),
+        "percent_profitable": float(len(wins) / len(closed)) if closed else 0.0,
+        "realized_pnl": float(pnls.sum()),
+        "realized_return": float(pnls.sum() / initial_capital),
+        "open_pnl": float(open_trade["pnl"]) if open_trade else 0.0,
+        "gross_profit": gross_profit,
+        "gross_loss": gross_loss,
+        "profit_factor": gross_profit / gross_loss if gross_loss > 0 else None,
+        "avg_win": float(wins.mean()) if len(wins) else 0.0,
+        "avg_loss": float(losses.mean()) if len(losses) else 0.0,
+        "largest_win": float(wins.max()) if len(wins) else 0.0,
+        "largest_loss": float(losses.min()) if len(losses) else 0.0,
+        "avg_bars_in_trade": float(np.mean([t["bars"] for t in closed])) if closed else 0.0,
+    }
+
+
+def monthly_returns(equity: pd.Series, initial_capital: float) -> list[dict]:
+    monthly = equity.groupby([equity.index.year, equity.index.month]).last()
+    rets = monthly.pct_change()
+    rets.iloc[0] = monthly.iloc[0] / initial_capital - 1
+    return [{"year": int(y), "month": int(m), "return": float(r)} for (y, m), r in rets.items()]
 
 
 def run_backtest(prices: pd.DataFrame, strategy: Strategy, initial_capital: float = 10_000.0,
@@ -82,18 +129,22 @@ def run_backtest(prices: pd.DataFrame, strategy: Strategy, initial_capital: floa
     intraday = close / open_ - 1
     turnover = (position - prev_pos).abs()
     costs = turnover * (fee_bps + slippage_bps) / 10_000
-    strat_rets = (1 + prev_pos * overnight) * (1 + position * intraday) * (1 - costs) - 1
+    open_factor = (1 + prev_pos * overnight) * (1 - costs)
+    strat_rets = open_factor * (1 + position * intraday) - 1
     equity = initial_capital * (1 + strat_rets).cumprod()
+    equity_open = equity.shift(1).fillna(initial_capital) * open_factor
     benchmark = initial_capital * (1 + close.pct_change().fillna(0.0)).cumprod()
 
-    trades = _extract_trades(open_, close, position)
+    trades = _extract_trades(open_, close, position, equity, equity_open)
     metrics = compute_metrics(equity)
-    closed = [t["return"] for t in trades]
+    stats = trade_stats(trades, initial_capital)
     metrics.update({
         "num_trades": len(trades),
-        "win_rate": float(np.mean([r > 0 for r in closed])) if closed else 0.0,
-        "avg_trade_return": float(np.mean(closed)) if closed else 0.0,
+        "win_rate": stats["percent_profitable"],
+        "avg_trade_return": float(np.mean([t["return"] for t in trades])) if trades else 0.0,
         "exposure": float((position != 0).mean()),
         "final_equity": float(equity.iloc[-1]),
+        "net_profit": float(equity.iloc[-1] - initial_capital),
+        **{k: v for k, v in stats.items() if k not in metrics},
     })
     return BacktestResult(equity, benchmark, position, trades, metrics, compute_metrics(benchmark))

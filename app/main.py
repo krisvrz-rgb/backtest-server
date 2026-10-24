@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .data import DATA_DIR, _normalize, get_prices
-from .engine import run_backtest
+from .engine import compute_metrics, monthly_returns, run_backtest
 from .pine import to_pine
 from .strategies import STRATEGIES, get_strategy
 
@@ -35,6 +35,8 @@ class BacktestRequest(BaseModel):
     slippage_bps: float = 0.0
     allow_short: bool = False
     include_equity: bool = True
+    include_prices: bool = Field(False, description="Koersdata (OHLCV) meesturen voor de candlestick-grafiek")
+    market_benchmark: str | None = Field("SPY", description="Marktbenchmark om mee te vergelijken (S&P 500 via SPY); leeg = geen")
 
 
 class CompareRequest(BaseModel):
@@ -47,6 +49,20 @@ class CompareRequest(BaseModel):
     fee_bps: float = 5.0
 
 
+def _market_curve(req: BacktestRequest, index: pd.DatetimeIndex) -> pd.Series | None:
+    """Koers van de marktbenchmark op dezelfde dagen als het aandeel, herschaald naar het startkapitaal."""
+    if not req.market_benchmark or req.market_benchmark.upper() == req.symbol.upper() or req.source == "hyperliquid":
+        return None
+    try:
+        bench = get_prices(req.market_benchmark, req.source, req.start, req.end)["close"]
+    except Exception:  # noqa: BLE001 - benchmark is optioneel, de backtest moet altijd lukken
+        return None
+    bench = bench.reindex(index.union(bench.index)).ffill().reindex(index).dropna()
+    if len(bench) < 2:
+        return None
+    return req.initial_capital * bench / bench.iloc[0]
+
+
 def _run(req: BacktestRequest) -> dict:
     try:
         prices = get_prices(req.symbol, req.source, req.start, req.end)
@@ -54,14 +70,25 @@ def _run(req: BacktestRequest) -> dict:
     except (ValueError, FileNotFoundError) as e:
         raise HTTPException(400, str(e))
     res = run_backtest(prices, strat, req.initial_capital, req.fee_bps, req.slippage_bps, req.allow_short)
+    market = _market_curve(req, prices.index)
     out = {
         "symbol": req.symbol.upper(), "strategy": strat.name, "params": strat.p,
         "period": {"start": prices.index[0].date().isoformat(), "end": prices.index[-1].date().isoformat()},
         "metrics": res.metrics, "benchmark_metrics": res.benchmark_metrics, "trades": res.trades,
+        "market_benchmark": req.market_benchmark.upper() if market is not None else None,
+        "market_metrics": compute_metrics(market) if market is not None else None,
+        "monthly_returns": monthly_returns(res.equity, req.initial_capital),
     }
     if req.include_equity:
-        out["equity_curve"] = [{"date": d.date().isoformat(), "equity": round(e, 2), "benchmark": round(b, 2)}
-                               for d, e, b in zip(res.equity.index, res.equity, res.benchmark)]
+        mk = market.reindex(res.equity.index) if market is not None else None
+        out["equity_curve"] = [
+            {"date": d.date().isoformat(), "equity": round(e, 2), "benchmark": round(b, 2),
+             "market": None if mk is None or pd.isna(mk[d]) else round(float(mk[d]), 2)}
+            for d, e, b in zip(res.equity.index, res.equity, res.benchmark)]
+    if req.include_prices:
+        out["prices"] = [{"date": d.date().isoformat(), "open": round(r.open, 4), "high": round(r.high, 4),
+                          "low": round(r.low, 4), "close": round(r.close, 4), "volume": float(r.volume)}
+                         for d, r in zip(prices.index, prices.itertuples())]
     return out
 
 
