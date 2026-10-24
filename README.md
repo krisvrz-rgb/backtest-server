@@ -10,8 +10,8 @@ pip install -r requirements.txt
 python run.py
 ```
 
-De server draait standaard op poort **8100** (poort 8000 is al de portfolio server). Andere poort:
-`BACKTEST_PORT=8200 python run.py`. Open daarna http://localhost:8100/docs voor de interactieve API.
+De server draait standaard op poort **9000** (poort 8000 is al de portfolio server). Andere poort:
+`BACKTEST_PORT=9100 python run.py`. Open daarna http://localhost:9000/docs voor de interactieve API.
 
 ## Endpoints
 
@@ -26,7 +26,7 @@ De server draait standaard op poort **8100** (poort 8000 is al de portfolio serv
 Voorbeeld:
 
 ```bash
-curl -X POST localhost:8100/backtest -H 'Content-Type: application/json' -d '{
+curl -X POST localhost:9000/backtest -H 'Content-Type: application/json' -d '{
   "symbol": "AAPL", "strategy": "sma_crossover", "params": {"fast": 50, "slow": 200},
   "source": "yahoo", "start": "2015-01-01", "fee_bps": 5 }'
 ```
