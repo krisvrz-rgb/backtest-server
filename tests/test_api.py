@@ -201,3 +201,30 @@ def test_watchlist_scan_end_to_end(tmp_path, monkeypatch):
     assert all(x and "error" not in x for x in res), res
     first = res[0]
     assert 0 <= first["beat_count"] <= first["strategies"] and first["best"]["times_bh"] > 0
+
+
+def test_import_from_portfolio(monkeypatch, tmp_path):
+    import httpx
+    import app.watchlist as wl
+    tv = tmp_path / "tv.json"
+    tv.write_text('{"lijsten":[{"naam":"Watchlist","symbolen":["EURONEXT:IWDA","NASDAQ:POET","XETR:AIXA"]}]}')
+    monkeypatch.setattr(wl, "TV_WATCHLIST_FILE", tv)
+    responses = {
+        "/api/data": {"portfolios": {
+            "kristof": {"holdings": [{"ticker": "POET", "waarde": 100, "currency": "USD"}, {"ticker": "X", "waarde": 0}]},
+            "freya": {"holdings": [{"ticker": "IWDA", "waarde": 50, "currency": "EUR"}, {"ticker": "POET", "waarde": 5}]},
+            "cezanne": {"holdings": [{"ticker": "ASML", "waarde": 10, "currency": "EUR"}]}}},
+        "/api/wlpaneel": {"lijsten": [{"naam": "Watchlist", "tickers": ["AIXA", "POET", "SHOP"]}, {"naam": "M", "tickers": ["BBAI"]}]},
+    }
+
+    class R:
+        def __init__(self, d): self.d = d
+        def json(self): return self.d
+
+    monkeypatch.setattr(httpx, "get", lambda url, **k: R(next(v for p, v in responses.items() if url.endswith(p))))
+    groups = {g["name"]: g["symbols"] for g in wl.import_from_portfolio("http://pf")}
+    assert list(groups) == ["GEZIN", "KRISTOF", "FREYA", "CÉZANNE", "WATCHLIST"]
+    assert len(groups["GEZIN"]) == 3 and len(groups["KRISTOF"]) == 1
+    assert {s["yahoo"] for s in groups["FREYA"]} == {"IWDA.AS", "POET"}
+    assert groups["CÉZANNE"][0]["yahoo"] == "ASML.AS"
+    assert [s["yahoo"] for s in groups["WATCHLIST"]] == ["AIXA.DE", "SHOP"]

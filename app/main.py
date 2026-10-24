@@ -16,7 +16,7 @@ from .engine import compute_metrics, monthly_returns, run_backtest
 from .optimize import OBJECTIVES, optimize
 from .pine import to_pine
 from .ranking import rank_strategies
-from .watchlist import SCANNER, load_watchlist, parse_tradingview, save_watchlist, tv_to_yahoo, watchlist_view
+from .watchlist import PORTFOLIO_URL, SCANNER, import_from_portfolio, load_watchlist, parse_tradingview, save_watchlist, tv_to_yahoo, watchlist_view
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
 
 app = FastAPI(title="Backtest Server", version="0.1.0",
@@ -267,6 +267,22 @@ def import_watchlist(req: WatchlistImport):
     save_watchlist(new)
     return {"groups": len(new), "symbols": sum(len(g["symbols"]) for g in new),
             "without_data": [s["tv"] for g in new for s in g["symbols"] if not s["yahoo"]]}
+
+
+class PortfolioImport(BaseModel):
+    url: str = Field(PORTFOLIO_URL, description="Adres van de portfolio server")
+
+
+@app.post("/api/watchlist/import-portfolio")
+def import_portfolio(req: PortfolioImport):
+    """Neem de groepen over van de portfolio server (GEZIN, KRISTOF, FREYA, CÉZANNE, WATCHLIST)."""
+    try:
+        groups = import_from_portfolio(req.url.rstrip("/"))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Portfolio server niet bereikbaar of onverwacht antwoord: {e}")
+    save_watchlist(groups)
+    return {"groups": [{"name": g["name"], "count": len(g["symbols"])} for g in groups],
+            "symbols": sum(len(g["symbols"]) for g in groups)}
 
 
 class WatchlistSymbol(BaseModel):

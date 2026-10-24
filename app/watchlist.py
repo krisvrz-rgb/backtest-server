@@ -32,6 +32,8 @@ EXCHANGE_SUFFIX = {
 }
 # Euronext-aandelen die niet in Amsterdam noteren.
 EURONEXT_OVERRIDES = {"SOF": "SOF.BR", "ACKB": "ACKB.BR", "UCB": "UCB.BR", "ABI": "ABI.BR", "KBC": "KBC.BR"}
+# Yahoo gebruikt voor sommige munten een id-achtervoegsel.
+CRYPTO_OVERRIDES = {"UNI": "UNI7083", "HYPE": "HYPE32196", "SUI": "SUI20947", "TAO": "TAO22974"}
 CRYPTO_EXCHANGES = {"BITSTAMP", "COINBASE", "BINANCE", "KRAKEN", "BYBIT"}
 NO_DATA_PREFIXES = {"TVC", "ECONOMICS", "FX_IDC", "FX", "CME", "CME_MINI", "ICEEUR", "ICEENDEX", "SPREADEX", "USI",
                     "EASYMARKETS", "OANDA", "CAPITALCOM"}
@@ -50,7 +52,8 @@ def tv_to_yahoo(tv: str) -> str | None:
     if exchange in CRYPTO_EXCHANGES:
         for quote in ("USDT", "USDC", "USD", "EUR"):
             if ticker.endswith(quote) and len(ticker) > len(quote):
-                return f"{ticker[:-len(quote)]}-{'USD' if quote.startswith('USD') else quote}"
+                base = ticker[:-len(quote)]
+                return f"{CRYPTO_OVERRIDES.get(base, base)}-{'USD' if quote.startswith('USD') else quote}"
         return None
     if exchange == "EURONEXT" and ticker in EURONEXT_OVERRIDES:
         return EURONEXT_OVERRIDES[ticker]
@@ -77,6 +80,70 @@ def parse_tradingview(text: str, default_group: str = "WATCHLIST") -> list[dict[
     if current["symbols"]:
         groups.append(current)
     return groups
+
+
+# --------------------------------------------------------------------------- portfolio server
+
+PORTFOLIO_URL = os.getenv("PORTFOLIO_URL", "http://localhost:5000")
+TV_WATCHLIST_FILE = Path(os.getenv("TV_WATCHLIST_FILE", r"C:\portfolio-data\tradingview_watchlist.json"))
+PORTFOLIO_GROUPS = [("kristof", "KRISTOF"), ("freya", "FREYA"), ("cezanne", "CÉZANNE")]
+
+
+def _tv_lookup() -> dict[str, str]:
+    """Kale ticker -> TradingView-symbool, uit de TradingView-export van de portfolio server."""
+    if not TV_WATCHLIST_FILE.exists():
+        return {}
+    data = json.loads(TV_WATCHLIST_FILE.read_text(encoding="utf-8"))
+    out: dict[str, str] = {}
+    for lst in data.get("lijsten", []):
+        for sym in lst.get("symbolen", []):
+            if ":" in sym and not sym.startswith("###"):
+                out.setdefault(sym.split(":", 1)[1].upper(), sym)
+    return out
+
+
+def _resolve(ticker: str, currency: str | None, lookup: dict[str, str]) -> dict[str, Any]:
+    t = ticker.strip().upper()
+    if ":" in t:
+        return {"tv": t, "yahoo": tv_to_yahoo(t)}
+    if "." in t or "-" in t:  # al een Yahoo-ticker (bv. SOF.BR, BTC-USD)
+        return {"tv": t, "yahoo": t}
+    if t in lookup:
+        return {"tv": lookup[t], "yahoo": tv_to_yahoo(lookup[t])}
+    if currency and currency.upper() == "EUR":
+        return {"tv": f"EURONEXT:{t}", "yahoo": f"{t}.AS"}
+    return {"tv": t, "yahoo": t}
+
+
+def import_from_portfolio(base_url: str = PORTFOLIO_URL) -> list[dict[str, Any]]:
+    """Bouwt dezelfde groepen als de watchlist van de portfolio server: GEZIN, KRISTOF, FREYA, CÉZANNE, WATCHLIST."""
+    import httpx
+
+    lookup = _tv_lookup()
+    data = httpx.get(f"{base_url}/api/data", params={"snel": 1}, timeout=60).json()
+    groups, family = [], {}
+    for key, label in PORTFOLIO_GROUPS:
+        holdings = data.get("portfolios", {}).get(key, {}).get("holdings", [])
+        syms = []
+        for h in holdings:
+            if not h.get("ticker") or not (h.get("waarde") or 0) > 0:
+                continue
+            item = _resolve(h["ticker"], h.get("currency"), lookup) | {"name": h.get("naam")}
+            if item["tv"] not in [x["tv"] for x in syms]:
+                syms.append(item)
+            family.setdefault(item["tv"], item)
+        groups.append({"name": label, "symbols": syms})
+    groups.insert(0, {"name": "GEZIN", "symbols": list(family.values())})
+    panel = httpx.get(f"{base_url}/api/wlpaneel", timeout=60).json()
+    wl = []
+    for lst in panel.get("lijsten", []):
+        if lst.get("naam") in ("Eigen watchlist", "Watchlist"):
+            for t in lst.get("tickers", []):
+                item = _resolve(t, None, lookup)
+                if item["tv"] not in family and item["tv"] not in [x["tv"] for x in wl]:
+                    wl.append(item)
+    groups.append({"name": "WATCHLIST", "symbols": wl})
+    return [g for g in groups if g["symbols"]]
 
 
 def load_watchlist() -> list[dict[str, Any]]:
@@ -132,6 +199,9 @@ def summarize(rank: dict[str, Any], prices) -> dict[str, Any]:
         "period": best["period"] if best else None,
         "strategies": len(strategies),
         "beat_count": len(beat),
+        # Strategieën die buy & hold verslaan én zelf winst maakten: zegt meer als het aandeel zelf daalde.
+        "beat_profitable_count": len([x for x in beat if x["total_return"] > 0]),
+        "history_days": (close.index[-1] - close.index[0]).days,
         "buy_and_hold_return": bh_ret,
         "best": best_info,
         "top3": [x["strategy"] for x in strategies[:3]],

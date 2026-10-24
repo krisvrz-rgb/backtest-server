@@ -63,6 +63,7 @@
   .badge.new { color: #fff; background: var(--up); border-color: var(--up); font-weight: 600; }
   .bar { display: inline-block; width: 60px; height: 6px; background: var(--panel-2); border-radius: 3px; vertical-align: middle; margin-left: 6px; overflow: hidden; }
   .bar i { display: block; height: 100%; background: var(--up); }
+  .warn { color: var(--warn); }
   .x { border: none; background: none; color: var(--muted); padding: 2px 6px; }
   .x:hover { color: var(--down); }
   a.lnk { color: var(--accent); text-decoration: none; font-size: 12px; margin-left: 6px; }
@@ -90,9 +91,11 @@
           <option value="open">Alleen open buy-signalen</option>
           <option value="new">Buy-signaal ≤ 5 dagen</option>
           <option value="beat">Minstens 1 strategie beter dan B&amp;H</option>
+          <option value="beatprofit">Beter dan B&amp;H én winstgevend</option>
         </select>
       </div>
-      <button id="toggle-import">Importeren / toevoegen</button>
+      <button id="import-pf" title="Groepen GEZIN, KRISTOF, FREYA, CÉZANNE en WATCHLIST overnemen van de portfolio server">Portfolio server overnemen</button>
+      <button id="toggle-import">TradingView importeren</button>
     </div>
     <div class="status" id="status">Nog niet gescand.</div>
     <div class="import hidden" id="import">
@@ -128,7 +131,8 @@
     </div>
   </section>
   <div class="desc">Per ticker worden alle strategieën met hun standaardinstellingen getest. <b>× B&amp;H</b> = eindkapitaal van de beste strategie
-    gedeeld door dat van gewoon vasthouden. <b>Laatste buy-signaal</b> = het meest recente koopsignaal dat nog niet gevolgd werd door een verkoop,
+    gedeeld door dat van gewoon vasthouden. Daalde het aandeel zelf sterk, dan verslaat bijna elke strategie buy &amp; hold
+    (ze zitten deels in cash); kijk dan naar <b>ook winstgevend</b> en het rendement van de beste strategie. <b>Laatste buy-signaal</b> = het meest recente koopsignaal dat nog niet gevolgd werd door een verkoop,
     bij de strategieën die buy &amp; hold verslaan. <b>Open signalen</b> = hoeveel van die strategieën nu in het aandeel zitten.
     Klik op een ticker voor de backtest met de beste strategie.</div>
 </main>
@@ -165,6 +169,7 @@ function passes(s) {
   if (f === 'open') return !!r.latest_buy;
   if (f === 'new') return !!r.latest_buy && r.latest_buy.bars_since_buy <= 5;
   if (f === 'beat') return r.beat_count > 0;
+  if (f === 'beatprofit') return r.beat_profitable_count > 0;
   return true;
 }
 
@@ -183,7 +188,8 @@ function row(s, group) {
     : '<span class="desc">geen open signaal</span>';
   return `<tr class="row" data-link="${link}&strategy=${encodeURIComponent(b?.strategy || '')}">` +
     `<td class="left">${sym}</td><td>${nl(r.last_close)}</td><td class="${cls(r.change_pct)}">${pct(r.change_pct, true)}</td>` +
-    `<td>${r.beat_count}/${r.strategies}<span class="bar"><i style="width:${Math.round(share * 100)}%"></i></span></td>` +
+    `<td>${r.beat_count}/${r.strategies}<span class="bar"><i style="width:${Math.round(share * 100)}%"></i></span>` +
+      `<small>${r.beat_profitable_count ?? '?'} ook winstgevend${r.history_days != null && r.history_days < 365 ? ' · <span class="warn">korte historie</span>' : ''}</small></td>` +
     `<td class="left">${b ? esc(b.strategy) + `<small>${pct(b.total_return, true)} · ${b.num_trades} trades · ${pct(b.percent_profitable)} rendabel</small>` : '–'}</td>` +
     `<td class="${b && b.times_bh >= 1 ? 'up' : 'down'}">${b && b.times_bh != null ? nl(b.times_bh) + '×' : '–'}</td>` +
     `<td class="${cls(r.buy_and_hold_return)}">${pct(r.buy_and_hold_return, true)}</td>` +
@@ -248,6 +254,16 @@ $('scan').addEventListener('click', async () => {
       groups: $('group-filter').value ? [$('group-filter').value] : null }) });
     load();
   } catch (e) { $('status').textContent = 'Scan starten mislukt: ' + e.message; }
+});
+$('import-pf').addEventListener('click', async () => {
+  if (!confirm('De huidige watchlist vervangen door de groepen van de portfolio server?')) return;
+  $('import-pf').disabled = true;
+  try {
+    const r = await api('/api/watchlist/import-portfolio', { method: 'POST', body: '{}' });
+    $('status').textContent = `Overgenomen: ${r.groups.map(g => `${g.name} ${g.count}`).join(' · ')}. Start nu een scan.`;
+    await load();
+  } catch (e) { $('status').textContent = 'Overnemen mislukt: ' + e.message; }
+  finally { $('import-pf').disabled = false; }
 });
 $('stop').addEventListener('click', async () => { await api('/api/watchlist/scan/stop', { method: 'POST' }); load(); });
 $('start').addEventListener('change', () => $('start').dataset.touched = '1');
