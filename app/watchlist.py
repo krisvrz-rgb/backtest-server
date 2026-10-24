@@ -12,7 +12,7 @@ import multiprocessing
 import os
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -371,22 +371,13 @@ class Scanner:
         scan["settings"] = {"start": min(_period(v)[0] for v in periods.values()), "periods": periods,
                             "fee_bps": fee_bps, "source": source}
         workers = workers or max(1, min(4, (os.cpu_count() or 2) - 1))
+        # Eén rekenthread per proces: anders vechten numpy/BLAS-threads van de workers om dezelfde kernen.
+        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+            os.environ.setdefault(var, "1")
         try:
-            with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn")) as pool:
-                futures = {pool.submit(scan_one, y, start, fee_bps, source): y for y in symbols}
-                for fut in as_completed(futures):
-                    y = futures[fut]
-                    if self._stop:
-                        for f in futures:
-                            f.cancel()
-                        break
-                    try:
-                        result = fut.result() | {"scanned_at": datetime.now().isoformat(timespec="seconds")}
-                    except Exception as e:  # noqa: BLE001 - één ticker zonder data stopt de scan niet
-                        result = {"error": str(e)[:200], "scanned_at": datetime.now().isoformat(timespec="seconds")}
-                    with self.lock:
-                        self.state["current"] = y
-                    self._record(scan, y, result)
+            pending = list(symbols)
+            while pending and not self._stop:
+                pending = self._run_pool(scan, pending, start, fee_bps, workers, source)
         finally:
             with self.lock:
                 scan["finished"] = datetime.now().isoformat(timespec="seconds")
@@ -395,6 +386,44 @@ class Scanner:
                 self.state["finished"] = scan["finished"]
 
 
+    def _run_pool(self, scan, symbols, start, fee_bps, workers, source) -> list[str]:
+        """Draait een pool tot alles klaar is. Komt er STALL_SECONDS lang niets klaar, dan krijgen de tickers
+        die op dat moment rekenen een time-outfout, wordt de pool afgebroken en geven we de rest terug."""
+        now = lambda: datetime.now().isoformat(timespec="seconds")  # noqa: E731
+        pool = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
+        futures = {pool.submit(scan_one, y, start, fee_bps, source): y for y in symbols}
+        todo = set(futures)
+        try:
+            while todo:
+                if self._stop:
+                    return []
+                done, todo = wait(todo, timeout=STALL_SECONDS, return_when=FIRST_COMPLETED)
+                if not done:
+                    stuck = [f for f in todo if f.running()]
+                    for f in stuck:
+                        self._record(scan, futures[f], {"error": f"Time-out: na {STALL_SECONDS} s nog niet klaar",
+                                                        "scanned_at": now()})
+                    return [futures[f] for f in todo if f not in stuck]
+                for fut in done:
+                    y = futures[fut]
+                    try:
+                        result = fut.result() | {"scanned_at": now()}
+                    except Exception as e:  # noqa: BLE001 - één ticker zonder data stopt de scan niet
+                        result = {"error": str(e)[:200], "scanned_at": now()}
+                    with self.lock:
+                        self.state["current"] = y
+                    self._record(scan, y, result)
+            return []
+        finally:
+            for f in futures:
+                f.cancel()
+            if todo:  # vastgelopen of gestopt: werkprocessen hard afsluiten
+                for proc in list(getattr(pool, "_processes", {}).values()):
+                    proc.terminate()
+            pool.shutdown(wait=not todo, cancel_futures=True)
+
+
+STALL_SECONDS = int(os.getenv("SCAN_STALL_SECONDS", "300"))
 SCANNER = Scanner()
 
 
