@@ -234,7 +234,7 @@
     <section class="panel hidden" id="out">
       <div class="titlebar">
         <div><b id="title"></b> <span id="period"></span></div>
-        <div class="legend"><span><i style="background:var(--up)"></i>B = koop</span><span><i style="background:var(--down)"></i>S = verkoop</span></div>
+        <div class="legend"><span>B = koop · S = verkoop</span><span><i style="background:var(--up)"></i>trade met winst</span><span><i style="background:var(--down)"></i>trade met verlies</span><span><i style="background:var(--accent)"></i>open trade</span></div>
       </div>
       <div class="ind-legend" id="ind-legend"></div>
       <div id="price-chart"></div>
@@ -444,12 +444,26 @@ function render(d) {
   pc.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
   vol.setData(d.prices.map(p => ({ time: p.date, value: p.volume,
     color: (p.close >= p.open ? css('--up') : css('--down')) + '55' })));
-  const markers = [];
+  // Winst = groen, verlies = rood: de B en S van één trade krijgen dezelfde kleur, met een lijn van instap naar uitstap.
+  const markers = [], win = css('--up'), loss = css('--down'), buy = css('--accent');
+  const dates = d.prices.map(p => p.date), nextDate = t => dates[dates.indexOf(t) + 1];
+  const legs = { win: new Map(), loss: new Map() };
   d.trades.forEach(t => {
-    markers.push({ time: t.entry_date, position: 'belowBar', color: css('--up'), shape: 'arrowUp', text: 'B' });
-    if (t.exit_date) markers.push({ time: t.exit_date, position: 'aboveBar', color: css('--down'), shape: 'arrowDown',
+    const good = t.pnl > 0, col = good ? win : loss, leg = legs[good ? 'win' : 'loss'];
+    markers.push({ time: t.entry_date, position: 'belowBar', color: t.exit_date ? col : buy, shape: 'arrowUp', text: 'B' });
+    if (t.exit_date) markers.push({ time: t.exit_date, position: 'aboveBar', color: col, shape: 'arrowDown',
       text: 'S ' + pct(t.pnl_pct, true) });
+    const end = t.exit_date || dates[dates.length - 1];
+    leg.set(t.entry_date, { time: t.entry_date, value: t.entry_price });
+    leg.set(end, { time: end, value: t.exit_price });
+    const gap = nextDate(end);
+    if (gap && !leg.has(gap)) leg.set(gap, { time: gap });   // lege plek: lijn hier onderbreken
   });
+  for (const [k, color] of [['win', win], ['loss', loss]]) {
+    const data = [...legs[k].values()].sort((a, b) => a.time.localeCompare(b.time));
+    if (data.length) pc.addLineSeries({ color, lineWidth: 2, lineStyle: LWC.LineStyle.Dotted, priceLineVisible: false,
+      lastValueVisible: false, crosshairMarkerVisible: false }).setData(data);
+  }
   candles.setMarkers(markers.sort((a, c) => a.time.localeCompare(c.time)));
   renderIndicators(pc, d);
   pc.timeScale().fitContent();
