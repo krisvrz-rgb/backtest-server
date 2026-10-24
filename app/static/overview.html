@@ -89,6 +89,12 @@
   td.best { white-space: normal; min-width: 230px; text-align: left; }
   td.best .nm { font-weight: 600; }
   th.focus { color: var(--accent); }
+  .autopanel { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; padding: 10px 14px 12px; border-top: 1px solid var(--border); }
+  .autopanel .field { display: grid; gap: 4px; }
+  .autopanel .chk { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--text); }
+  .autopanel .days { display: flex; flex-wrap: wrap; gap: 4px; max-width: 640px; }
+  .autopanel .days label { display: flex; gap: 4px; align-items: center; font-size: 12px; color: var(--text);
+                           border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; cursor: pointer; }
   .pchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; align-items: center; font-size: 12px; color: var(--muted); }
   .pchips button { font-size: 12px; padding: 2px 9px; border-radius: 12px; }
   .pchips button.on { border-color: var(--accent); color: var(--accent); }
@@ -110,6 +116,7 @@
       <div class="field"><label for="focus">Beste strategie voor</label><select id="focus"></select></div>
       <button class="primary" id="refresh" title="Alle strategieën opnieuw testen op elke ticker van deze lijst, voor alle periodes">Vernieuwen</button>
       <button id="stop" class="hidden">Stoppen</button>
+      <button id="auto-toggle" title="Automatisch vernieuwen instellen">Automatisch: …</button>
       <div class="grow"></div>
       <div class="field"><label for="search">Zoeken</label><input id="search" placeholder="ticker…"></div>
       <div class="field"><label for="filter">Filter</label>
@@ -120,6 +127,14 @@
           <option value="beaten">Beste strategie verslaat buy &amp; hold</option>
         </select>
       </div>
+    </div>
+    <div class="autopanel hidden" id="autopanel">
+      <label class="chk"><input type="checkbox" id="a-on"> Automatisch vernieuwen</label>
+      <div class="field"><label for="a-time">Om</label><input type="time" id="a-time" value="22:30"></div>
+      <div class="field"><label>Op</label><div class="days" id="a-days"></div></div>
+      <div class="field"><label>Lijsten (niets aangevinkt = alle)</label><div class="days" id="a-lists"></div></div>
+      <button class="primary" id="a-save">Opslaan</button>
+      <span class="desc" id="a-info"></span>
     </div>
     <div class="pchips" id="pchips"></div>
     <div class="status" id="status">Laden…</div>
@@ -376,7 +391,33 @@ $('rows').addEventListener('click', e => {
   if (tr) { expanded.has(tr.dataset.key) ? expanded.delete(tr.dataset.key) : expanded.add(tr.dataset.key); render(); }
 });
 
-load().catch(e => $('status').textContent = 'Kon overzicht niet laden: ' + e.message);
+// ---------------------------------------------------------------- automatisch vernieuwen
+const DAYS = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo'];
+let sched = null;
+const fmtWhen = t => t ? new Date(t).toLocaleString('nl-BE', { weekday: 'long', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+function renderSchedule() {
+  if (!sched) return;
+  $('auto-toggle').textContent = sched.enabled ? `Automatisch: ${DAYS.filter((_, i) => sched.days.includes(i)).join(' ')} om ${sched.time}` : 'Automatisch: uit';
+  $('a-on').checked = sched.enabled; $('a-time').value = sched.time;
+  $('a-days').innerHTML = DAYS.map((d, i) => `<label><input type="checkbox" value="${i}" ${sched.days.includes(i) ? 'checked' : ''}>${d}</label>`).join('');
+  const lists = data ? [...new Set(data.groups.map(g => g.list))] : [];
+  $('a-lists').innerHTML = lists.map(l => `<label><input type="checkbox" value="${esc(l)}" ${sched.lists.includes(l) ? 'checked' : ''}>${esc(l.replace('TradingView · ', 'TV · '))}</label>`).join('');
+  $('a-info').textContent = (sched.enabled && sched.next_run ? `Volgende keer: ${fmtWhen(sched.next_run)}. ` : '') +
+    (sched.last_run ? `Laatst automatisch: ${fmtWhen(sched.last_run)}.` : '') + ' Tijd = klok van de server.';
+}
+async function loadSchedule() { sched = await api('/api/schedule'); renderSchedule(); }
+$('auto-toggle').addEventListener('click', () => { $('autopanel').classList.toggle('hidden'); renderSchedule(); });
+$('a-save').addEventListener('click', async () => {
+  try {
+    sched = await api('/api/schedule', { method: 'POST', body: JSON.stringify({
+      enabled: $('a-on').checked, time: $('a-time').value || '22:30',
+      days: [...$('a-days').querySelectorAll('input:checked')].map(x => +x.value),
+      lists: [...$('a-lists').querySelectorAll('input:checked')].map(x => x.value) }) });
+    renderSchedule(); $('a-info').textContent = 'Opgeslagen. ' + $('a-info').textContent;
+  } catch (e) { $('a-info').textContent = 'Opslaan mislukt: ' + e.message; }
+});
+
+load().then(loadSchedule).catch(e => $('status').textContent = 'Kon overzicht niet laden: ' + e.message);
 </script>
 </body>
 </html>

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from .data import DATA_DIR, _normalize, get_prices
 from .adaptive import walk_forward
+from .schedule import load_schedule, next_run, run_now, save_schedule, start_scheduler
 from .engine import compute_metrics, monthly_returns, run_backtest
 from .optimize import OBJECTIVES, optimize
 from .pine import to_pine
@@ -413,4 +414,38 @@ def scan_status():
 @app.post("/api/watchlist/scan/stop")
 def stop_scan():
     SCANNER.stop()
+    return SCANNER.status()
+
+
+# --------------------------------------------------------------------------- automatisch vernieuwen
+
+
+@app.on_event("startup")
+def _start_scheduler():
+    start_scheduler()
+
+
+class ScheduleSettings(BaseModel):
+    enabled: bool = False
+    time: str = Field("22:30", pattern=r"^\d{1,2}:\d{2}$", description="Lokale tijd van de server (UU:MM)")
+    days: list[int] = Field([0, 1, 2, 3, 4], description="0 = maandag ... 6 = zondag")
+    lists: list[str] = Field(default_factory=list, description="Leeg = alle lijsten")
+
+
+@app.get("/api/schedule")
+def get_schedule():
+    cfg = load_schedule()
+    return cfg | {"next_run": next_run(cfg)}
+
+
+@app.post("/api/schedule")
+def set_schedule(req: ScheduleSettings):
+    cfg = save_schedule(load_schedule() | req.model_dump())
+    return cfg | {"next_run": next_run(cfg)}
+
+
+@app.post("/api/schedule/run")
+def run_schedule_now():
+    if not run_now():
+        raise HTTPException(409, "Er loopt al een scan of er zijn geen tickers")
     return SCANNER.status()

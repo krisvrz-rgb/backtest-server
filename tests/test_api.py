@@ -319,3 +319,18 @@ def test_new_classic_and_combo_strategies():
     high = pd.Series(np.r_[np.arange(20), np.arange(10)[::-1]], index=idx, dtype=float)
     df = pd.DataFrame({"open": high, "high": high, "low": high, "close": high, "volume": 1.0})
     assert Aroon(25, "up").calc(df).iloc[-1] == 100 * (25 - 10) / 25  # top 10 bars geleden
+
+
+def test_schedule_settings_and_due(tmp_path, monkeypatch):
+    from datetime import datetime
+    import app.schedule as sc
+    monkeypatch.setattr(sc, "SCHEDULE_FILE", tmp_path / "schedule.json")
+    r = client.post("/api/schedule", json={"enabled": True, "time": "22:30", "days": [0, 1, 2, 3, 4], "lists": []}).json()
+    assert r["enabled"] and r["next_run"]
+    cfg = sc.load_schedule()
+    fri = datetime(2026, 10, 23, 22, 31)
+    assert sc.due(cfg, fri) and not sc.due(cfg, fri.replace(hour=22, minute=29))
+    assert not sc.due(cfg, datetime(2026, 10, 24, 23, 0))  # zaterdag
+    assert not sc.due(cfg | {"last_run": "2026-10-23T22:30:05"}, fri)
+    assert sc.next_run(cfg, datetime(2026, 10, 24, 12, 0)).startswith("2026-10-26T22:30")
+    assert client.post("/api/schedule", json={"time": "25u"}).status_code == 422
