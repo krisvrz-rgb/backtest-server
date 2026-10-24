@@ -7,3 +7,9 @@ python-multipart>=0.0.9
 pytest>=8.0
 httpx>=0.27
 ib_async>=1.0
+# live scanner (tickers uit de YouTube-livestream)
+yt-dlp>=2025.1.1
+opencv-python-headless>=4.9
+rapidocr>=3.0
+onnxruntime>=1.18
+tzdata

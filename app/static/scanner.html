@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live scanner</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --text:#e6e8ee; --muted:#8a92a3; --accent:#4f8cff; --new:#ffb020; --live:#22c55e; --err:#ef4444; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position:sticky; top:0; z-index:5; background:var(--bg); border-bottom:1px solid var(--line); padding:12px 16px; display:flex; flex-wrap:wrap; gap:12px 20px; align-items:center; }
+  h1 { font-size:18px; margin:0; }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; background:var(--panel); border:1px solid var(--line); color:var(--muted); font-size:13px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
+  .pill.live .dot { background:var(--live); box-shadow:0 0 6px var(--live); }
+  .pill.err .dot { background:var(--err); }
+  .stream { color:var(--muted); font-size:13px; max-width:420px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stream a { color:var(--muted); }
+  .controls { margin-left:auto; display:flex; flex-wrap:wrap; gap:10px; align-items:center; color:var(--muted); font-size:13px; }
+  select, button { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 8px; font:inherit; }
+  button { cursor:pointer; }
+  main { padding:12px 16px 40px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+  .chip { padding:3px 9px; border-radius:6px; background:var(--panel); border:1px solid var(--line); cursor:pointer; font-variant-numeric:tabular-nums; }
+  .chip b { margin-right:4px; }
+  .chip small { color:var(--muted); }
+  .chip.now { border-color:var(--live); }
+  .chip.fresh b { color:var(--new); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(460px, 1fr)); gap:12px; }
+  @media (max-width:520px) { .grid { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .card.now { border-color:var(--live); }
+  .card .top { display:flex; align-items:baseline; gap:8px; padding:8px 12px; }
+  .card .sym { font-size:17px; font-weight:700; color:var(--text); text-decoration:none; }
+  .card .name { color:var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; }
+  .card .meta { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .badge { font-size:11px; font-weight:700; color:#111; background:var(--new); border-radius:4px; padding:1px 5px; }
+  .card iframe { display:block; width:100%; height:320px; border:0; }
+  .empty { color:var(--muted); padding:40px 0; text-align:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Live scanner</h1>
+  <span id="state" class="pill"><span class="dot"></span><span id="stateText">laden…</span></span>
+  <span class="stream" id="stream"></span>
+  <div class="controls">
+    <label>Dag <select id="day"></select></label>
+    <label>Min. keer gezien <select id="min"><option>1</option><option selected>2</option><option>3</option><option>5</option><option>10</option></select></label>
+    <label>Grafieken <select id="max"><option>6</option><option selected>12</option><option>24</option></select></label>
+    <label>Interval <select id="interval"><option value="1">1m</option><option value="5" selected>5m</option><option value="15">15m</option><option value="60">1u</option><option value="D">1D</option></select></label>
+    <button id="toggle">Stop</button>
+  </div>
+</header>
+<main>
+  <div class="chips" id="chips"></div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" hidden>Nog geen tickers gezien vandaag.</div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+for (const id of ["min", "max", "interval"]) {
+  $(id).value = store.get("scanner." + id, $(id).value);
+  $(id).addEventListener("change", () => { store.set("scanner." + id, $(id).value); if (id === "interval") resetCharts(); refresh(); });
+}
+$("day").addEventListener("change", () => { resetCharts(); refresh(); });
+
+let status = {}, cards = new Map();
+const tvSymbol = r => (r.exchange ? r.exchange + ":" : "") + r.symbol;
+const clock = iso => iso ? iso.slice(11, 16) : "";
+const ago = iso => (Date.now() - new Date(iso).getTime()) / 1000;
+const isNow = r => ago(r.last_seen) < Math.max(3 * (status.interval || 10), 45);
+const isFresh = r => ago(r.first_seen) < 300;
+const tvLink = r => "https://www.tradingview.com/chart/?symbol=" + encodeURIComponent(tvSymbol(r));
+const chartSrc = r => "https://s.tradingview.com/widgetembed/?" + new URLSearchParams({
+  symbol: tvSymbol(r), interval: $("interval").value, hidesidetoolbar: 1, symboledit: 1, saveimage: 0,
+  toolbarbg: "171a21", theme: "dark", style: 1, timezone: "America/New_York", withdateranges: 1, locale: "nl" });
+
+function resetCharts() { cards.forEach(c => c.remove()); cards.clear(); }
+
+function card(r) {
+  const el = document.createElement("div");
+  el.className = "card";
+  el.innerHTML = `<div class="top"><a class="sym" target="_blank" rel="noopener"></a><span class="badge" hidden>NIEUW</span>
+    <span class="name"></span><span class="meta"></span></div><iframe loading="lazy" allowtransparency="true"></iframe>`;
+  el.querySelector(".sym").textContent = r.symbol;
+  el.querySelector(".sym").href = tvLink(r);
+  el.querySelector(".name").textContent = r.name || r.exchange;
+  el.querySelector("iframe").src = chartSrc(r);
+  el.id = "card-" + r.symbol;
+  return el;
+}
+
+function render(rows) {
+  const chips = $("chips");
+  chips.replaceChildren(...rows.map(r => {
+    const c = document.createElement("span");
+    c.className = "chip" + (isNow(r) ? " now" : "") + (isFresh(r) ? " fresh" : "");
+    c.innerHTML = `<b></b><small></small>`;
+    c.querySelector("b").textContent = r.symbol;
+    c.querySelector("small").textContent = `${r.count}× · ${clock(r.last_seen)}`;
+    c.title = `${r.name}\nEerst gezien ${clock(r.first_seen)}, laatst ${clock(r.last_seen)} (New York)`;
+    c.onclick = () => { const el = $("card-" + r.symbol); el ? el.scrollIntoView({behavior: "smooth", block: "center"}) : window.open(tvLink(r), "_blank"); };
+    return c;
+  }));
+  // Grafieken: nieuwste eerst op volgorde van eerste keer gezien, zodat bestaande grafieken niet herladen
+  const shown = [...rows].sort((a, b) => b.first_seen.localeCompare(a.first_seen)).slice(0, +$("max").value);
+  const keep = new Set(shown.map(r => r.symbol));
+  for (const [sym, el] of cards) if (!keep.has(sym)) { el.remove(); cards.delete(sym); }
+  const grid = $("grid");
+  let prev = null;
+  for (const r of shown) {
+    let el = cards.get(r.symbol);
+    if (!el) {
+      el = card(r);
+      cards.set(r.symbol, el);
+      grid.insertBefore(el, prev ? prev.nextSibling : grid.firstChild);
+    }
+    el.classList.toggle("now", isNow(r));
+    el.querySelector(".badge").hidden = !isFresh(r);
+    el.querySelector(".meta").textContent = `${r.count}× · ${clock(r.first_seen)}–${clock(r.last_seen)}`;
+    prev = el;
+  }
+  $("empty").hidden = rows.length > 0;
+}
+
+function renderStatus() {
+  const live = status.running && status.state === "live";
+  $("state").className = "pill" + (live ? " live" : status.error ? " err" : "");
+  $("stateText").textContent = status.running ? status.state + (status.last_frame ? ` · ${clock(status.last_frame)}` : "") : "gestopt";
+  $("state").title = status.error || "";
+  const s = status.stream;
+  $("stream").innerHTML = "";
+  if (s) { const a = document.createElement("a"); a.href = s.webpage_url; a.target = "_blank"; a.textContent = s.title; $("stream").append(a); }
+  $("toggle").textContent = status.running ? "Stop" : "Start";
+  const sel = $("day"), cur = sel.value;
+  const opts = [...new Set([status.day, ...(status.days || [])])].filter(Boolean);
+  if (sel.options.length !== opts.length) {
+    sel.replaceChildren(...opts.map(d => new Option(d === status.day ? d + " (vandaag)" : d, d)));
+    sel.value = cur && opts.includes(cur) ? cur : status.day;
+  }
+}
+
+async function refresh() {
+  try {
+    status = await (await fetch("/scanner/status")).json();
+    renderStatus();
+    const q = new URLSearchParams({ min_count: $("min").value });
+    if ($("day").value) q.set("day", $("day").value);
+    const data = await (await fetch("/scanner/tickers?" + q)).json();
+    render(data.tickers);
+  } catch (e) { $("stateText").textContent = "server niet bereikbaar"; }
+}
+
+$("toggle").onclick = async () => { await fetch(status.running ? "/scanner/stop" : "/scanner/start", { method: "POST" }); refresh(); };
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

@@ -1,19 +1,33 @@
 from __future__ import annotations
 
+import os
+from contextlib import asynccontextmanager
 from io import StringIO
+from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from .data import DATA_DIR, _normalize, get_prices
 from .engine import run_backtest
+from .live_scanner import board_for, days, scanner
 from .pine import to_pine
 from .strategies import STRATEGIES, get_strategy
 
-app = FastAPI(title="Backtest Server", version="0.1.0",
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if os.getenv("SCANNER_AUTOSTART", "1") == "1":
+        scanner.start()
+    yield
+    scanner.stop()
+
+
+app = FastAPI(title="Backtest Server", version="0.1.0", lifespan=lifespan,
               description="Backtest handelsstrategieën op aandelen en exporteer ze naar TradingView Pine Script.")
 
 
@@ -120,3 +134,50 @@ async def upload_data(symbol: str, file: UploadFile = File(...)):
     DATA_DIR.mkdir(exist_ok=True)
     df.to_csv(DATA_DIR / f"{symbol.upper()}.csv")
     return {"symbol": symbol.upper(), "rows": len(df), "start": str(df.index[0].date()), "end": str(df.index[-1].date())}
+
+
+# ---- Live scanner: tickers uit de YouTube-livestream ----
+
+SCANNER_PAGE = Path(__file__).parent / "static" / "scanner.html"
+
+
+@app.get("/scanner", response_class=HTMLResponse, include_in_schema=False)
+def scanner_page():
+    return SCANNER_PAGE.read_text(encoding="utf-8")
+
+
+@app.get("/scanner/tickers")
+def scanner_tickers(day: str | None = None, min_count: int = 1):
+    """Tickers van een handelsdag (standaard vandaag), laatst gezien bovenaan."""
+    board = board_for(day)
+    return {"day": board.day, "tickers": board.rows(min_count)}
+
+
+@app.get("/scanner/status")
+def scanner_status():
+    return {**scanner.status, "url": scanner.url, "interval": scanner.interval, "day": scanner.board.day,
+            "days": days()}
+
+
+@app.post("/scanner/start")
+def scanner_start():
+    scanner.start()
+    return scanner_status()
+
+
+@app.post("/scanner/stop")
+def scanner_stop():
+    scanner.stop()
+    return scanner_status()
+
+
+@app.post("/scanner/image")
+async def scanner_image(file: UploadFile = File(...)):
+    """Screenshot uploaden en de tickers erop meetellen; handig om de herkenning te testen."""
+    import cv2
+    import numpy as np
+
+    img = cv2.imdecode(np.frombuffer(await file.read(), np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(400, "Geen geldig beeldbestand")
+    return scanner.process_image(img)

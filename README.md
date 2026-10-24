@@ -22,6 +22,7 @@ De server draait standaard op poort **9000** (poort 8000 is al de portfolio serv
 | POST | `/compare` | Meerdere symbolen x strategieën, gesorteerd op Sharpe |
 | POST | `/pine` | Pine Script v6 voor een strategie, klaar voor de Pine Editor |
 | GET/POST | `/data`, `/data/{symbol}` | Koersdata (CSV) bekijken of uploaden |
+| GET | `/scanner` | Live tickers uit de YouTube-livestream met grafieken |
 
 Voorbeeld:
 
@@ -30,6 +31,20 @@ curl -X POST localhost:9000/backtest -H 'Content-Type: application/json' -d '{
   "symbol": "AAPL", "strategy": "sma_crossover", "params": {"fast": 50, "slow": 200},
   "source": "yahoo", "start": "2015-01-01", "fee_bps": 5 }'
 ```
+
+## Live scanner (tickers uit de YouTube-livestream)
+
+Open http://localhost:9000/scanner. De server kijkt mee met de dagelijkse livestream van
+[Zendoo](https://www.youtube.com/@zendoo/live): elke 10 seconden een frame, tekstherkenning (RapidOCR),
+en alles wat een echt Amerikaans beurssymbool is (lijst van nasdaqtrader.com, wekelijks ververst)
+komt op de pagina met een TradingView-grafiek. Nieuwe tickers komen bovenaan met een NIEUW-label,
+wat nu in beeld is krijgt een groene rand. Per handelsdag bewaard in `data/scanner/<datum>.json`.
+
+- Draait alleen ma-vr 04:00-20:00 New York tijd (10:00-02:00 bij ons) en zoekt elke dag zelf de nieuwe stream.
+- Instellen met `SCANNER_URL` (ander kanaal of video), `SCANNER_INTERVAL` (seconden),
+  `SCANNER_SCALE` (vergroting voor OCR) en `SCANNER_AUTOSTART=0` om niet automatisch te starten.
+- API: `GET /scanner/tickers?day=2026-10-23&min_count=2`, `GET /scanner/status`,
+  `POST /scanner/start`, `POST /scanner/stop`, en `POST /scanner/image` om een screenshot te laten lezen.
 
 ## Databronnen (`source`)
 
