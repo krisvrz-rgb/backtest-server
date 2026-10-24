@@ -132,4 +132,10 @@ def test_rank_sorts_by_return():
     rets = [x["total_return"] for x in body["results"]]
     assert rets == sorted(rets, reverse=True) and not body["errors"]
     assert {x["category"] for x in body["results"]} <= {"trend", "breakout", "benchmark"}
-    assert body["buy_and_hold"] is not None
+    assert body["buy_and_hold"] is not None and not body["buy_and_hold"]["beats_buy_and_hold"]
+
+
+def test_buy_and_hold_strategy_equals_benchmark():
+    prices = synthetic("X", "2015-01-01", "2020-12-31", seed=8)
+    res = run_backtest(prices, get_strategy("buy_and_hold"), fee_bps=5)
+    assert np.allclose(res.equity, res.benchmark)

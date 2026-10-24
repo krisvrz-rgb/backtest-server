@@ -116,6 +116,19 @@ def monthly_returns(equity: pd.Series, initial_capital: float) -> list[dict]:
     return [{"year": int(y), "month": int(m), "return": float(r)} for (y, m), r in rets.items()]
 
 
+def _simulate(open_: pd.Series, close: pd.Series, position: pd.Series, initial_capital: float,
+              cost_bps: float) -> tuple[pd.Series, pd.Series]:
+    """Kapitaal per dag (op de slot) en bij de opening, voor een positie die op de open ingaat."""
+    prev_pos = position.shift(1).fillna(0.0)
+    overnight = (open_ / close.shift(1) - 1).fillna(0.0)
+    intraday = close / open_ - 1
+    costs = (position - prev_pos).abs() * cost_bps / 10_000
+    open_factor = (1 + prev_pos * overnight) * (1 - costs)
+    equity = initial_capital * (open_factor * (1 + position * intraday)).cumprod()
+    equity_open = equity.shift(1).fillna(initial_capital) * open_factor
+    return equity, equity_open
+
+
 def run_backtest(prices: pd.DataFrame, strategy: Strategy, initial_capital: float = 10_000.0,
                  fee_bps: float = 5.0, slippage_bps: float = 0.0, allow_short: bool = False,
                  start: str | pd.Timestamp | None = None) -> BacktestResult:
@@ -131,16 +144,12 @@ def run_backtest(prices: pd.DataFrame, strategy: Strategy, initial_capital: floa
         signal = signal.clip(lower=0)
     # Zelfde uitvoering als TradingView: signaal op slot van bar t, order gevuld op open van bar t+1.
     position = signal.shift(1).fillna(0.0)
-    prev_pos = position.shift(1).fillna(0.0)
-    overnight = (open_ / close.shift(1) - 1).fillna(0.0)
-    intraday = close / open_ - 1
-    turnover = (position - prev_pos).abs()
-    costs = turnover * (fee_bps + slippage_bps) / 10_000
-    open_factor = (1 + prev_pos * overnight) * (1 - costs)
-    strat_rets = open_factor * (1 + position * intraday) - 1
-    equity = initial_capital * (1 + strat_rets).cumprod()
-    equity_open = equity.shift(1).fillna(initial_capital) * open_factor
-    benchmark = initial_capital * (1 + close.pct_change().fillna(0.0)).cumprod()
+    equity, equity_open = _simulate(open_, close, position, initial_capital, fee_bps + slippage_bps)
+    # Buy & hold als benchmark: zelfde uitvoering en kosten (koop op de open van de tweede bar),
+    # zodat de strategie "buy_and_hold" precies gelijk is aan de benchmark.
+    hold = pd.Series(1.0, index=close.index)
+    hold.iloc[0] = 0.0
+    benchmark, _ = _simulate(open_, close, hold, initial_capital, fee_bps + slippage_bps)
 
     trades = _extract_trades(open_, close, position, equity, equity_open)
     metrics = compute_metrics(equity)
