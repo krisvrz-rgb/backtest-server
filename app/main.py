@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from .data import DATA_DIR, _normalize, get_prices
 from .engine import compute_metrics, monthly_returns, run_backtest
+from .optimize import OBJECTIVES, optimize
 from .pine import to_pine
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
 
@@ -191,6 +192,32 @@ def compare(req: CompareRequest):
             rows.append({"symbol": r["symbol"], "strategy": r["strategy"], "params": r["params"], **r["metrics"]})
     rows.sort(key=lambda x: x["sharpe"], reverse=True)
     return rows
+
+
+class OptimizeRequest(BaseModel):
+    symbol: str = Field(..., examples=["AAPL"])
+    strategy: str = Field(..., examples=["rsi_mean_reversion"])
+    source: Source = "csv"
+    start: str | None = Field(None, examples=["2015-01-01"])
+    end: str | None = None
+    initial_capital: float = 10_000.0
+    fee_bps: float = 5.0
+    objective: Literal[OBJECTIVES] = "total_return"  # type: ignore[valid-type]
+    train_pct: float = Field(0.7, ge=0.3, le=0.9, description="Deel van de periode om op te leren; de rest is controle")
+    max_combos: int = Field(150, ge=1, le=500)
+
+
+@app.post("/optimize")
+def optimize_endpoint(req: OptimizeRequest):
+    """Zoek betere instellingen op het eerste deel van de periode en controleer ze op het laatste deel."""
+    if req.strategy not in STRATEGIES:
+        raise HTTPException(400, f"Onbekende strategie '{req.strategy}'")
+    prices = _load(req.symbol, req.source, req.start, req.end)
+    try:
+        return optimize(prices, req.strategy, req.start, req.objective, req.train_pct, req.max_combos,
+                        req.initial_capital, req.fee_bps)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.post("/pine", response_class=PlainTextResponse)

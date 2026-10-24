@@ -161,6 +161,11 @@ def run_backtest(prices: pd.DataFrame, strategy: Strategy, initial_capital: floa
         "exposure": float((position != 0).mean()),
         "final_equity": float(equity.iloc[-1]),
         "net_profit": float(equity.iloc[-1] - initial_capital),
+        # Wat de strategie méér (of minder) opleverde dan gewoon het aandeel vasthouden.
+        "excess_profit": float(equity.iloc[-1] - benchmark.iloc[-1]),
+        "excess_return": float((equity.iloc[-1] - benchmark.iloc[-1]) / initial_capital),
         **{k: v for k, v in stats.items() if k not in metrics},
     })
-    return BacktestResult(equity, benchmark, position, trades, metrics, compute_metrics(benchmark))
+    bench_metrics = compute_metrics(benchmark)
+    bench_metrics["net_profit"] = float(benchmark.iloc[-1] - initial_capital)
+    return BacktestResult(equity, benchmark, position, trades, metrics, bench_metrics)

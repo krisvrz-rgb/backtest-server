@@ -86,7 +86,7 @@
   .rank-body { padding: 12px 14px; display: grid; gap: 10px; }
   #rank-table tr { cursor: pointer; }
   #rank-table tr:hover td { background: var(--panel-2); }
-  #rank-table td.name { text-align: left; }
+  #rank-table td.name, #opt-table td.name { text-align: left; }
   #rank-table td.name small { display: block; color: var(--muted); font-size: 11px; }
   .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
   tr.bh td { background: color-mix(in srgb, var(--market) 12%, transparent); }
@@ -128,6 +128,7 @@
       <option value="">Geen</option>
     </select>
     <button class="primary" type="submit" id="run">Backtest draaien</button>
+    <button class="secondary" type="button" id="opt-btn">Instellingen optimaliseren</button>
     <button class="secondary" type="button" id="rank-btn">Alle strategieën testen</button>
     <div class="desc">Test alle strategieën op dit symbool met hun standaardinstellingen en rangschik ze.</div>
     <div class="error" id="error"></div>
@@ -157,6 +158,28 @@
         <div class="chips" id="rank-cats"></div>
         <div class="scroll"><table id="rank-table"></table></div>
         <div class="desc">Klik op een strategie om de volledige backtest te zien en de instellingen te finetunen.</div>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="opt">
+      <div class="rank-head">
+        <div><b id="opt-title">Optimalisatie</b> <span class="desc" id="opt-sub"></span></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label for="opt-objective" style="margin:0">Doel</label>
+          <select id="opt-objective">
+            <option value="total_return">Hoogste rendement</option>
+            <option value="sharpe">Beste Sharpe</option>
+            <option value="profit_factor">Beste profit factor</option>
+            <option value="percent_profitable">Meeste rendabele trades</option>
+          </select>
+          <button type="button" id="opt-close">Sluiten</button>
+        </div>
+      </div>
+      <div class="rank-body">
+        <div id="opt-verdict"></div>
+        <div class="scroll"><table id="opt-table"></table></div>
+        <div class="desc">Leren = het deel waarop de instellingen gezocht zijn. Controle = de periode daarna, die de optimalisatie niet gezien heeft.
+          Kijk vooral naar de controle-kolommen: een instelling die alleen in de leerperiode uitblinkt, is waarschijnlijk toeval.</div>
       </div>
     </section>
 
@@ -314,7 +337,9 @@ function render(d) {
 
   // Overzicht
   $('kpis').innerHTML = [
-    kpi('Netto winst', money(m.net_profit, true), pct(m.total_return, true), m.net_profit),
+    kpi('Netto winst', money(m.net_profit, true), pct(m.total_return, true) + ' · eindkapitaal − start', m.net_profit),
+    kpi('Extra t.o.v. buy &amp; hold', money(m.excess_profit, true),
+        `${pct(m.excess_return, true)} · vasthouden gaf ${money(b.net_profit, true)}`, m.excess_profit),
     kpi('Gerealiseerde winst', money(m.realized_pnl, true), pct(m.realized_return, true) + ' · afgesloten trades', m.realized_pnl),
     kpi('Open positie', m.open_pnl ? money(m.open_pnl, true) : '–', m.open_pnl ? 'nog niet verkocht' : 'geen', m.open_pnl),
     kpi('Rendabele trades', pct(m.percent_profitable), `${m.winning_trades} van ${m.closed_trades} afgesloten`),
@@ -423,6 +448,60 @@ $('form').addEventListener('submit', async e => {
   try { render(await (await post('/backtest', request())).json()); }
   catch (err) { $('error').textContent = err.message; }
   finally { $('run').disabled = false; $('run').textContent = 'Backtest draaien'; }
+});
+
+// ---------------------------------------------------------------- optimalisatie
+let optData = null;
+
+async function runOptimize() {
+  $('error').textContent = ''; $('opt-btn').disabled = true; $('opt-btn').textContent = 'Bezig met optimaliseren...';
+  const r = request();
+  try {
+    optData = await (await post('/optimize', { symbol: r.symbol, strategy: r.strategy, source: r.source, start: r.start,
+      end: r.end, initial_capital: r.initial_capital, fee_bps: r.fee_bps, objective: $('opt-objective').value })).json();
+    $('empty').classList.add('hidden'); $('opt').classList.remove('hidden');
+    renderOptimize();
+    $('opt').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) { $('error').textContent = err.message; }
+  finally { $('opt-btn').disabled = false; $('opt-btn').textContent = 'Instellingen optimaliseren'; }
+}
+
+const fmtParams = p => Object.entries(p).map(([k, v]) => `${k}=${typeof v === 'number' ? nl(v, Number.isInteger(v) ? 0 : 2) : v}`).join(', ') || '(geen)';
+
+function renderOptimize() {
+  const d = optData, obj = d.objective;
+  const fmt = obj === 'total_return' || obj === 'percent_profitable' ? (v => pct(v, obj === 'total_return')) : (v => v == null ? '–' : nl(v));
+  $('opt-title').textContent = `Optimalisatie ${d.strategy}`;
+  $('opt-sub').textContent = `${d.combos_tested} combinaties · leren ${d.train_period.start} t/m ${d.train_period.end} · controle ${d.test_period.start} t/m ${d.test_period.end}`;
+  const best = d.best, def = d.default;
+  $('opt-verdict').innerHTML = (best.is_default
+    ? `<b>De standaardinstelling is al de beste</b> op de leerperiode.`
+    : d.robust
+      ? `<b class="up">Waarschijnlijk een echte verbetering.</b> De beste instelling (${fmtParams(best.params)}) doet het ook in de controleperiode beter dan de standaard: ${fmt(best.test[obj])} tegenover ${fmt(def.test[obj])}.`
+      : `<b class="down">Let op: waarschijnlijk overfitting.</b> De beste instelling op de leerperiode (${fmtParams(best.params)}) doet het in de controleperiode slechter dan de standaard: ${fmt(best.test[obj])} tegenover ${fmt(def.test[obj])}.`)
+    + ` <span class="desc">Buy &amp; hold in de controleperiode: ${pct(def.test.buy_and_hold_return, true)}.</span>`;
+  const rows = d.results.some(r => r.is_default) ? d.results : [...d.results, def];
+  $('opt-table').innerHTML = '<thead><tr><th>#</th><th style="text-align:left">Instellingen</th>' +
+    '<th>Leren: rendement</th><th>Leren: % rendabel</th><th>Leren: trades</th>' +
+    '<th>Controle: rendement</th><th>Controle: vs B&amp;H</th><th>Controle: % rendabel</th><th>Controle: trades</th><th></th></tr></thead><tbody>' +
+    rows.map((r, i) => `<tr class="${r.is_default ? 'bh' : ''}"><td>${r.is_default && i >= d.results.length ? '–' : i + 1}</td>` +
+      `<td class="name">${fmtParams(r.params)}${r.is_default ? ' <span class="badge">standaard</span>' : ''}</td>` +
+      `<td class="${cls(r.train.total_return)}">${pct(r.train.total_return, true)}</td>` +
+      `<td>${r.train.closed_trades ? pct(r.train.percent_profitable) : '–'}</td><td>${r.train.num_trades}</td>` +
+      `<td class="${cls(r.test.total_return)}">${pct(r.test.total_return, true)}</td>` +
+      `<td class="${cls(r.test.excess_return)}">${pct(r.test.excess_return, true)}</td>` +
+      `<td>${r.test.closed_trades ? pct(r.test.percent_profitable) : '–'}</td><td>${r.test.num_trades}</td>` +
+      `<td><button type="button" data-apply='${JSON.stringify(r.params)}'>Toepassen</button></td></tr>`).join('') + '</tbody>';
+}
+
+$('opt-btn').addEventListener('click', runOptimize);
+$('opt-objective').addEventListener('change', () => optData && runOptimize());
+$('opt-close').addEventListener('click', () => $('opt').classList.add('hidden'));
+$('opt-table').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-apply]'); if (!btn) return;
+  Object.entries(JSON.parse(btn.dataset.apply)).forEach(([k, v]) => { const el = $('p_' + k); if (el) el.value = v; });
+  $('form').requestSubmit();
+  setTimeout(() => $('out').scrollIntoView({ behavior: 'smooth', block: 'start' }), 600);
 });
 
 // ---------------------------------------------------------------- ranglijst

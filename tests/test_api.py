@@ -139,3 +139,23 @@ def test_buy_and_hold_strategy_equals_benchmark():
     prices = synthetic("X", "2015-01-01", "2020-12-31", seed=8)
     res = run_backtest(prices, get_strategy("buy_and_hold"), fee_bps=5)
     assert np.allclose(res.equity, res.benchmark)
+
+
+def test_excess_return_vs_buy_and_hold():
+    prices = synthetic("X", "2015-01-01", "2020-12-31", seed=9)
+    res = run_backtest(prices, get_strategy("sma_crossover", fast=20, slow=50))
+    m = res.metrics
+    assert np.isclose(m["excess_profit"], res.equity.iloc[-1] - res.benchmark.iloc[-1])
+    assert np.isclose(m["excess_return"], m["total_return"] - res.benchmark_metrics["total_return"])
+
+
+def test_optimize_splits_train_and_test():
+    r = client.post("/optimize", json={"symbol": "T", "source": "synthetic", "start": "2014-01-01",
+                                       "strategy": "sma_crossover", "max_combos": 20})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["train_period"]["end"] < d["test_period"]["start"]
+    assert d["default"]["is_default"] and d["combos_tested"] <= 21
+    scores = [x["score"] for x in d["results"] if x["score"] is not None]
+    assert scores == sorted(scores, reverse=True)
+    assert all(x["params"]["fast"] < x["params"]["slow"] for x in d["results"])
