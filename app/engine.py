@@ -117,9 +117,16 @@ def monthly_returns(equity: pd.Series, initial_capital: float) -> list[dict]:
 
 
 def run_backtest(prices: pd.DataFrame, strategy: Strategy, initial_capital: float = 10_000.0,
-                 fee_bps: float = 5.0, slippage_bps: float = 0.0, allow_short: bool = False) -> BacktestResult:
+                 fee_bps: float = 5.0, slippage_bps: float = 0.0, allow_short: bool = False,
+                 start: str | pd.Timestamp | None = None) -> BacktestResult:
+    """Backtest vanaf `start`. Koersen voor `start` dienen alleen om de indicatoren op te warmen,
+    net zoals TradingView de hele historie gebruikt maar pas vanaf de startdatum handelt."""
+    active = prices.index >= pd.Timestamp(start) if start is not None else None
+    raw = strategy.signals(prices, pd.Series(active, index=prices.index) if active is not None else None)
+    signal = raw.reindex(prices.index).fillna(0.0).clip(-1, 1)
+    if active is not None:
+        prices, signal = prices[active], signal[active]
     close, open_ = prices["close"], prices["open"]
-    signal = strategy.signals(prices).reindex(close.index).fillna(0.0).clip(-1, 1)
     if not allow_short:
         signal = signal.clip(lower=0)
     # Zelfde uitvoering als TradingView: signaal op slot van bar t, order gevuld op open van bar t+1.

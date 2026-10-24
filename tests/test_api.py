@@ -97,9 +97,39 @@ def test_trade_pnl_adds_up_to_net_profit():
 
 def test_api_includes_prices_market_and_monthly():
     r = client.post("/backtest", json={"symbol": "TEST", "strategy": "sma_crossover", "source": "synthetic",
-                                       "params": {"fast": 20, "slow": 50}, "include_prices": True})
+                                       "params": {"fast": 20, "slow": 50}, "include_prices": True,
+                                       "start": "2018-01-01"})
     body = r.json()
     assert body["market_benchmark"] == "SPY" and body["market_metrics"]["sharpe"] is not None
     assert body["equity_curve"][0]["market"] == 10_000
     assert len(body["prices"]) == len(body["equity_curve"])
     assert body["monthly_returns"][0]["year"] == 2018
+
+
+def test_warmup_lets_indicators_trade_from_start():
+    from app.data import get_prices
+    prices = get_prices("X", "synthetic", "2018-01-01", "2020-12-31", warmup=True)
+    res = run_backtest(prices, get_strategy("sma_crossover"), start="2018-01-01")
+    assert res.equity.index[0] >= pd.Timestamp("2018-01-01")
+    assert prices.index[0] < pd.Timestamp("2017-01-01")
+
+
+def test_every_strategy_runs_and_has_pine():
+    prices = synthetic("X", "2012-01-01", "2020-12-31", seed=7)
+    for name, cls in STRATEGIES.items():
+        res = run_backtest(prices, get_strategy(name), start="2014-01-01")
+        assert np.isfinite(res.equity.iloc[-1]), name
+        code = to_pine(get_strategy(name))
+        assert "entryCond = " in code and "exitCond = " in code, name
+    assert len(STRATEGIES) >= 100
+
+
+def test_rank_sorts_by_return():
+    r = client.post("/rank", json={"symbol": "TEST", "source": "synthetic", "start": "2016-01-01",
+                                   "categories": ["trend", "breakout"]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    rets = [x["total_return"] for x in body["results"]]
+    assert rets == sorted(rets, reverse=True) and not body["errors"]
+    assert {x["category"] for x in body["results"]} <= {"trend", "breakout", "benchmark"}
+    assert body["buy_and_hold"] is not None

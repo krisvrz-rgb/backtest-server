@@ -97,7 +97,7 @@ def load_hyperliquid(symbol: str, start: str | None, end: str | None) -> pd.Data
 
 def synthetic(symbol: str, start: str | None = None, end: str | None = None, seed: int | None = None) -> pd.DataFrame:
     """Geometrische Brownse beweging; handig om de server zonder internet te testen."""
-    idx = pd.bdate_range(start or "2018-01-01", end or "2024-12-31")
+    idx = pd.bdate_range(start or "2010-01-01", end or "2024-12-31")
     rng = np.random.default_rng(seed if seed is not None else abs(hash(symbol)) % 2**32)
     rets = rng.normal(0.0004, 0.015, len(idx))
     close = 100 * np.exp(np.cumsum(rets))
@@ -110,7 +110,14 @@ def synthetic(symbol: str, start: str | None = None, end: str | None = None, see
     ).rename_axis("date")
 
 
-def get_prices(symbol: str, source: str = "yahoo", start: str | None = None, end: str | None = None) -> pd.DataFrame:
+WARMUP_DAYS = 550  # ruim genoeg voor indicatoren tot ~252 handelsdagen (bv. 52-weeks hoogtepunt, SMA 200)
+
+
+def get_prices(symbol: str, source: str = "yahoo", start: str | None = None, end: str | None = None,
+               warmup: bool = False) -> pd.DataFrame:
+    """Koersdata vanaf `start`; met warmup=True ook ~1,5 jaar ervoor om indicatoren op te warmen."""
+    if warmup and start:
+        start = (pd.Timestamp(start) - pd.Timedelta(days=WARMUP_DAYS)).date().isoformat()
     if source == "csv":
         df = load_csv(symbol)
     elif source == "yahoo":
@@ -120,7 +127,7 @@ def get_prices(symbol: str, source: str = "yahoo", start: str | None = None, end
     elif source == "hyperliquid":
         df = load_hyperliquid(symbol, start, end)
     elif source == "synthetic":
-        df = synthetic(symbol, start, end)
+        df = synthetic(symbol, "2010-01-01", end)
     else:
         raise ValueError(f"Onbekende databron: {source}")
     if start:

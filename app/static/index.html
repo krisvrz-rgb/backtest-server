@@ -76,6 +76,20 @@
   pre { background: var(--code); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow: auto;
         font-size: 12px; max-height: 480px; margin: 0; }
   .hidden { display: none !important; }
+  button.secondary { width: 100%; margin-top: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .rank-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px;
+               border-bottom: 1px solid var(--border); }
+  .rank-head select { width: auto; }
+  .rank-body { padding: 12px 14px; display: grid; gap: 10px; }
+  #rank-table tr { cursor: pointer; }
+  #rank-table tr:hover td { background: var(--panel-2); }
+  #rank-table td.name { text-align: left; }
+  #rank-table td.name small { display: block; color: var(--muted); font-size: 11px; }
+  .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
+  tr.bh td { background: color-mix(in srgb, var(--market) 12%, transparent); }
 </style>
 </head>
 <body>
@@ -114,11 +128,37 @@
       <option value="">Geen</option>
     </select>
     <button class="primary" type="submit" id="run">Backtest draaien</button>
+    <button class="secondary" type="button" id="rank-btn">Alle strategieën testen</button>
+    <div class="desc">Test alle strategieën op dit symbool met hun standaardinstellingen en rangschik ze.</div>
     <div class="error" id="error"></div>
   </form>
 
   <div class="result">
-    <div class="panel empty" id="empty">Kies een strategie en klik op <b>Backtest draaien</b>.</div>
+    <div class="panel empty" id="empty">Kies een strategie en klik op <b>Backtest draaien</b>,
+      of klik op <b>Alle strategieën testen</b> voor een ranglijst.</div>
+
+    <section class="panel hidden" id="rank">
+      <div class="rank-head">
+        <div><b id="rank-title">Ranglijst</b> <span class="desc" id="rank-sub"></span></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label for="rank-sort" style="margin:0">Sorteer op</label>
+          <select id="rank-sort">
+            <option value="total_return">Rendement</option>
+            <option value="net_profit">Netto winst</option>
+            <option value="percent_profitable">% rendabele trades</option>
+            <option value="sharpe">Sharpe</option>
+            <option value="profit_factor">Profit factor</option>
+            <option value="max_drawdown">Kleinste drawdown</option>
+          </select>
+          <button type="button" id="rank-close">Sluiten</button>
+        </div>
+      </div>
+      <div class="rank-body">
+        <div class="chips" id="rank-cats"></div>
+        <div class="scroll"><table id="rank-table"></table></div>
+        <div class="desc">Klik op een strategie om de volledige backtest te zien en de instellingen te finetunen.</div>
+      </div>
+    </section>
 
     <section class="panel hidden" id="out">
       <div class="titlebar">
@@ -188,7 +228,11 @@ const MONTHS = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', '
 
 async function loadStrategies() {
   strategies = await (await fetch('/strategies')).json();
-  $('strategy').innerHTML = strategies.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+  const groups = {};
+  strategies.forEach(s => (groups[s.category_label] ??= []).push(s));
+  $('strategy').innerHTML = Object.entries(groups).map(([label, list]) =>
+    `<optgroup label="${label} (${list.length})">` + list.map(s => `<option value="${s.name}">${s.name}</option>`).join('') + '</optgroup>'
+  ).join('');
   $('strategy').value = strategies.some(s => s.name === 'sma_crossover') ? 'sma_crossover' : strategies[0].name;
   renderParams();
 }
@@ -379,6 +423,67 @@ $('form').addEventListener('submit', async e => {
   try { render(await (await post('/backtest', request())).json()); }
   catch (err) { $('error').textContent = err.message; }
   finally { $('run').disabled = false; $('run').textContent = 'Backtest draaien'; }
+});
+
+// ---------------------------------------------------------------- ranglijst
+let rankData = null, rankCats = new Set();
+
+async function runRank() {
+  $('error').textContent = ''; $('rank-btn').disabled = true; $('rank-btn').textContent = 'Bezig met testen...';
+  const r = request();
+  try {
+    rankData = await (await post('/rank', { symbol: r.symbol, source: r.source, start: r.start, end: r.end,
+      initial_capital: r.initial_capital, fee_bps: r.fee_bps })).json();
+    rankCats = new Set();
+    $('empty').classList.add('hidden'); $('rank').classList.remove('hidden');
+    renderRank();
+    $('rank').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) { $('error').textContent = err.message; }
+  finally { $('rank-btn').disabled = false; $('rank-btn').textContent = 'Alle strategieën testen'; }
+}
+
+function renderRank() {
+  const d = rankData, key = $('rank-sort').value;
+  const cats = [...new Map(d.results.filter(x => x.category !== 'benchmark').map(x => [x.category, x.category_label]))];
+  $('rank-cats').innerHTML = `<button type="button" class="chip ${rankCats.size ? '' : 'on'}" data-cat="">Alle (${d.results.length - 1})</button>` +
+    cats.map(([k, label]) => `<button type="button" class="chip ${rankCats.has(k) ? 'on' : ''}" data-cat="${k}">${label} (${d.results.filter(x => x.category === k).length})</button>`).join('');
+  const rows = d.results.filter(x => !rankCats.size || rankCats.has(x.category) || x.category === 'benchmark')
+    .sort((a, b) => (b[key] ?? -Infinity) - (a[key] ?? -Infinity));
+  const bh = d.buy_and_hold;
+  const beat = d.results.filter(x => x.category !== 'benchmark' && x.beats_buy_and_hold).length;
+  $('rank-title').textContent = `Ranglijst ${d.symbol}`;
+  $('rank-sub').textContent = `${d.results.length - 1} strategieën · ${d.results[0]?.period.start} t/m ${d.results[0]?.period.end} · ` +
+    `${beat} doen beter dan buy & hold (${bh ? pct(bh.total_return, true) : '–'})`;
+  let rank = 0;
+  $('rank-table').innerHTML = '<thead><tr><th>#</th><th style="text-align:left">Strategie</th><th>Rendement</th><th>Netto winst</th>' +
+    '<th>% rendabel</th><th>Trades</th><th>Sharpe</th><th>Max DD</th><th>Profit factor</th></tr></thead><tbody>' +
+    rows.map(x => {
+      const isBh = x.category === 'benchmark';
+      if (!isBh) rank++;
+      return `<tr data-name="${x.strategy}" class="${isBh ? 'bh' : ''}"><td>${isBh ? '–' : rank}</td>` +
+        `<td class="name">${x.strategy} <span class="badge">${x.category_label}</span><small>${x.description}</small></td>` +
+        `<td class="${cls(x.total_return)}">${pct(x.total_return, true)}</td>` +
+        `<td class="${cls(x.net_profit)}">${money(x.net_profit, true)}</td>` +
+        `<td>${x.closed_trades ? pct(x.percent_profitable) : '–'}<small style="display:block;color:var(--muted)">${x.winning_trades}/${x.closed_trades}</small></td>` +
+        `<td>${x.num_trades}</td><td>${nl(x.sharpe)}</td><td class="down">${pct(x.max_drawdown)}</td>` +
+        `<td>${x.profit_factor == null ? '–' : nl(x.profit_factor)}</td></tr>`;
+    }).join('') + '</tbody>';
+}
+
+$('rank-btn').addEventListener('click', runRank);
+$('rank-sort').addEventListener('change', () => rankData && renderRank());
+$('rank-close').addEventListener('click', () => $('rank').classList.add('hidden'));
+$('rank-cats').addEventListener('click', e => {
+  const chip = e.target.closest('.chip'); if (!chip) return;
+  const c = chip.dataset.cat;
+  if (!c) rankCats.clear(); else rankCats.has(c) ? rankCats.delete(c) : rankCats.add(c);
+  renderRank();
+});
+$('rank-table').addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-name]'); if (!tr) return;
+  $('strategy').value = tr.dataset.name; renderParams();
+  $('form').requestSubmit();
+  setTimeout(() => $('out').scrollIntoView({ behavior: 'smooth', block: 'start' }), 600);
 });
 
 $('copy').addEventListener('click', async () => {

@@ -4,9 +4,9 @@ from io import StringIO
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
 from pathlib import Path
 
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .data import DATA_DIR, _normalize, get_prices
 from .engine import compute_metrics, monthly_returns, run_backtest
 from .pine import to_pine
-from .strategies import STRATEGIES, get_strategy
+from .strategies import CATEGORIES, STRATEGIES, get_strategy
 
 app = FastAPI(title="Backtest Server", version="0.1.0",
               description="Backtest handelsstrategieën op aandelen en exporteer ze naar TradingView Pine Script.")
@@ -63,13 +63,23 @@ def _market_curve(req: BacktestRequest, index: pd.DatetimeIndex) -> pd.Series | 
     return req.initial_capital * bench / bench.iloc[0]
 
 
-def _run(req: BacktestRequest) -> dict:
+def _load(symbol: str, source: str, start: str | None, end: str | None) -> pd.DataFrame:
     try:
-        prices = get_prices(req.symbol, req.source, req.start, req.end)
-        strat = get_strategy(req.strategy, **req.params)
+        return get_prices(symbol, source, start, end, warmup=True)
     except (ValueError, FileNotFoundError) as e:
         raise HTTPException(400, str(e))
-    res = run_backtest(prices, strat, req.initial_capital, req.fee_bps, req.slippage_bps, req.allow_short)
+
+
+def _run(req: BacktestRequest, prices: pd.DataFrame | None = None) -> dict:
+    if prices is None:
+        prices = _load(req.symbol, req.source, req.start, req.end)
+    try:
+        strat = get_strategy(req.strategy, **req.params)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    res = run_backtest(prices, strat, req.initial_capital, req.fee_bps, req.slippage_bps, req.allow_short,
+                       start=req.start)
+    prices = prices.loc[res.equity.index]
     market = _market_curve(req, prices.index)
     out = {
         "symbol": req.symbol.upper(), "strategy": strat.name, "params": strat.p,
@@ -109,7 +119,60 @@ def health():
 
 @app.get("/strategies")
 def list_strategies():
-    return [{"name": n, "description": c.description, "params": c.params} for n, c in STRATEGIES.items()]
+    return [{"name": n, "category": c.category, "category_label": CATEGORIES.get(c.category, c.category),
+             "description": c.description, "params": c.params} for n, c in STRATEGIES.items()]
+
+
+@app.get("/categories")
+def list_categories():
+    return [{"key": k, "label": v, "count": sum(c.category == k for c in STRATEGIES.values())}
+            for k, v in CATEGORIES.items()]
+
+
+SortKey = Literal["total_return", "net_profit", "sharpe", "percent_profitable", "max_drawdown", "cagr", "profit_factor"]
+
+
+class RankRequest(BaseModel):
+    symbol: str = Field(..., examples=["AAPL"])
+    source: Source = "csv"
+    start: str | None = Field(None, examples=["2015-01-01"])
+    end: str | None = None
+    initial_capital: float = 10_000.0
+    fee_bps: float = 5.0
+    categories: list[str] | None = Field(None, description="Alleen deze categorieën; leeg = alle")
+    sort_by: SortKey = "total_return"
+
+
+@app.post("/rank")
+def rank(req: RankRequest):
+    """Test alle strategieën (met standaardinstellingen) op één ticker en rangschik ze."""
+    prices = _load(req.symbol, req.source, req.start, req.end)
+    rows = []
+    for name, cls in STRATEGIES.items():
+        if req.categories and cls.category not in req.categories and cls.category != "benchmark":
+            continue
+        try:
+            r = _run(BacktestRequest(symbol=req.symbol, strategy=name, source=req.source, start=req.start, end=req.end,
+                                     initial_capital=req.initial_capital, fee_bps=req.fee_bps,
+                                     include_equity=False, market_benchmark=None), prices)
+        except Exception as e:  # noqa: BLE001 - één kapotte strategie mag de ranglijst niet breken
+            rows.append({"strategy": name, "category": cls.category, "error": str(e)})
+            continue
+        m = r["metrics"]
+        rows.append({
+            "strategy": name, "category": cls.category, "category_label": CATEGORIES.get(cls.category, cls.category),
+            "description": cls.description, "params": r["params"],
+            **{k: m[k] for k in ("total_return", "cagr", "net_profit", "sharpe", "max_drawdown", "percent_profitable",
+                                 "num_trades", "closed_trades", "winning_trades", "profit_factor", "exposure")},
+            "beats_buy_and_hold": m["total_return"] > r["benchmark_metrics"]["total_return"],
+            "period": r["period"],
+        })
+    ok = [x for x in rows if "error" not in x]
+    # Hoogste eerst; bij max drawdown de minst diepe (dichtst bij 0) eerst.
+    ok.sort(key=lambda x: x[req.sort_by] if x[req.sort_by] is not None else float("-inf"), reverse=True)
+    bh = next((x for x in ok if x["strategy"] == "buy_and_hold"), None)
+    return {"symbol": req.symbol.upper(), "sort_by": req.sort_by, "count": len(ok),
+            "buy_and_hold": bh, "results": ok, "errors": [x for x in rows if "error" in x]}
 
 
 @app.post("/backtest")
@@ -123,7 +186,8 @@ def compare(req: CompareRequest):
     for sym in req.symbols:
         for s in req.strategies:
             r = _run(BacktestRequest(symbol=sym, strategy=s["name"], params=s.get("params", {}), source=req.source,
-                                     start=req.start, end=req.end, fee_bps=req.fee_bps, include_equity=False))
+                                     start=req.start, end=req.end, fee_bps=req.fee_bps, include_equity=False,
+                                     market_benchmark=None))
             rows.append({"symbol": r["symbol"], "strategy": r["strategy"], "params": r["params"], **r["metrics"]})
     rows.sort(key=lambda x: x["sharpe"], reverse=True)
     return rows
