@@ -89,6 +89,9 @@
   td.best { white-space: normal; min-width: 230px; text-align: left; }
   td.best .nm { font-weight: 600; }
   th.focus { color: var(--accent); }
+  .pchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; align-items: center; font-size: 12px; color: var(--muted); }
+  .pchips button { font-size: 12px; padding: 2px 9px; border-radius: 12px; }
+  .pchips button.on { border-color: var(--accent); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -118,6 +121,7 @@
         </select>
       </div>
     </div>
+    <div class="pchips" id="pchips"></div>
     <div class="status" id="status">Laden…</div>
   </section>
 
@@ -144,8 +148,15 @@ const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
 const STAKE = 10000;
 const eur = ret => ret == null ? '–' : '€' + Math.round(STAKE * (1 + ret)).toLocaleString('nl-BE');
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-let data = null, PERIODS = [], sortKey = 'tv', sortAsc = true, collapsed = new Set(), expanded = new Set(), poll = null;
+let data = null, PERIODS = [], sortKey = 'vs_bh', sortAsc = false, collapsed = new Set(), expanded = new Set(), poll = null;
 try { collapsed = new Set(JSON.parse(localStorage.getItem('ov-collapsed') || '[]')); } catch {}
+let hidden = new Set();
+try { hidden = new Set(JSON.parse(localStorage.getItem('ov-hidden') || '[]')); } catch {}
+const shown = () => PERIODS.filter(p => !hidden.has(p.key));
+function renderChips() {
+  $('pchips').innerHTML = 'Kolommen: ' + PERIODS.map(p =>
+    `<button type="button" class="${hidden.has(p.key) ? '' : 'on'}" data-key="${p.key}">${esc(p.label)}</button>`).join('');
+}
 const pinfo = k => PERIODS.find(p => p.key === k) || { key: k, start: k + '-01-01', label: k };
 
 const per = (s, p) => {
@@ -171,6 +182,7 @@ function value(s, key) {
   if (!r || !r.best) return null;
   if (key === 'vs_bh') return r.best.vs_bh ?? null;
   if (key === 'avg_return') return r.avg_return ?? null;
+  if (key === 'change_pct') return r.change_pct ?? null;
   return null;
 }
 
@@ -188,11 +200,11 @@ function passes(s) {
 
 function renderHead() {
   const f = $('focus').value;
-  $('thead').innerHTML = `<tr><th class="left" rowspan="2" data-sort="tv">Symbool</th><th rowspan="2">Koers</th>` +
-    `<th class="pgroup" colspan="${PERIODS.length}">Plaats van buy &amp; hold tussen alle strategieën en rendement van vasthouden</th>` +
+  $('thead').innerHTML = `<tr><th class="left" rowspan="2" data-sort="tv">Symbool</th><th rowspan="2" data-sort="change_pct">Koers</th>` +
+    `<th class="pgroup" colspan="${shown().length}">Plaats van buy &amp; hold tussen alle strategieën en rendement van vasthouden</th>` +
     `<th rowspan="2" data-sort="avg_return" title="Winst van alle strategieën samen (elk €10.000) gedeeld door het aantal strategieën">Gem. winst / strategie</th>` +
     `<th class="left" rowspan="2" data-sort="vs_bh">Beste strategie (${esc(pinfo(f).label)})</th></tr><tr>` +
-    PERIODS.map(p => `<th class="pcell ${p.key === f ? 'focus' : ''}" data-sort="p:${p.key}">${esc(p.label)}</th>`).join('') + '</tr>';
+    shown().map(p => `<th class="pcell ${p.key === f ? 'focus' : ''}" data-sort="p:${p.key}">${esc(p.label)}</th>`).join('') + '</tr>';
   document.querySelectorAll('th[data-sort]').forEach(th => {
     th.classList.toggle('sorted', th.dataset.sort === sortKey);
     th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
@@ -234,7 +246,7 @@ function bestCell(s, f) {
 function row(s, g) {
   const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
   const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.name || s.tv)}</small>`;
-  const cols = PERIODS.length + 4;
+  const cols = shown().length + 4;
   const any = PERIODS.map(p => per(s, p.key)).find(Boolean);
   if (!s.result || s.result.error || !any) {
     const msg = s.result?.error ? `<span class="error">Fout: ${esc(s.result.error.slice(0, 90))}</span>` : s.result ? 'Opnieuw vernieuwen voor alle periodes' : 'Nog niet vernieuwd';
@@ -244,12 +256,12 @@ function row(s, g) {
   const last = per(s, PERIODS[0].key) || any;
   return `<tr class="row" data-key="${esc(key)}"><td class="left">${sym}</td>` +
     `<td>${nl(last.last_close)}<small class="${cls(last.change_pct)}">${pct(last.change_pct, true)}</small></td>` +
-    PERIODS.map(p => pcell(s, p)).join('') + avgCell(s, $('focus').value) + bestCell(s, $('focus').value) + '</tr>' +
+    shown().map(p => pcell(s, p)).join('') + avgCell(s, $('focus').value) + bestCell(s, $('focus').value) + '</tr>' +
     (expanded.has(key) ? detail(s, cols) : '');
 }
 
 function detail(s, cols) {
-  const blocks = PERIODS.map(p => {
+  const blocks = shown().map(p => {
     const r = per(s, p.key);
     if (!r) return `<div><h4>${esc(p.label)}</h4><span class="desc">geen resultaat</span></div>`;
     const rows = r.profitable.slice(0, 5).map(x => `<tr><td><a href="${toolLink(s, p.key, x.strategy)}">${esc(x.strategy)}</a>` +
@@ -265,8 +277,8 @@ function detail(s, cols) {
 
 function render() {
   if (!data) return;
-  renderHead();
-  const cols = PERIODS.length + 4;
+  renderHead(); renderChips();
+  const cols = shown().length + 4;
   const groups = data.groups.filter(g => g.list === $('list').value && (!$('group').value || g.name === $('group').value));
   $('rows').innerHTML = groups.map(g => {
     const syms = g.symbols.filter(passes).sort((a, b) => {
@@ -289,8 +301,9 @@ function renderStatus() {
   $('refresh').disabled = st.running; $('stop').classList.toggle('hidden', !st.running);
   const lg = data.groups.filter(g => g.list === $('list').value);
   const total = lg.reduce((n, g) => n + g.symbols.length, 0);
-  const done = lg.reduce((n, g) => n + g.symbols.filter(s => PERIODS.every(p => s.result?.periods?.[p.key])).length, 0);
-  let txt = `${total} tickers · ${done} met resultaten voor alle ${PERIODS.length} periodes`;
+  const std = PERIODS.filter(p => p.key !== 'eigen');
+  const done = lg.reduce((n, g) => n + g.symbols.filter(s => std.every(p => s.result?.periods?.[p.key])).length, 0);
+  let txt = `${total} tickers · ${done} met resultaten voor alle ${std.length} standaardperiodes`;
   if (st.running) txt = `Vernieuwen: ${st.done}/${st.total}` + (st.errors ? ` · ${st.errors} fouten` : '') + (st.current ? ` · laatst ${st.current}` : '') + ' — ' + txt;
   else if (data.finished) txt += ` · laatst vernieuwd ${data.finished.replace('T', ' ')}`;
   $('status').innerHTML = esc(txt) + (st.running ? `<div class="progress"><div style="width:${st.total ? 100 * st.done / st.total : 0}%"></div></div>` : '');
@@ -336,6 +349,12 @@ $('stop').addEventListener('click', async () => { await api('/api/watchlist/scan
 $('list').addEventListener('change', () => {
   try { localStorage.setItem('ov-list', $('list').value); } catch {}
   $('group').value = ''; fillLists(); renderStatus(); render();
+});
+$('pchips').addEventListener('click', e => {
+  const b = e.target.closest('button[data-key]'); if (!b) return;
+  hidden.has(b.dataset.key) ? hidden.delete(b.dataset.key) : hidden.add(b.dataset.key);
+  try { localStorage.setItem('ov-hidden', JSON.stringify([...hidden])); } catch {}
+  render();
 });
 $('focus').addEventListener('change', () => { try { localStorage.setItem('ov-focus', $('focus').value); } catch {} render(); });
 ['search', 'filter', 'group'].forEach(id => $(id).addEventListener('input', render));

@@ -17,7 +17,9 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from .data import DATA_DIR, get_prices
+import pandas as pd
+
+from .data import DATA_DIR, WARMUP_DAYS, get_prices
 from .ranking import rank_strategies
 
 WATCHLIST_FILE = DATA_DIR / "watchlist.json"
@@ -284,17 +286,24 @@ def summarize(rank: dict[str, Any], prices) -> dict[str, Any]:
 
 
 def default_periods(today: date | None = None) -> dict[str, dict[str, Any]]:
-    """Standaard testperiodes: vanaf 2015, 2020 en 2024 tot nu, de laatste 2 jaar, vorig jaar en dit jaar."""
+    """Standaard testperiodes: vanaf 2015, 2020 en 2024 tot nu, vorig jaar, dit jaar en de laatste 2 jaar,
+    1 jaar, 6, 3 en 1 maand."""
     today = today or date.today()
     y = today.year
-    two = today.replace(year=y - 2) if not (today.month == 2 and today.day == 29) else today.replace(year=y - 2, day=28)
+
+    def back(months: int) -> str:
+        return (pd.Timestamp(today) - pd.DateOffset(months=months)).date().isoformat()
     return {
         "2015": {"start": "2015-01-01", "label": "2015 – nu"},
         "2020": {"start": "2020-01-01", "label": "2020 – nu"},
         "2024": {"start": "2024-01-01", "label": "2024 – nu"},
-        "2j": {"start": two.isoformat(), "label": "Laatste 2 jaar"},
         str(y - 1): {"start": f"{y - 1}-01-01", "end": f"{y - 1}-12-31", "label": f"Jaar {y - 1}"},
         str(y): {"start": f"{y}-01-01", "label": f"{y} tot nu"},
+        "2j": {"start": back(24), "label": "Laatste 2 jaar"},
+        "1j": {"start": back(12), "label": "Laatste jaar"},
+        "6m": {"start": back(6), "label": "Laatste 6 maanden"},
+        "3m": {"start": back(3), "label": "Laatste 3 maanden"},
+        "1m": {"start": back(1), "label": "Laatste maand"},
     }
 
 
@@ -320,6 +329,8 @@ def scan_one(yahoo: str, periods: dict[str, Any] | str, fee_bps: float, source: 
         start, end = _period(v)
         try:
             p = prices[prices.index <= end] if end else prices
+            # Alleen de opwarmperiode vóór de start meegeven: korte periodes rekenen zo veel sneller.
+            p = p[p.index >= pd.Timestamp(start) - pd.Timedelta(days=WARMUP_DAYS)]
             if not (p.index >= start).any():
                 raise ValueError("Geen koersen in deze periode")
             rank = rank_strategies(p, start, fee_bps=fee_bps)
@@ -362,6 +373,14 @@ class Scanner:
 
     def _record(self, scan: dict[str, Any], yahoo: str, result: dict[str, Any]) -> None:
         with self.lock:
+            old = scan["results"].get(yahoo)
+            # Een scan van één periode (bv. een eigen periode) mag de andere periodes niet wissen.
+            if old and old.get("periods") and result.get("periods"):
+                result = result | {"periods": old["periods"] | result["periods"]}
+            elif old and old.get("periods") and "error" in result:
+                result = old | {"error_last_scan": result["error"]}
+                self.state["errors"] += 1
+                result.pop("error", None)
             scan["results"][yahoo] = result
             self.state["done"] += 1
             if "error" in result:
@@ -373,6 +392,11 @@ class Scanner:
         periods = start if isinstance(start, dict) else {start[:4]: start}
         scan["settings"] = {"start": min(_period(v)[0] for v in periods.values()), "periods": periods,
                             "fee_bps": fee_bps, "source": source}
+        # Periodes buiten de standaardset onthouden, zodat de pagina's er een kolom voor tonen.
+        custom = scan.setdefault("custom_periods", {})
+        for k, v in periods.items():
+            if k not in default_periods() and isinstance(v, dict):
+                custom[k] = v
         workers = workers or max(1, min(4, (os.cpu_count() or 2) - 1))
         # Eén rekenthread per proces: anders vechten numpy/BLAS-threads van de workers om dezelfde kernen.
         for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -439,6 +463,6 @@ def watchlist_view() -> dict[str, Any]:
         syms = [s | {"result": scan["results"].get(s["yahoo"])} for s in g["symbols"] if s.get("yahoo")]
         if syms:
             out.append({"name": g["name"], "list": list_name(g), "symbols": syms})
-    periods = [{"key": k, **v} for k, v in default_periods().items()]
+    periods = [{"key": k, **v} for k, v in (default_periods() | scan.get("custom_periods", {})).items()]
     return {"groups": out, "periods": periods, "scan": SCANNER.status(), "settings": scan.get("settings"), "finished": scan.get("finished"),
             "generated": time.time()}

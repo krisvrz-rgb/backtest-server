@@ -82,8 +82,10 @@
     <div class="toolbar">
       <div class="field"><label for="list-filter">Lijst</label><select id="list-filter"></select></div>
       <div class="field"><label for="start">Testperiode</label><select id="start"></select></div>
+      <div class="field hidden" id="custom-wrap"><label for="c-start">Van – tot (leeg = vandaag)</label>
+        <div style="display:flex;gap:6px"><input type="date" id="c-start"><input type="date" id="c-end"></div></div>
       <div class="field"><label for="group-filter">Groep</label><select id="group-filter"><option value="">Alle groepen</option></select></div>
-      <button class="primary" id="scan">Scan starten</button>
+      <button class="primary" id="scan" title="Standaardperiodes: alle periodes tegelijk. Eigen periode: alleen die periode.">Scan starten</button>
       <button id="stop" class="hidden">Stoppen</button>
       <div class="grow"></div>
       <div class="field"><label for="search">Zoeken</label><input id="search" placeholder="ticker…"></div>
@@ -150,7 +152,7 @@ const per = () => $('start').value, pinfo = () => PERIODS.find(p => p.key === pe
 const startDate = () => pinfo().start + (pinfo().end ? '&end=' + pinfo().end : '');
 // Resultaat voor de gekozen testperiode (oudere scans hebben alleen één periode).
 const res = s => !s.result ? null : s.result.error ? s.result : (s.result.periods ? s.result.periods[per()] || null : s.result);
-let data = null, sortKey = 'beat_count', sortAsc = false, collapsed = new Set(), poll = null;
+let data = null, sortKey = 'diff_value', sortAsc = false, collapsed = new Set(), poll = null;
 const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
 const pct = (v, sign) => v == null ? '–' : (sign && v > 0 ? '+' : '') + nl(v * 100, 1) + '%';
 const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
@@ -251,9 +253,13 @@ function renderStatus() {
 }
 
 function fillPeriods() {
-  const cur = $('start').value || '2020';
-  $('start').innerHTML = PERIODS.map(p => `<option value="${p.key}">${esc(p.label)}</option>`).join('');
-  $('start').value = PERIODS.some(p => p.key === cur) ? cur : (PERIODS[0]?.key || '');
+  const cur = $('start').value || '2j';
+  $('start').innerHTML = PERIODS.filter(p => p.key !== 'eigen').map(p => `<option value="${p.key}">${esc(p.label)}</option>`).join('') +
+    `<option value="eigen">${esc(PERIODS.find(p => p.key === 'eigen')?.label || 'Eigen periode…')}</option>`;
+  $('start').value = [...$('start').options].some(o => o.value === cur) ? cur : '2j';
+  const own = PERIODS.find(p => p.key === 'eigen');
+  if (own && !$('c-start').value) { $('c-start').value = own.start; $('c-end').value = own.end || ''; }
+  $('custom-wrap').classList.toggle('hidden', $('start').value !== 'eigen');
 }
 
 function fillLists() {
@@ -286,8 +292,13 @@ async function api(path, opts = {}) {
 
 $('scan').addEventListener('click', async () => {
   try {
-    await api('/api/watchlist/scan', { method: 'POST', body: JSON.stringify({ lists: [$('list-filter').value],
-      groups: $('group-filter').value ? [$('group-filter').value] : null }) });
+    const body = { lists: [$('list-filter').value], groups: $('group-filter').value ? [$('group-filter').value] : null };
+    if ($('start').value === 'eigen') {
+      const a = $('c-start').value, b = $('c-end').value;
+      if (!a) throw new Error('kies een startdatum');
+      body.periods = { eigen: { start: a, ...(b ? { end: b } : {}), label: `${a} – ${b || 'nu'}` } };
+    }
+    await api('/api/watchlist/scan', { method: 'POST', body: JSON.stringify(body) });
     load();
   } catch (e) { $('status').textContent = 'Scan starten mislukt: ' + e.message; }
 });
@@ -317,7 +328,9 @@ $('list-filter').addEventListener('change', () => {
   try { localStorage.setItem('wl-list', $('list-filter').value); } catch {}
   $('group-filter').value = ''; fillLists(); renderStatus(); render();
 });
-$('start').addEventListener('change', () => { renderStatus(); render(); });
+$('start').addEventListener('change', () => {
+  $('custom-wrap').classList.toggle('hidden', $('start').value !== 'eigen'); renderStatus(); render();
+});
 $('toggle-import').addEventListener('click', () => $('import').classList.toggle('hidden'));
 $('do-import').addEventListener('click', async () => {
   try {
