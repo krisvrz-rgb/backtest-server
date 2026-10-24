@@ -5,7 +5,10 @@ from typing import Any, Literal
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import PlainTextResponse
+from pathlib import Path
+
+from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .data import DATA_DIR, _normalize, get_prices
@@ -60,6 +63,16 @@ def _run(req: BacktestRequest) -> dict:
         out["equity_curve"] = [{"date": d.date().isoformat(), "equity": round(e, 2), "benchmark": round(b, 2)}
                                for d, e, b in zip(res.equity.index, res.equity, res.benchmark)]
     return out
+
+
+STATIC_DIR = Path(__file__).parent / "static"
+INDEX_HTML = STATIC_DIR / "index.html"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(INDEX_HTML)
 
 
 @app.get("/health")

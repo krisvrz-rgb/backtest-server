@@ -78,3 +78,8 @@ def test_hyperliquid_parsing(monkeypatch):
     monkeypatch.setattr(httpx, "post", lambda *a, **k: Resp())
     df = data.load_hyperliquid("BTC", "2024-01-01", "2024-01-10")
     assert len(df) == 10 and df["close"].iloc[-1] == 109.0
+
+
+def test_start_page():
+    r = client.get("/")
+    assert r.status_code == 200 and "Backtest Server" in r.text

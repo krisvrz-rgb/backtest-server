@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backtest Server</title>
+<script src="/static/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --muted: #6b7280; --border: #e3e6ea;
+    --accent: #2563eb; --pos: #15803d; --neg: #b91c1c; --bench: #9ca3af; --code: #f1f3f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1115; --card: #171a20; --text: #e6e8eb; --muted: #9aa3ae; --border: #2a2f37;
+            --accent: #60a5fa; --pos: #4ade80; --neg: #f87171; --bench: #6b7280; --code: #0c0e12; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 20px 24px 8px; max-width: 1200px; margin: 0 auto; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 22px; margin: 0; }
+  header a { color: var(--muted); font-size: 13px; }
+  main { max-width: 1200px; margin: 0 auto; padding: 8px 24px 40px; display: grid; grid-template-columns: 320px 1fr; gap: 20px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; padding: 8px 16px 40px; } header { padding: 16px 16px 8px; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+                  background: var(--bg); color: var(--text); font: inherit; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .desc { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  button { font: inherit; border-radius: 6px; padding: 9px 14px; cursor: pointer; border: 1px solid var(--border);
+           background: var(--card); color: var(--text); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; width: 100%; margin-top: 16px; font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .actions { display: flex; gap: 8px; margin-top: 8px; }
+  .actions button { flex: 1; }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .metric { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .metric .k { font-size: 12px; color: var(--muted); }
+  .metric .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .metric .b { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .pos { color: var(--pos); } .neg { color: var(--neg); }
+  .stack { display: grid; gap: 20px; align-content: start; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  .chart-wrap { position: relative; height: 320px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  .scroll { max-height: 320px; overflow: auto; }
+  pre { background: var(--code); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto;
+        font-size: 12.5px; max-height: 420px; margin: 0; }
+  .error { color: var(--neg); margin-top: 10px; font-size: 14px; white-space: pre-wrap; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .hidden { display: none; }
+  .summary { font-size: 14px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Backtest Server</h1>
+  <a href="/docs">API-documentatie</a>
+</header>
+<main>
+  <form class="card" id="form">
+    <label for="symbol">Symbool</label>
+    <input id="symbol" value="AAPL" required>
+
+    <label for="source">Databron</label>
+    <select id="source">
+      <option value="yahoo">Yahoo Finance</option>
+      <option value="ibkr">IBKR (TWS / Gateway)</option>
+      <option value="hyperliquid">Hyperliquid</option>
+      <option value="csv">CSV (data-map)</option>
+      <option value="synthetic">Synthetisch (test)</option>
+    </select>
+
+    <label for="strategy">Strategie</label>
+    <select id="strategy"></select>
+    <div class="desc" id="strategy-desc"></div>
+    <div id="params"></div>
+
+    <div class="row">
+      <div><label for="start">Start</label><input id="start" type="date" value="2015-01-01"></div>
+      <div><label for="end">Einde</label><input id="end" type="date"></div>
+    </div>
+    <div class="row">
+      <div><label for="capital">Startkapitaal</label><input id="capital" type="number" value="10000" min="1"></div>
+      <div><label for="fee">Kosten (bps)</label><input id="fee" type="number" value="5" min="0" step="0.5"></div>
+    </div>
+
+    <button class="primary" type="submit" id="run">Backtest draaien</button>
+    <div class="actions"><button type="button" id="pine-btn">Pine Script</button></div>
+    <div class="error" id="error"></div>
+  </form>
+
+  <div class="stack">
+    <section class="card" id="results">
+      <div class="empty" id="empty">Kies een strategie en klik op <b>Backtest draaien</b>.</div>
+      <div id="out" class="hidden">
+        <div class="summary" id="summary"></div>
+        <div class="metrics" id="metrics"></div>
+      </div>
+    </section>
+    <section class="card hidden" id="chart-card">
+      <h2>Equity curve</h2>
+      <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    </section>
+    <section class="card hidden" id="trades-card">
+      <h2>Trades</h2>
+      <div class="scroll"><table><thead><tr><th>In</th><th>Uit</th><th>Kant</th><th>Instap</th><th>Uitstap</th><th>Rendement</th></tr></thead><tbody id="trades"></tbody></table></div>
+    </section>
+    <section class="card hidden" id="pine-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px">
+        <h2 style="margin:0">Pine Script voor TradingView</h2>
+        <button type="button" id="copy">Kopiëren</button>
+      </div>
+      <pre id="pine"></pre>
+      <div class="desc">Plak in de Pine Editor van TradingView en klik op "Add to chart". Je ziet de resultaten in de Strategy Tester.</div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let strategies = [], chart;
+const pct = v => (v * 100).toFixed(1).replace('.', ',') + '%';
+const num = v => v.toFixed(2).replace('.', ',');
+const money = v => v.toLocaleString('nl-BE', { maximumFractionDigits: 0 });
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+async function loadStrategies() {
+  strategies = await (await fetch('/strategies')).json();
+  $('strategy').innerHTML = strategies.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+  $('strategy').value = strategies.find(s => s.name === 'sma_crossover') ? 'sma_crossover' : strategies[0].name;
+  renderParams();
+}
+
+function renderParams() {
+  const s = strategies.find(x => x.name === $('strategy').value);
+  $('strategy-desc').textContent = s.description;
+  const entries = Object.entries(s.params);
+  $('params').innerHTML = entries.length ? '<div class="row">' + entries.map(([k, v]) =>
+    `<div><label for="p_${k}">${k}</label><input id="p_${k}" data-param="${k}" type="number" step="any" value="${v}"></div>`
+  ).join('') + '</div>' : '';
+}
+
+function request() {
+  const params = {};
+  document.querySelectorAll('[data-param]').forEach(el => params[el.dataset.param] = Number(el.value));
+  return {
+    symbol: $('symbol').value.trim(), strategy: $('strategy').value, params, source: $('source').value,
+    start: $('start').value || null, end: $('end').value || null,
+    initial_capital: Number($('capital').value), fee_bps: Number($('fee').value),
+  };
+}
+
+async function post(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { const j = await r.json(); msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail); } catch {}
+    throw new Error(msg);
+  }
+  return r;
+}
+
+function metric(label, v, b, fmt, signed) {
+  const cls = signed ? (v >= 0 ? 'pos' : 'neg') : '';
+  const bench = b === undefined ? '' : `<div class="b">Buy &amp; hold: ${fmt(b)}</div>`;
+  return `<div class="metric"><div class="k">${label}</div><div class="v ${cls}">${fmt(v)}</div>${bench}</div>`;
+}
+
+function render(d) {
+  const m = d.metrics, b = d.benchmark_metrics;
+  $('empty').classList.add('hidden'); $('out').classList.remove('hidden');
+  const beat = m.total_return > b.total_return;
+  $('summary').innerHTML = `<b>${d.symbol}</b> · ${d.strategy} · ${d.period.start} t/m ${d.period.end} · ` +
+    (beat ? '<span class="pos">beter dan buy &amp; hold</span>' : '<span class="neg">slechter dan buy &amp; hold</span>');
+  $('metrics').innerHTML = [
+    metric('Totaal rendement', m.total_return, b.total_return, pct, true),
+    metric('Rendement per jaar', m.cagr, b.cagr, pct, true),
+    metric('Sharpe', m.sharpe, b.sharpe, num),
+    metric('Sortino', m.sortino, b.sortino, num),
+    metric('Max drawdown', m.max_drawdown, b.max_drawdown, pct, true),
+    metric('Volatiliteit', m.volatility, b.volatility, pct),
+    metric('Eindkapitaal', m.final_equity, undefined, money),
+    metric('Trades', m.num_trades, undefined, v => v),
+    metric('Win rate', m.win_rate, undefined, pct),
+    metric('Tijd in de markt', m.exposure, undefined, pct),
+  ].join('');
+
+  $('chart-card').classList.remove('hidden');
+  const eq = d.equity_curve;
+  chart?.destroy();
+  chart = new Chart($('chart'), {
+    type: 'line',
+    data: { labels: eq.map(p => p.date), datasets: [
+      { label: d.strategy, data: eq.map(p => p.equity), borderColor: css('--accent'), borderWidth: 2, pointRadius: 0 },
+      { label: 'Buy & hold', data: eq.map(p => p.benchmark), borderColor: css('--bench'), borderWidth: 1.5, pointRadius: 0 },
+    ]},
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      scales: { x: { ticks: { maxTicksLimit: 8, color: css('--muted') }, grid: { display: false } },
+                y: { ticks: { color: css('--muted'), callback: v => money(v) }, grid: { color: css('--border') } } },
+      plugins: { legend: { labels: { color: css('--text') } },
+                 tooltip: { callbacks: { label: c => `${c.dataset.label}: ${money(c.parsed.y)}` } } } },
+  });
+
+  $('trades-card').classList.remove('hidden');
+  $('trades').innerHTML = d.trades.slice().reverse().map(t => `<tr><td>${t.entry_date}</td><td>${t.exit_date ?? 'open'}</td>` +
+    `<td>${t.side}</td><td>${num(t.entry_price)}</td><td>${num(t.exit_price)}</td>` +
+    `<td class="${t.return >= 0 ? 'pos' : 'neg'}">${pct(t.return)}</td></tr>`).join('') ||
+    '<tr><td colspan="6" class="desc">Geen trades</td></tr>';
+}
+
+$('strategy').addEventListener('change', renderParams);
+
+$('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('error').textContent = ''; $('run').disabled = true; $('run').textContent = 'Bezig...';
+  try { render(await (await post('/backtest', request())).json()); }
+  catch (err) { $('error').textContent = err.message; }
+  finally { $('run').disabled = false; $('run').textContent = 'Backtest draaien'; }
+});
+
+$('pine-btn').addEventListener('click', async () => {
+  $('error').textContent = '';
+  try {
+    $('pine').textContent = await (await post('/pine', request())).text();
+    $('pine-card').classList.remove('hidden');
+    $('pine-card').scrollIntoView({ behavior: 'smooth' });
+  } catch (err) { $('error').textContent = err.message; }
+});
+
+$('copy').addEventListener('click', async () => {
+  await navigator.clipboard.writeText($('pine').textContent);
+  $('copy').textContent = 'Gekopieerd'; setTimeout(() => $('copy').textContent = 'Kopiëren', 1500);
+});
+
+loadStrategies().catch(err => $('error').textContent = 'Kon strategieën niet laden: ' + err.message);
+</script>
+</body>
+</html>

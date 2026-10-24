@@ -11,7 +11,7 @@ python run.py
 ```
 
 De server draait standaard op poort **9000** (poort 8000 is al de portfolio server). Andere poort:
-`BACKTEST_PORT=9100 python run.py`. Open daarna http://localhost:9000/docs voor de interactieve API.
+`BACKTEST_PORT=9100 python run.py`. Open daarna http://localhost:9000 voor de startpagina (backtest draaien, grafiek, trades en Pine Script kopiëren) of http://localhost:9000/docs voor de API.
 
 ## Endpoints
 
