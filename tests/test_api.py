@@ -1,0 +1,63 @@
+import numpy as np
+import pandas as pd
+from fastapi.testclient import TestClient
+
+from app.data import synthetic
+from app.engine import run_backtest
+from app.main import app
+from app.pine import to_pine
+from app.strategies import STRATEGIES, get_strategy
+
+client = TestClient(app)
+
+
+def test_buy_and_hold_matches_price_from_first_open():
+    prices = synthetic("X", "2020-01-01", "2021-12-31", seed=1)
+    res = run_backtest(prices, get_strategy("buy_and_hold"), 10_000, fee_bps=0)
+    expected = 10_000 * prices["close"].iloc[-1] / prices["open"].iloc[1]
+    assert np.isclose(res.equity.iloc[-1], expected)
+
+
+def test_no_lookahead():
+    prices = synthetic("X", "2020-01-01", "2020-12-31", seed=2)
+    res = run_backtest(prices, get_strategy("sma_crossover", fast=5, slow=20), fee_bps=0)
+    assert res.position.iloc[0] == 0
+
+
+def test_fees_reduce_return():
+    prices = synthetic("X", seed=3)
+    s = get_strategy("rsi_mean_reversion")
+    assert run_backtest(prices, s, fee_bps=50).equity.iloc[-1] < run_backtest(prices, s, fee_bps=0).equity.iloc[-1]
+
+
+def test_all_strategies_have_pine():
+    for name in STRATEGIES:
+        code = to_pine(get_strategy(name))
+        assert code.startswith("//@version=6") and "strategy(" in code
+
+
+def test_api_backtest_and_compare():
+    r = client.post("/backtest", json={"symbol": "TEST", "strategy": "sma_crossover", "source": "synthetic",
+                                       "params": {"fast": 20, "slow": 50}})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {"sharpe", "max_drawdown", "cagr"} <= body["metrics"].keys()
+    r = client.post("/compare", json={"symbols": ["A", "B"], "source": "synthetic",
+                                      "strategies": [{"name": "buy_and_hold"}, {"name": "momentum"}]})
+    assert r.status_code == 200 and len(r.json()) == 4
+
+
+def test_api_rejects_unknown():
+    r = client.post("/backtest", json={"symbol": "T", "strategy": "nope", "source": "synthetic"})
+    assert r.status_code == 400
+
+
+def test_upload_tradingview_csv(tmp_path, monkeypatch):
+    import app.main as m
+    monkeypatch.setattr(m, "DATA_DIR", tmp_path)
+    df = synthetic("X", "2023-01-01", "2023-06-30", seed=4).reset_index()
+    df["time"] = df["date"].astype("int64") // 10**9
+    csv = df.drop(columns="date")[["time", "open", "high", "low", "close", "volume"]].to_csv(index=False)
+    r = client.post("/data/xyz", files={"file": ("x.csv", csv)})
+    assert r.status_code == 200, r.text
+    assert (tmp_path / "XYZ.csv").exists()
