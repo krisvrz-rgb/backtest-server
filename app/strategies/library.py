@@ -13,11 +13,14 @@ from .dsl import (
     ATR, CCI, CLOSE, CMO, DMI, EMA, HIGH, HL2, HLC3, HMA, LOW, MACD, MFI, MOM, OBV, OPEN, ROC, RSI, SAR, SMA, TSI,
     VOLUME, VWMA, WMA, WPR, Expr, FalseCond, Highest, Lowest, Param, StochD, StochK, Stdev, Supertrend, TrueCond,
     bollinger, donchian_mid, keltner,
+    DAYOFMONTH, MONTH, TR, Abs, Aroon, Cum, LinReg, Max2, Min2, Named, Sum, VoteCount,
 )
 
 CATEGORIES = {
     "trend_hold": "Vasthouden met trendfilter",
     "trend": "Trend volgen",
+    "combo": "Combinaties",
+    "seasonal": "Kalender",
     "mean_reversion": "Mean reversion",
     "momentum": "Momentum",
     "breakout": "Breakout",
@@ -478,3 +481,306 @@ add("hold_dual_ma_buffer", "trend_hold",
     {"fast": 50, "slow": 200, "buffer": 2.0},
     lambda p: ((SMA(CLOSE, p.fast) > SMA(CLOSE, p.slow)) | (CLOSE > SMA(CLOSE, p.slow)),
                (SMA(CLOSE, p.fast) < SMA(CLOSE, p.slow)) & (CLOSE < SMA(CLOSE, p.slow) * (1 - p.buffer / 100))))
+
+# ============================================================================ bekende strategieën uit boeken en onderzoek
+# Bronnen: Larry Connors & Cesar Alvarez (Short Term Trading Strategies That Work, High Probability ETF Trading),
+# Larry Williams (VIX Fix), John Carter (TTM Squeeze), Alexander Elder (Impulse, Triple Screen, Force Index),
+# Martin Pring (KST), Tushar Chande (Aroon), Bill Williams (Awesome Oscillator), Linda Raschke (Holy Grail).
+
+
+def _pct_b(n, mult):
+    mid, up, lo = bollinger(CLOSE, n, mult)
+    return Named((CLOSE - lo) / (up - lo), "%b")
+
+
+def _wvf(n):
+    """Williams VIX Fix: hoe ver de low onder de hoogste slotkoers van n dagen ligt (synthetische VIX)."""
+    return Named((Highest(CLOSE, n) - LOW) / Highest(CLOSE, n) * 100, "VIX Fix")
+
+
+def _ao():
+    return Named(SMA(HL2, 5) - SMA(HL2, 34), "AO")
+
+
+def _kst():
+    return Named(SMA(ROC(CLOSE, 10), 10) + 2 * SMA(ROC(CLOSE, 15), 10) + 3 * SMA(ROC(CLOSE, 20), 10)
+                 + 4 * SMA(ROC(CLOSE, 30), 15), "KST")
+
+
+def _stoch_rsi(n):
+    r = RSI(CLOSE, n)
+    return Named(SMA((r - Lowest(r, n)) / (Highest(r, n) - Lowest(r, n)) * 100, 3), "StochRSI")
+
+
+def _cmf(n):
+    mfv = ((CLOSE - LOW) - (HIGH - CLOSE)) / (HIGH - LOW) * VOLUME
+    return Named(Sum(mfv, n) / Sum(VOLUME, n), "CMF")
+
+
+def _adl():
+    return Cum(((CLOSE - LOW) - (HIGH - CLOSE)) / (HIGH - LOW) * VOLUME)
+
+
+def _vortex(n, plus=True):
+    move = Abs(HIGH - LOW[1]) if plus else Abs(LOW - HIGH[1])
+    return Named(Sum(move, n) / Sum(TR(), n), "VI+" if plus else "VI-", "Vortex")
+
+
+def _uo():
+    bp = CLOSE - Min2(LOW, CLOSE[1])
+    tr = Max2(HIGH, CLOSE[1]) - Min2(LOW, CLOSE[1])
+    return Named(100 * (4 * Sum(bp, 7) / Sum(tr, 7) + 2 * Sum(bp, 14) / Sum(tr, 14) + Sum(bp, 28) / Sum(tr, 28)) / 7,
+                 "Ultimate Osc")
+
+
+def _trix(n):
+    return Named(ROC(EMA(EMA(EMA(CLOSE, n), n), n), 1) * 100, "TRIX")
+
+
+def _force(n):
+    return Named(EMA((CLOSE - CLOSE[1]) * VOLUME, n), "Force Index")
+
+
+add("connors_r3", "mean_reversion",
+    "Connors R3: boven de SMA 200, RSI(2) daalt 3 dagen op rij en zakt onder 10 → kopen; verkopen als RSI(2) boven 70 komt.",
+    {"trend_len": 200, "low_level": 10, "start_level": 60, "exit_level": 70},
+    lambda p: ((CLOSE > SMA(CLOSE, p.trend_len)) & (RSI(CLOSE, 2) < RSI(CLOSE, 2)[1]) & (RSI(CLOSE, 2)[1] < RSI(CLOSE, 2)[2])
+               & (RSI(CLOSE, 2)[2] < p.start_level) & (RSI(CLOSE, 2) < p.low_level),
+               RSI(CLOSE, 2) > p.exit_level))
+
+add("connors_pct_b", "mean_reversion",
+    "Connors %b: boven de SMA 200 en 3 dagen op rij onder de 0,2 van de Bollinger-band → kopen; verkopen boven 0,8.",
+    {"trend_len": 200, "length": 5, "low_level": 0.2, "exit_level": 0.8},
+    lambda p: ((CLOSE > SMA(CLOSE, p.trend_len)) & (Highest(_pct_b(p.length, 2), 3) < p.low_level),
+               _pct_b(p.length, 2) > p.exit_level))
+
+add("double_seven", "mean_reversion",
+    "Connors Double 7s: boven de SMA 200 en slot op het laagste punt van 7 dagen → kopen; verkopen op een 7-daags hoogtepunt.",
+    {"trend_len": 200, "length": 7},
+    lambda p: ((CLOSE > SMA(CLOSE, p.trend_len)) & (CLOSE <= Lowest(CLOSE, p.length)),
+               CLOSE >= Highest(CLOSE, p.length)))
+
+add("cumulative_rsi", "mean_reversion",
+    "Connors cumulatieve RSI: boven de SMA 200 en RSI(2) van de laatste 2 dagen samen onder 35 → kopen; verkopen als RSI(2) boven 65.",
+    {"trend_len": 200, "low_level": 35, "exit_level": 65},
+    lambda p: ((CLOSE > SMA(CLOSE, p.trend_len)) & (Named(Sum(RSI(CLOSE, 2), 2), "RSI 2 som 2 dagen", "RSI") < p.low_level), RSI(CLOSE, 2) > p.exit_level))
+
+add("williams_vix_fix", "mean_reversion",
+    "Williams VIX Fix: kopen bij een angstpiek (VIX Fix boven zijn bovenste Bollinger-band); verkopen als de angst weer onder het gemiddelde zakt.",
+    {"length": 22, "bb_len": 20, "mult": 2.0},
+    lambda p: (_wvf(p.length) > SMA(_wvf(p.length), p.bb_len) + p.mult * Stdev(_wvf(p.length), p.bb_len),
+               _wvf(p.length) < SMA(_wvf(p.length), p.bb_len)))
+
+def _sqz_mom(n):
+    return Named(LinReg(CLOSE - (donchian_mid(n) + SMA(CLOSE, n)) / 2, n), "Squeeze-momentum")
+
+
+add("ttm_squeeze", "volatility",
+    "TTM Squeeze (John Carter): Bollinger-banden binnen het Keltner-kanaal = rust; kopen als die rust breekt met positief momentum.",
+    {"length": 20, "bb_mult": 2.0, "kc_mult": 1.5},
+    lambda p: ((bollinger(CLOSE, p.length, p.bb_mult)[1] > keltner(CLOSE, p.length, p.kc_mult)[1])
+               & (bollinger(CLOSE, p.length, p.bb_mult)[1][1] <= keltner(CLOSE, p.length, p.kc_mult)[1][1])
+               & (_sqz_mom(p.length) > 0),
+               _sqz_mom(p.length) < _sqz_mom(p.length)[1]))
+
+add("elder_impulse", "momentum",
+    "Elder Impulse: kopen als de EMA 13 én het MACD-histogram allebei stijgen (groene bar), verkopen als ze allebei dalen.",
+    {"length": 13},
+    lambda p: ((EMA(CLOSE, p.length) > EMA(CLOSE, p.length)[1]) & (MACD(CLOSE, 12, 26, 9, "hist") > MACD(CLOSE, 12, 26, 9, "hist")[1]),
+               (EMA(CLOSE, p.length) < EMA(CLOSE, p.length)[1]) & (MACD(CLOSE, 12, 26, 9, "hist") < MACD(CLOSE, 12, 26, 9, "hist")[1])))
+
+add("elder_triple_screen", "combo",
+    "Elder Triple Screen: lange trend omhoog (EMA 65 ≈ 13 weken stijgt) en een korte dip (Force Index 2 onder nul) → kopen; verkopen als de trend keert.",
+    {"trend_len": 65, "force_len": 2},
+    lambda p: ((EMA(CLOSE, p.trend_len) > EMA(CLOSE, p.trend_len)[5]) & (_force(p.force_len) < 0),
+               EMA(CLOSE, p.trend_len) < EMA(CLOSE, p.trend_len)[5]))
+
+add("force_index_trend", "volume",
+    "Force Index 13 (Elder): long zolang koopkracht × volume positief is, boven de EMA 50.",
+    {"length": 13, "trend_len": 50},
+    lambda p: ((_force(p.length) > 0) & (CLOSE > EMA(CLOSE, p.trend_len)), _force(p.length) < 0))
+
+add("kst_signal", "momentum",
+    "Know Sure Thing (Pring): gewogen som van vier ROC's; kopen als hij boven zijn signaallijn kruist.",
+    {"signal_len": 9},
+    lambda p: (_kst().crosses_above(SMA(_kst(), p.signal_len)), _kst().crosses_below(SMA(_kst(), p.signal_len))))
+
+add("aroon_cross", "trend",
+    "Aroon (Chande): kopen als Aroon Up boven Aroon Down kruist en boven 70 staat; verkopen bij de omgekeerde kruising.",
+    {"length": 25, "level": 70},
+    lambda p: ((Aroon(p.length, "up") > Aroon(p.length, "down")) & (Aroon(p.length, "up") > p.level),
+               Aroon(p.length, "down") > Aroon(p.length, "up")))
+
+add("awesome_oscillator", "momentum",
+    "Awesome Oscillator (Bill Williams): long zolang SMA 5 van de middenkoers boven SMA 34 staat (AO boven nul).",
+    {},
+    lambda p: (_ao().crosses_above(0), _ao().crosses_below(0)))
+
+add("awesome_saucer", "momentum",
+    "AO saucer: AO boven nul, twee dalende rode bars gevolgd door een groene → kopen; verkopen onder nul.",
+    {},
+    lambda p: ((_ao() > 0) & (_ao() > _ao()[1]) & (_ao()[1] < _ao()[2]) & (_ao()[2] < _ao()[3]), _ao() < 0))
+
+add("stoch_rsi", "mean_reversion",
+    "Stochastic RSI: kopen als StochRSI boven 20 kruist (uit oversold), verkopen als hij onder 80 kruist.",
+    {"length": 14, "low_level": 20, "high_level": 80},
+    lambda p: (_stoch_rsi(p.length).crosses_above(p.low_level), _stoch_rsi(p.length).crosses_below(p.high_level)))
+
+add("chaikin_money_flow", "volume",
+    "Chaikin Money Flow 20: long zolang er netto geld instroomt (CMF boven 0,05), uit onder nul.",
+    {"length": 20, "level": 0.05},
+    lambda p: (_cmf(p.length) > p.level, _cmf(p.length) < 0))
+
+add("chaikin_oscillator", "volume",
+    "Chaikin-oscillator: EMA 3 min EMA 10 van de accumulatie/distributielijn kruist boven nul.",
+    {"fast": 3, "slow": 10},
+    lambda p: (Named(EMA(_adl(), p.fast) - EMA(_adl(), p.slow), "Chaikin osc").crosses_above(0),
+               Named(EMA(_adl(), p.fast) - EMA(_adl(), p.slow), "Chaikin osc").crosses_below(0)))
+
+add("vortex_cross", "trend",
+    "Vortex-indicator: long zolang VI+ boven VI- staat.",
+    {"length": 14},
+    lambda p: (_vortex(p.length, True).crosses_above(_vortex(p.length, False)),
+               _vortex(p.length, True).crosses_below(_vortex(p.length, False))))
+
+add("ultimate_oscillator", "mean_reversion",
+    "Ultimate Oscillator (Larry Williams): kopen onder 30, verkopen boven 70.",
+    {"low_level": 30, "high_level": 70},
+    lambda p: (_uo() < p.low_level, _uo() > p.high_level))
+
+add("trix_signal", "momentum",
+    "TRIX 15: drievoudig afgevlakte ROC kruist boven zijn signaallijn (EMA 9).",
+    {"length": 15, "signal_len": 9},
+    lambda p: (_trix(p.length).crosses_above(EMA(_trix(p.length), p.signal_len)),
+               _trix(p.length).crosses_below(EMA(_trix(p.length), p.signal_len))))
+
+add("coppock_curve", "momentum",
+    "Coppock-curve: WMA 10 van ROC 14 + ROC 11 kruist boven nul (klassiek koopsignaal na een daling).",
+    {"wma_len": 10, "long_roc": 14, "short_roc": 11},
+    lambda p: (Named(WMA(ROC(CLOSE, p.long_roc) + ROC(CLOSE, p.short_roc), p.wma_len), "Coppock").crosses_above(0),
+               Named(WMA(ROC(CLOSE, p.long_roc) + ROC(CLOSE, p.short_roc), p.wma_len), "Coppock").crosses_below(0)))
+
+add("holy_grail", "combo",
+    "Holy Grail (Linda Raschke): sterke trend (ADX boven 30) en een terugval naar de EMA 20 → kopen; verkopen op een nieuw 10-daags hoogtepunt of als de trend verzwakt.",
+    {"adx_level": 30, "ema_len": 20, "exit_len": 10},
+    lambda p: ((DMI(14, 14, "adx") > p.adx_level) & (DMI(14, 14, "plus") > DMI(14, 14, "minus")) & (LOW <= EMA(CLOSE, p.ema_len)),
+               (HIGH >= Highest(HIGH, p.exit_len)[1]) | (DMI(14, 14, "adx") < 20)))
+
+add("linreg_slope", "trend",
+    "Regressielijn: long zolang de lineaire regressielijn van 50 dagen stijgt en de koers erboven staat.",
+    {"length": 50},
+    lambda p: ((LinReg(CLOSE, p.length) > LinReg(CLOSE, p.length)[1]) & (CLOSE > LinReg(CLOSE, p.length)),
+               LinReg(CLOSE, p.length) < LinReg(CLOSE, p.length)[1]))
+
+# ============================================================================ kalender
+
+add("turn_of_month", "seasonal",
+    "Maandwisseleffect: kopen vanaf de 25e van de maand, verkopen na de 3e dag van de nieuwe maand.",
+    {"buy_day": 25, "sell_day": 4},
+    lambda p: (DAYOFMONTH >= p.buy_day, (DAYOFMONTH >= p.sell_day) & (DAYOFMONTH < p.buy_day)))
+
+add("turn_of_month_trend", "seasonal",
+    "Maandwisseleffect, alleen boven de SMA 200.",
+    {"buy_day": 25, "sell_day": 4, "trend_len": 200},
+    lambda p: ((DAYOFMONTH >= p.buy_day) & (CLOSE > SMA(CLOSE, p.trend_len)),
+               (DAYOFMONTH >= p.sell_day) & (DAYOFMONTH < p.buy_day)))
+
+add("sell_in_may", "seasonal",
+    "Halloween-effect (Sell in May): belegd van november t/m april, cash van mei t/m oktober.",
+    {},
+    lambda p: ((MONTH >= 11) | (MONTH <= 4), (MONTH >= 5) & (MONTH <= 10)))
+
+add("sell_in_may_trend", "seasonal",
+    "Halloween-effect met trendfilter: in de zomer alleen belegd als de koers boven de SMA 200 staat.",
+    {"trend_len": 200},
+    lambda p: ((MONTH >= 11) | (MONTH <= 4) | (CLOSE > SMA(CLOSE, p.trend_len)),
+               (MONTH >= 5) & (MONTH <= 10) & (CLOSE < SMA(CLOSE, p.trend_len))))
+
+# ============================================================================ combinaties
+# Trendfilter + instap, bevestiging door meerdere indicatoren en stemmingen.
+
+
+def _trend_votes():
+    return VoteCount(CLOSE > SMA(CLOSE, 50), CLOSE > SMA(CLOSE, 200), SMA(CLOSE, 50) > SMA(CLOSE, 200),
+                     MACD(CLOSE, 12, 26, 9, "macd") > MACD(CLOSE, 12, 26, 9, "signal"), RSI(CLOSE, 14) > 50,
+                     DMI(14, 14, "plus") > DMI(14, 14, "minus"), OBV() > SMA(OBV(), 20),
+                     Supertrend(3.0, 10, "dir") < 0)
+
+
+def _all_votes():
+    return VoteCount(CLOSE > EMA(CLOSE, 20), CLOSE > SMA(CLOSE, 50), CLOSE > SMA(CLOSE, 200),
+                     MACD(CLOSE, 12, 26, 9, "hist") > 0, RSI(CLOSE, 14) > 50, StochK(14, 3) > StochD(14, 3, 3),
+                     CCI(HLC3, 20) > 0, ROC(CLOSE, 20) > 0, DMI(14, 14, "plus") > DMI(14, 14, "minus"),
+                     OBV() > SMA(OBV(), 20), MFI(HLC3, 14) > 50, Aroon(25, "up") > Aroon(25, "down"))
+
+
+add("vote_trend_8", "combo",
+    "Stemming van 8 trendindicatoren (SMA 50/200, golden cross, MACD, RSI, DMI, OBV, Supertrend): kopen bij 6 of meer, verkopen bij 3 of minder.",
+    {"buy_votes": 6, "sell_votes": 3},
+    lambda p: (_trend_votes() >= p.buy_votes, _trend_votes() <= p.sell_votes))
+
+add("vote_trend_8_strict", "combo",
+    "Stemming van 8 trendindicatoren: pas kopen als ze alle 8 positief zijn, verkopen bij 4 of minder.",
+    {"buy_votes": 8, "sell_votes": 4},
+    lambda p: (_trend_votes() >= p.buy_votes, _trend_votes() <= p.sell_votes))
+
+add("vote_all_12", "combo",
+    "Stemming van 12 indicatoren (trend, momentum en volume): kopen bij 9 of meer, verkopen bij 5 of minder.",
+    {"buy_votes": 9, "sell_votes": 5},
+    lambda p: (_all_votes() >= p.buy_votes, _all_votes() <= p.sell_votes))
+
+add("vote_all_12_loose", "combo",
+    "Stemming van 12 indicatoren: kopen bij een meerderheid (7), pas verkopen als de meerderheid negatief is (5 of minder).",
+    {"buy_votes": 7, "sell_votes": 5},
+    lambda p: (_all_votes() >= p.buy_votes, _all_votes() <= p.sell_votes))
+
+add("trend_macd_rsi_confirm", "combo",
+    "Drie bevestigingen: boven de SMA 200, MACD kruist boven zijn signaal én RSI boven 50; verkopen als MACD terugkruist.",
+    {"trend_len": 200, "rsi_level": 50},
+    lambda p: ((CLOSE > SMA(CLOSE, p.trend_len)) & MACD(CLOSE, 12, 26, 9, "macd").crosses_above(MACD(CLOSE, 12, 26, 9, "signal"))
+               & (RSI(CLOSE, 14) > p.rsi_level),
+               MACD(CLOSE, 12, 26, 9, "macd").crosses_below(MACD(CLOSE, 12, 26, 9, "signal"))))
+
+add("adx_donchian_breakout", "combo",
+    "Breakout met trendsterkte: nieuw 20-daags hoogtepunt terwijl ADX boven 20 staat; verkopen op een 10-daags dieptepunt.",
+    {"entry_len": 20, "exit_len": 10, "adx_level": 20},
+    lambda p: ((HIGH > Highest(HIGH, p.entry_len)[1]) & (DMI(14, 14, "adx") > p.adx_level), LOW < Lowest(LOW, p.exit_len)[1]))
+
+add("supertrend_rsi_pullback", "combo",
+    "Supertrend omhoog én een korte dip (RSI 14 onder 40) → kopen; verkopen als de Supertrend omdraait.",
+    {"factor": 3.0, "atr_len": 10, "low_level": 40},
+    lambda p: ((Supertrend(p.factor, p.atr_len, "dir") < 0) & (RSI(CLOSE, 14) < p.low_level),
+               Supertrend(p.factor, p.atr_len, "dir") > 0))
+
+add("sma200_stoch_dip", "combo",
+    "Trendfilter + instap: boven de SMA 200 kopen als de stochastic onder 20 komt; verkopen boven 80 of onder de SMA 200.",
+    {"trend_len": 200, "low_level": 20, "high_level": 80},
+    lambda p: ((CLOSE > SMA(CLOSE, p.trend_len)) & (StochK(14, 3) < p.low_level),
+               (StochK(14, 3) > p.high_level) | (CLOSE < SMA(CLOSE, p.trend_len))))
+
+add("ema_ribbon_volume", "combo",
+    "EMA's 8 > 21 > 55 op een rij én volume boven het 20-daags gemiddelde → kopen; verkopen als EMA 8 onder EMA 21 zakt.",
+    {"fast": 8, "mid": 21, "slow": 55},
+    lambda p: ((EMA(CLOSE, p.fast) > EMA(CLOSE, p.mid)) & (EMA(CLOSE, p.mid) > EMA(CLOSE, p.slow)) & (VOLUME > SMA(VOLUME, 20)),
+               EMA(CLOSE, p.fast) < EMA(CLOSE, p.mid)))
+
+add("regime_switch", "combo",
+    "Wisselt per markttoestand: in een stijgende markt (boven de stijgende SMA 200) breakout op 20 dagen, in een zijwaartse markt RSI(2) onder 10; in een dalende markt cash.",
+    {"trend_len": 200, "entry_len": 20, "low_level": 10},
+    lambda p: (((CLOSE > SMA(CLOSE, p.trend_len)) & (SMA(CLOSE, p.trend_len) > SMA(CLOSE, p.trend_len)[20])
+                & (HIGH > Highest(HIGH, p.entry_len)[1]))
+               | ((CLOSE > SMA(CLOSE, p.trend_len)) & (RSI(CLOSE, 2) < p.low_level)),
+               (CLOSE < SMA(CLOSE, p.trend_len)) | ((RSI(CLOSE, 2) > 90) & (SMA(CLOSE, p.trend_len) < SMA(CLOSE, p.trend_len)[20]))))
+
+add("bb_squeeze_adx_volume", "combo",
+    "Drievoudige bevestiging van een uitbraak: slot boven de bovenste Bollinger-band, ADX stijgt en volume 1,5× het gemiddelde; verkopen onder de middenlijn.",
+    {"length": 20, "mult": 2.0, "vol_mult": 1.5},
+    lambda p: ((CLOSE > bollinger(CLOSE, p.length, p.mult)[1]) & (DMI(14, 14, "adx") > DMI(14, 14, "adx")[5])
+               & (VOLUME > SMA(VOLUME, 20) * p.vol_mult),
+               CLOSE < SMA(CLOSE, p.length)))
+
+add("dual_momentum_trend_hold", "combo",
+    "Vasthouden met dubbele bevestiging: alleen uit als zowel het 12-maands momentum negatief is als de koers onder de SMA 200 staat.",
+    {"roc_len": 252, "trend_len": 200},
+    lambda p: ((ROC(CLOSE, p.roc_len) > 0) | (CLOSE > SMA(CLOSE, p.trend_len)),
+               (ROC(CLOSE, p.roc_len) < 0) & (CLOSE < SMA(CLOSE, p.trend_len))))

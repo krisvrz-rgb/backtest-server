@@ -20,7 +20,7 @@ De server draait standaard op poort **9000** (poort 8000 is al de portfolio serv
 | GET | `/` | Overzicht: per ticker de drie testperiodes naast elkaar |
 | GET | `/tool` | Backtestpagina (één ticker) |
 | POST | `/adaptive` | Automatische strategiekeuze per markttoestand, getest met walk-forward |
-| GET | `/strategies` | Alle strategieën (128) met categorie en standaardparameters |
+| GET | `/strategies` | Alle strategieën (166) met categorie en standaardparameters |
 | GET | `/categories` | Categorieën en aantal strategieën per categorie |
 | POST | `/rank` | Alle strategieën op één ticker testen, gerangschikt op rendement (of `sort_by`) |
 | POST | `/backtest` | Eén backtest: metrics, trades en equity curve |
@@ -68,8 +68,12 @@ blijven mogelijk).
 
 ## Strategieën
 
-128 strategieën in zeven categorieën: vasthouden met trendfilter, trend volgen, mean reversion, momentum,
-breakout, volatiliteit en volume (plus buy & hold als benchmark). "Vasthouden met trendfilter" blijft zo goed als
+165 strategieën in negen categorieën: vasthouden met trendfilter, trend volgen, combinaties, kalender,
+mean reversion, momentum, breakout, volatiliteit en volume (plus buy & hold als benchmark). Daarbij de bekende
+regels uit de literatuur (Connors R3, %b, Double 7s, cumulatieve RSI, Williams VIX Fix, TTM Squeeze, Elder Impulse
+en Triple Screen, KST, Aroon, Vortex, Ultimate Oscillator, Coppock, Holy Grail, maandwissel- en Halloween-effect)
+en combinaties: trendfilter + instap, meervoudige bevestiging, stemmingen tussen 8 of 12 indicatoren en een
+strategie die per markttoestand wisselt. "Vasthouden met trendfilter" blijft zo goed als
 altijd belegd en stapt alleen uit in een duidelijke neerwaartse trend: de realistische manier om een sterk
 stijgend aandeel bij te houden. Elke strategie is een instap- en een uitstapregel, long-only,
 met instelbare parameters. Dezelfde regels worden in Python uitgerekend én naar Pine Script vertaald.

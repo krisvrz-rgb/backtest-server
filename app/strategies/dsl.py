@@ -573,6 +573,122 @@ class SAR(Fn):
         return pd.Series(sar, index=df.index)
 
 
+class Abs(Expr):
+    def __init__(self, a): self.a = a
+    def calc(self, df): return self.a.calc(df).abs()
+    def pine(self, ctx): return f"math.abs({self.a.pine(ctx)})"
+
+
+class Min2(Expr):
+    """Kleinste van twee reeksen per bar (math.min)."""
+    def __init__(self, a, b): self.a, self.b = a, _wrap(b)
+    def calc(self, df): return np.minimum(self.a.calc(df), self.b.calc(df))
+    def pine(self, ctx): return f"math.min({self.a.pine(ctx)}, {self.b.pine(ctx)})"
+
+
+class Max2(Min2):
+    def calc(self, df): return np.maximum(self.a.calc(df), self.b.calc(df))
+    def pine(self, ctx): return f"math.max({self.a.pine(ctx)}, {self.b.pine(ctx)})"
+
+
+class Sum(Fn):
+    """Som over n bars (math.sum)."""
+    pine_fn = "math.sum"
+    def calc(self, df): return self.arg(0, df).rolling(int(self.arg(1, df))).sum()
+
+
+class Cum(Fn):
+    pine_fn = "ta.cum"
+    def calc(self, df): return self.arg(0, df).fillna(0).cumsum()
+
+
+class TR(Expr):
+    def calc(self, df): return _tr(df)
+    def pine(self, ctx): return ctx.hoist("ta.tr(true)")
+
+
+class LinReg(Fn):
+    """Eindpunt van de lineaire regressielijn over n bars (ta.linreg(src, n, 0))."""
+
+    def calc(self, df):
+        s, n = self.arg(0, df), int(self.arg(1, df))
+        x = np.arange(n, dtype=float)
+        xm = x.mean()
+        den = ((x - xm) ** 2).sum()
+
+        def end(y):
+            b = ((x - xm) * (y - y.mean())).sum() / den
+            return y.mean() + b * (n - 1 - xm)
+        return s.rolling(n).apply(end, raw=True)
+
+    def pine(self, ctx):
+        return ctx.hoist(f"ta.linreg({self.args[0].pine(ctx)}, {_p(self.args[1])}, 0)")
+
+
+class Aroon(Fn):
+    """Aroon up/down (0..100): hoe recent het hoogste/laagste punt van de laatste n bars was."""
+
+    def __init__(self, n, part="up"):
+        super().__init__(n)
+        self.part = part
+
+    def calc(self, df):
+        n = int(self.arg(0, df))
+        col = df["high"] if self.part == "up" else df["low"]
+        f = np.argmax if self.part == "up" else np.argmin
+        # Pine kiest bij gelijke waarden de meest recente bar; daarom de reeks omdraaien.
+        since = col.rolling(n + 1).apply(lambda w: f(w[::-1]), raw=True)
+        return 100 * (n - since) / n
+
+    def pine(self, ctx):
+        n = _p(self.args[0])
+        fn, src = ("ta.highestbars", "high") if self.part == "up" else ("ta.lowestbars", "low")
+        return ctx.hoist(f"100.0 * ({fn}({src}, {n} + 1) + {n}) / {n}")
+
+
+class Time(Expr):
+    """Kalender: dayofmonth, month of dayofweek (1 = zondag zoals in Pine)."""
+
+    def __init__(self, name): self.name = name
+
+    def calc(self, df):
+        idx = df.index
+        if self.name == "dayofmonth":
+            v = idx.day
+        elif self.name == "month":
+            v = idx.month
+        else:
+            v = (idx.dayofweek + 1) % 7 + 1
+        return pd.Series(np.asarray(v, dtype=float), index=idx)
+
+    def pine(self, ctx): return self.name
+
+
+DAYOFMONTH, MONTH, DAYOFWEEK = Time("dayofmonth"), Time("month"), Time("dayofweek")
+
+
+class Named(Expr):
+    """Geeft een samengestelde indicator een naam (en een eigen paneel) voor de grafiek; rekent gewoon door."""
+
+    def __init__(self, a, name, pane=None):
+        self.a, self.name, self.pane = a, name, pane or name
+
+    def calc(self, df): return self.a.calc(df)
+    def pine(self, ctx): return self.a.pine(ctx)
+
+
+class VoteCount(Expr):
+    """Aantal condities dat waar is (een stemming tussen indicatoren)."""
+
+    def __init__(self, *conds): self.conds = conds
+
+    def calc(self, df):
+        return sum(c.calc(df).fillna(False).astype(float) for c in self.conds)
+
+    def pine(self, ctx):
+        return ctx.hoist(" + ".join(f"({c.pine(ctx)} ? 1 : 0)" for c in self.conds))
+
+
 def keltner(src, n, mult):
     """(midden, boven, onder) van het Keltner-kanaal zoals ta.kc (true range)."""
     mid = EMA(src, n)

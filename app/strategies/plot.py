@@ -12,16 +12,17 @@ import pandas as pd
 
 from .dsl import (
     ATR, CCI, CMO, DMI, EMA, HMA, MACD, MFI, MOM, OBV, RMA, ROC, RSI, SAR, SMA, TSI, VWMA, WMA, WPR,
+    Aroon, LinReg, Named, Time, VoteCount,
     BinOp, Cmp, Const, Cross, Expr, Fn, Highest, Logic, Lowest, Not, Param, Shift, Src, StochD, StochK, Stdev,
     Supertrend, _TrEma, _p, _v,
 )
 
 PRICE_SRC = {"open", "high", "low", "close", "hl2", "hlc3", "ohlc4"}
-SMOOTHERS = (SMA, EMA, RMA, WMA, HMA, VWMA, Highest, Lowest)
+SMOOTHERS = (SMA, EMA, RMA, WMA, HMA, VWMA, Highest, Lowest, LinReg)
 OSC_NAMES = {RSI: "RSI", CCI: "CCI", CMO: "CMO", TSI: "TSI", ROC: "ROC", MOM: "Momentum", WPR: "Williams %R",
              MFI: "MFI", ATR: "ATR", _TrEma: "ATR", Stdev: "Stdev", StochK: "Stochastic", StochD: "Stochastic",
              MACD: "MACD", DMI: "ADX / DI", OBV: "OBV"}
-FN_LABEL = {SMA: "SMA", EMA: "EMA", RMA: "RMA", WMA: "WMA", HMA: "HMA", VWMA: "VWMA", Highest: "Hoogste",
+FN_LABEL = {LinReg: "Regressie", SMA: "SMA", EMA: "EMA", RMA: "RMA", WMA: "WMA", HMA: "HMA", VWMA: "VWMA", Highest: "Hoogste",
             Lowest: "Laagste", RSI: "RSI", CCI: "CCI", CMO: "CMO", TSI: "TSI", ROC: "ROC", MOM: "Mom", WPR: "%R",
             MFI: "MFI", ATR: "ATR", _TrEma: "ATR", Stdev: "Stdev", SAR: "SAR"}
 SKIP = "skip"
@@ -62,6 +63,14 @@ def label(e: Expr) -> str:
         return f"%D {_arg(e.args[2])}"
     if isinstance(e, OBV):
         return "OBV"
+    if isinstance(e, VoteCount):
+        return "Stemmen"
+    if isinstance(e, Named):
+        return e.name
+    if isinstance(e, Aroon):
+        return f"Aroon {e.part} {_arg(e.args[0])}"
+    if isinstance(e, Time):
+        return e.name
     if isinstance(e, Fn):
         name = FN_LABEL.get(type(e), type(e).__name__)
         args = list(e.args)
@@ -141,6 +150,14 @@ def scale(e) -> str:
         return scale(e.a)
     if isinstance(e, SMOOTHERS):
         return scale(e.args[0])
+    if isinstance(e, Time):
+        return SKIP
+    if isinstance(e, VoteCount):
+        return "Stemmen"
+    if isinstance(e, Named):
+        return e.pane
+    if isinstance(e, Aroon):
+        return "Aroon"
     if isinstance(e, (SAR,)):
         return "price"
     if isinstance(e, Supertrend):
@@ -157,6 +174,8 @@ def scale(e) -> str:
         if e.op == "+" and sa == sb == "price":
             return PRICE_SUM  # (hoogste + laagste) / 2 is weer een koers
         if e.op in "+-":
+            if sa not in ("price", PRICE_SUM) and sb in ("Stdev", "ATR"):
+                return sa  # band rond een oscillator, bv. Bollinger op de VIX Fix
             if sa == "price" and sb != "price":
                 return "price"  # bv. midden + 2 × stdev, slot - ATR
             if sb == "price" and sa != "price":
@@ -243,6 +262,9 @@ def indicators(entry: Expr, exit_: Expr, df: pd.DataFrame, index) -> dict:
     panes: dict[str, dict] = {}
 
     def add(expr):
+        # Een reeks van een paar bars terug (bv. RSI[1], EMA[5]) tekent hetzelfde als de reeks zelf.
+        while isinstance(expr, Shift) and int(_v(expr.n)) <= 5:
+            expr = expr.a
         if isinstance(expr, Supertrend):
             expr = Supertrend(*expr.args, part="line")
         k = scale(expr)

@@ -285,3 +285,20 @@ def test_rank_has_risk_comparison():
     d = client.post("/rank", json={"symbol": "AAPL", "source": "synthetic", "start": "2020-01-01"}).json()
     assert all("beats_bh_risk" in x and "calmar" in x for x in d["results"])
     assert any(x["category"] == "trend_hold" for x in d["results"])
+
+
+def test_new_classic_and_combo_strategies():
+    from app.strategies import STRATEGIES
+    for name in ("connors_r3", "ttm_squeeze", "elder_impulse", "vote_trend_8", "regime_switch", "turn_of_month"):
+        assert name in STRATEGIES
+    r = client.post("/backtest", json={"symbol": "AAPL", "strategy": "vote_trend_8", "source": "synthetic",
+                                       "include_prices": True}).json()
+    pane = r["indicators"]["panes"][0]
+    assert pane["title"] == "Stemmen" and [l["value"] for l in pane["levels"]] == [3, 6]
+    assert max(p["value"] for p in pane["series"][0]["data"]) <= 8
+    from app.strategies.dsl import Aroon
+    import numpy as np
+    idx = pd.bdate_range("2024-01-01", periods=30)
+    high = pd.Series(np.r_[np.arange(20), np.arange(10)[::-1]], index=idx, dtype=float)
+    df = pd.DataFrame({"open": high, "high": high, "low": high, "close": high, "volume": 1.0})
+    assert Aroon(25, "up").calc(df).iloc[-1] == 100 * (25 - 10) / 25  # top 10 bars geleden
