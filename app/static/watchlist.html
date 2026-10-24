@@ -75,6 +75,20 @@
   .detail-bar button, .detail-bar a { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 5px; border: 1px solid var(--border);
     background: var(--panel); color: var(--text); text-decoration: none; cursor: pointer; }
   .detail-bar button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .badge.good { color: var(--up); border-color: var(--up); }
+  .badge.bad { color: var(--down); border-color: var(--down); }
+  .badge.mixed { color: var(--warn, #d97706); border-color: var(--warn, #d97706); }
+  .info { padding: 12px 0; }
+  .info table { width: auto; min-width: 60%; }
+  .info th { position: static; cursor: default; }
+  .info p { margin: 6px 0 10px; max-width: 900px; }
+  .mini { display: inline-block; width: 70px; height: 6px; background: var(--panel); border-radius: 3px; vertical-align: middle; margin-left: 6px; overflow: hidden; }
+  .mini i { display: block; height: 100%; background: var(--up); }
+  #robust .head { display: flex; gap: 12px; align-items: baseline; padding: 12px 14px 0; flex-wrap: wrap; }
+  #robust .head b { font-size: 15px; }
+  #robust table th { position: static; }
+  #robust tbody tr:nth-child(n+31) { display: none; }
+  #robust.all tbody tr { display: table-row !important; }
   .detail iframe { display: block; width: 100%; height: 900px; border: 0; background: var(--bg); }
 </style>
 </head>
@@ -105,11 +119,13 @@
           <option value="new">Buy-signaal ≤ 5 dagen</option>
           <option value="beat">Minstens 1 strategie beter dan B&amp;H</option>
           <option value="beatprofit">Beter dan B&amp;H én winstgevend</option>
+          <option value="oos">Beste strategie houdt stand</option>
         </select>
       </div>
       <button id="import-pf" title="Groepen GEZIN, KRISTOF, FREYA, CÉZANNE en WATCHLIST overnemen van de portfolio server">Portfolio server overnemen</button>
       <button id="import-tv" title="Alle TradingView-watchlists overnemen: Watchlist, M, Legacy en de gekleurde vlaglijsten">TradingView-lijsten overnemen</button>
       <button id="toggle-import">Plakken</button>
+      <button id="robust-btn" title="Welke strategieën werken op veel tickers van deze lijst tegelijk?">Strategieën over alle tickers</button>
     </div>
     <div class="status" id="status">Nog niet gescand.</div>
     <div class="import hidden" id="import">
@@ -125,8 +141,23 @@
     </div>
   </section>
 
+  <section class="panel hidden" id="robust">
+    <div class="head"><b>Strategieën over alle tickers</b><span class="desc" id="robust-sub"></span>
+      <div class="grow" style="flex:1"></div><button id="robust-all">Alles tonen</button><button id="robust-close">Sluiten</button></div>
+    <p class="desc" style="padding:0 14px">Hoe meer tickers een strategie wint, hoe kleiner de kans dat het toeval is.
+      <b>Houdbaar</b> = verslaat buy &amp; hold in de leerperiode (2 jaar) én in het jaar daarna dat ze niet zag.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th class="left" data-rsort="strategy">Strategie</th>
+        <th data-rsort="beat_share" title="Op hoeveel tickers de strategie buy &amp; hold verslaat in de gekozen periode">Beter dan B&amp;H</th>
+        <th data-rsort="median_return">Mediaan rendement</th><th data-rsort="avg_return">Gem. rendement</th>
+        <th data-rsort="avg_place" title="Gemiddelde plaats in de ranglijst per ticker: top 10% = meestal bij de besten">Gem. plaats</th>
+        <th data-rsort="top10" title="Aantal tickers waar ze bij de beste 10% hoort">In top 10%</th>
+        <th data-rsort="oos_share" title="Verslaat buy &amp; hold in de leerperiode én in het testjaar erna">Houdbaar</th></tr></thead>
+      <tbody id="robust-rows"></tbody></table></div>
+  </section>
+
   <section class="panel">
-    <div class="scroll">
+    <div class="scroll" id="main-scroll">
       <table>
         <thead><tr>
           <th class="left" data-sort="tv">Symbool</th>
@@ -138,6 +169,7 @@
           <th data-sort="bh_value" title="Eindwaarde van €10.000 met gewoon vasthouden">€10.000 → B&amp;H</th>
           <th data-sort="diff_value" title="Wat de beste strategie meer opleverde dan vasthouden, op €10.000">Verschil</th>
           <th data-sort="avg_return" title="Winst van alle strategieën samen op €10.000 elk, gedeeld door het aantal strategieën">Gem. winst / strategie</th>
+          <th class="left" data-sort="oos" title="Beste strategie gekozen op de 2 jaar ervoor, getest op het laatste jaar dat ze niet zag">Houdt de beste stand?</th>
           <th class="left" data-sort="bars_since_buy">Laatste buy-signaal</th>
           <th data-sort="open_signals">Open signalen</th>
           <th></th>
@@ -185,6 +217,7 @@ function value(s, key) {
   if (!r || r.error) return null;
   return { best_return: r.best?.total_return, best_value: r.best?.total_return, bh_value: r.buy_and_hold_return,
            diff_value: r.best ? r.best.total_return - r.buy_and_hold_return : null,
+           oos: s.result?.oos?.test_return != null ? s.result.oos.test_return - s.result.oos.bh_test : null,
            bars_since_buy: r.latest_buy ? r.latest_buy.bars_since_buy : null }[key] ?? r[key] ?? null;
 }
 
@@ -198,6 +231,7 @@ function passes(s) {
   if (f === 'new') return !!r.latest_buy && r.latest_buy.bars_since_buy <= 5;
   if (f === 'beat') return r.beat_count > 0;
   if (f === 'beatprofit') return r.beat_profitable_count > 0;
+  if (f === 'oos') return s.result?.oos?.verdict === 'good';
   return true;
 }
 
@@ -212,17 +246,68 @@ function detailRow(s, group) {
   const r = res(s), best = r && !r.error ? r.best?.strategy : '';
   const base = `/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${startDate()}` +
     (best ? '&strategy=' + encodeURIComponent(best) : '');
-  const src = base + (openView === 'bt' ? '' : '&view=' + openView);
+  const src = base + (openView === 'rank' || openView === 'auto' ? '&view=' + openView : '');
   const tab = (v, label) => `<button type="button" data-view="${v}" class="${openView === v ? 'active' : ''}">${label}</button>`;
-  return `<tr class="detail"><td colspan="12"><div class="detail-box">` +
+  return `<tr class="detail"><td colspan="13"><div class="detail-box">` +
     `<div class="detail-bar"><b>${esc(s.tv)}${best ? ' · ' + esc(best) : ''}</b>` +
-    tab('bt', 'Backtest') + tab('rank', 'Ranglijst') + tab('auto', 'Automatische keuze') +
+    tab('bt', 'Backtest') + tab('rank', 'Ranglijst') + tab('month', 'Per maand') + tab('oos', 'Houdbaarheid') + tab('auto', 'Automatische keuze') +
     `<a href="${src}" target="_blank" rel="noopener">Nieuw tabblad</a><button type="button" data-close>Sluiten</button></div>` +
-    `<iframe src="${src}&embed=1" title="Backtest ${esc(s.tv)}"></iframe></div></td></tr>`;
+    (openView === 'month' || openView === 'oos' ? `<div class="info" data-sym="${esc(s.yahoo)}">Laden…</div>`
+      : `<iframe src="${src}&embed=1" title="Backtest ${esc(s.tv)}"></iframe>`) + '</div></td></tr>';
+}
+
+function oosCell(o) {
+  if (!o) return '<td class="left desc">opnieuw scannen</td>';
+  if (o.error) return `<td class="left desc" title="${esc(o.error)}">te korte historie</td>`;
+  return `<td class="left"><span class="badge ${o.verdict}">${esc(o.verdict_label)}</span> ${esc(o.strategy)}` +
+    `<small>testjaar ${pct(o.test_return, true)} vs B&amp;H ${pct(o.bh_test, true)} · plaats ${o.test_rank}/${o.of}</small></td>`;
+}
+
+const detailCache = {};
+async function fillInfo() {
+  const box = document.querySelector('.detail .info'); if (!box) return;
+  const sym = box.dataset.sym;
+  if (!detailCache[sym]) {
+    try { detailCache[sym] = await (await fetch('/api/watchlist/detail?symbol=' + encodeURIComponent(sym))).json(); }
+    catch (e) { box.innerHTML = `<span class="error">Kon gegevens niet laden: ${esc(e.message)}</span>`; return; }
+  }
+  const d = detailCache[sym], cur = document.querySelector('.detail .info');
+  if (cur) cur.innerHTML = openView === 'month' ? monthHtml(d) : oosHtml(d);
+}
+
+function monthHtml(d) {
+  if (!d.monthly?.length) return '<span class="desc">Nog geen maandgegevens: start een nieuwe scan (standaardperiodes).</span>';
+  const wins = (d.month_wins || []).slice(0, 5).map(w => `${esc(w.strategy)} (${w.months}×)`).join(', ');
+  return `<p class="desc">Per kalendermaand de strategie die in die maand het meest opbracht, over de laatste ${d.monthly.length} maanden.
+    Posities lopen door over de maandgrens, zoals in een gewone backtest. Vaakst de beste: ${wins || '–'}.
+    Let op: achteraf de maandwinnaar aanwijzen is makkelijk, vooraf niet; wisselt de winnaar elke maand, dan is er geen vaste voorsprong.</p>` +
+    `<table><thead><tr><th class="left">Maand</th><th class="left">Beste strategie</th><th>Rendement</th><th>Buy &amp; hold</th>` +
+    `<th>Verschil</th><th title="Aantal strategieën dat die maand buy &amp; hold versloeg">Strategieën beter dan B&amp;H</th><th class="left">Nr. 2 en 3</th></tr></thead><tbody>` +
+    d.monthly.slice().reverse().map(m => `<tr><td class="left">${m.month}${m.partial ? ' <small>lopend</small>' : ''}</td>` +
+      `<td class="left">${esc(m.best)}<small>${esc(m.category_label)}</small></td><td class="${cls(m.best_return)}">${pct(m.best_return, true)}</td>` +
+      `<td class="${cls(m.bh_return)}">${pct(m.bh_return, true)}</td><td class="${cls(m.best_return - m.bh_return)}">${pct(m.best_return - m.bh_return, true)}</td>` +
+      `<td>${m.beat_count}</td><td class="left">${m.top3.slice(1).map(t => `${esc(t.strategy)} <small style="display:inline">${pct(t.return, true)}</small>`).join('<br>')}</td></tr>`).join('') +
+    '</tbody></table>';
+}
+
+function oosHtml(d) {
+  const o = d.oos;
+  if (!o) return '<span class="desc">Nog niet berekend: start een nieuwe scan (standaardperiodes).</span>';
+  if (o.error) return `<span class="desc">${esc(o.error)}</span>`;
+  return `<p><span class="badge ${o.verdict}">${esc(o.verdict_label)}</span> De beste strategie in de leerperiode
+    (${o.train.start} t/m ${o.train.end}) was <b>${esc(o.strategy)}</b> met ${pct(o.train_return, true)} (buy &amp; hold ${pct(o.bh_train, true)}).
+    In het jaar daarna (${o.test.start} t/m ${o.test.end}), dat ze bij die keuze niet zag, haalde ze <b class="${cls(o.test_return)}">${pct(o.test_return, true)}</b>
+    tegenover ${pct(o.bh_test, true)} voor buy &amp; hold: plaats ${o.test_rank} van ${o.of}.</p>` +
+    `<p class="desc">De top 5 uit de leerperiode haalde in het testjaar gemiddeld ${pct(o.top5_avg_test, true)}.
+    De echte winnaar van het testjaar was ${esc(o.test_best.strategy)} (${pct(o.test_best.test_return, true)}), die in de leerperiode op plaats ${o.test_best.train_rank} stond.</p>` +
+    `<table><thead><tr><th class="left">Top 5 leerperiode</th><th>Leerperiode</th><th>Testjaar</th><th>Testjaar vs B&amp;H</th></tr></thead><tbody>` +
+    o.top5.map(t => `<tr><td class="left">${esc(t.strategy)}</td><td class="${cls(t.train_return)}">${pct(t.train_return, true)}</td>` +
+      `<td class="${cls(t.test_return)}">${pct(t.test_return, true)}</td><td class="${cls(t.test_return - o.bh_test)}">${pct(t.test_return - o.bh_test, true)}</td></tr>`).join('') +
+    `<tr><td class="left desc">buy &amp; hold</td><td>${pct(o.bh_train, true)}</td><td>${pct(o.bh_test, true)}</td><td></td></tr></tbody></table>`;
 }
 
 function sizeDetail() {
-  const w = document.querySelector('.scroll').clientWidth - 24;
+  const w = $('main-scroll').clientWidth - 24;
   document.querySelectorAll('.detail-box').forEach(d => d.style.width = w + 'px');
 }
 
@@ -231,9 +316,9 @@ function rowHtml(s, group) {
   const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
   const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.tv)}${s.yahoo && s.yahoo !== tvShort ? ' · ' + esc(s.yahoo) : ''}</small>`;
   const del = `<button class="x" title="Verwijderen" data-del="${esc(s.tv)}" data-group="${esc(group.name)}" data-list="${esc(group.list)}">×</button>`;
-  if (!s.yahoo) return `<tr><td class="left">${sym}</td><td colspan="10" class="left desc">Geen koersdata (index, future of macro)</td><td>${del}</td></tr>`;
-  if (!r) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="10" class="left desc">Nog niet gescand${s.result ? ' voor deze periode' : ''}</td><td>${del}</td></tr>`;
-  if (r.error) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="10" class="left error" title="${esc(r.error)}">Fout: ${esc(r.error.slice(0, 90))}</td><td>${del}</td></tr>`;
+  if (!s.yahoo) return `<tr><td class="left">${sym}</td><td colspan="11" class="left desc">Geen koersdata (index, future of macro)</td><td>${del}</td></tr>`;
+  if (!r) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="11" class="left desc">Nog niet gescand${s.result ? ' voor deze periode' : ''}</td><td>${del}</td></tr>`;
+  if (r.error) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="11" class="left error" title="${esc(r.error)}">Fout: ${esc(r.error.slice(0, 90))}</td><td>${del}</td></tr>`;
   const b = r.best, lb = r.latest_buy;
   const share = r.strategies ? r.beat_count / r.strategies : 0;
   const buy = lb ? `<span class="badge ${lb.bars_since_buy <= 5 ? 'new' : 'open'}">OPEN</span> ${esc(lb.strategy)}` +
@@ -249,6 +334,7 @@ function rowHtml(s, group) {
     `<td class="${cls(b ? b.total_return - r.buy_and_hold_return : 0)}">${b ? eurDiff(b.total_return - r.buy_and_hold_return) : '–'}</td>` +
     (r.avg_return == null ? '<td class="desc">opnieuw scannen</td>'
       : `<td class="${cls(r.avg_return)}">${eurDiff(r.avg_return)}<small>totaal ${eurDiff(r.sum_return)} over ${r.strategies}</small></td>`) +
+    oosCell(s.result?.oos) +
     `<td class="left">${buy}</td><td>${r.open_signals}${r.recent_buys ? `<small>${r.recent_buys} nieuw</small>` : ''}</td>` +
     `<td><a class="lnk" href="/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${startDate()}&view=rank" title="Ranglijst" data-rank>ranglijst</a>${del}</td></tr>`;
 }
@@ -266,11 +352,11 @@ function render() {
       return sortKey === 'bars_since_buy' || sortKey === 'tv' ? (sortAsc ? -c : c) : (sortAsc ? c : -c);
     });
     const key = g.list + '/' + g.name, open = !collapsed.has(key);
-    return `<tr class="group" data-group="${esc(key)}"><td colspan="12"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
+    return `<tr class="group" data-group="${esc(key)}"><td colspan="13"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
       `<span class="count">${syms.length}${syms.length !== g.symbols.length ? ' / ' + g.symbols.length : ''}</span></td></tr>` +
       (open ? syms.map(s => row(s, g)).join('') : '');
   }).join('');
-  sizeDetail();
+  sizeDetail(); fillInfo();
   document.querySelectorAll('th[data-sort]').forEach(th => {
     th.classList.toggle('sorted', th.dataset.sort === sortKey);
     th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
@@ -312,8 +398,49 @@ function fillLists() {
   sel.value = names.includes(g) ? g : '';
 }
 
+// ---------------------------------------------------------------- strategieën over alle tickers
+let robust = null, rSort = 'beat_share', rAsc = false;
+async function loadRobust() {
+  const q = new URLSearchParams({ period: per(), list: $('list-filter').value });
+  if ($('group-filter').value) q.set('group', $('group-filter').value);
+  $('robust-sub').textContent = 'Laden…';
+  robust = await (await fetch('/api/robust?' + q)).json();
+  renderRobust();
+}
+function renderRobust() {
+  if (!robust) return;
+  $('robust-sub').textContent = `${robust.tickers} tickers · ${pinfo().label || per()}` +
+    ($('group-filter').value ? ' · groep ' + $('group-filter').value : '') + ` · houdbaarheid over ${robust.oos_tickers} tickers` +
+    (robust.tickers ? '' : ' · nog geen resultaten: start een nieuwe scan');
+  const rows = robust.rows.slice().sort((a, b) => {
+    const va = a[rSort], vb = b[rSort];
+    if (va == null) return 1; if (vb == null) return -1;
+    const c = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+    return (rSort === 'avg_place' || rSort === 'strategy') ? (rAsc ? -c : c) : (rAsc ? c : -c);
+  });
+  $('robust-rows').innerHTML = rows.map((r, i) => `<tr><td>${i + 1}</td><td class="left">${esc(r.strategy)}<small>${esc(r.category_label)}</small></td>` +
+    `<td>${r.beats}/${r.tickers}<span class="mini"><i style="width:${Math.round((r.beat_share || 0) * 100)}%"></i></span><small>${pct(r.beat_share)}</small></td>` +
+    `<td class="${cls(r.median_return)}">${pct(r.median_return, true)}</td><td class="${cls(r.avg_return)}">${pct(r.avg_return, true)}</td>` +
+    `<td>${r.avg_place == null ? '–' : 'top ' + Math.max(1, Math.round(r.avg_place * 100)) + '%'}</td><td>${r.top10}</td>` +
+    `<td>${r.oos_n ? `${r.oos_both}/${r.oos_n}<small>${pct(r.oos_share)} · testjaar ${r.oos_test_beats}× beter</small>` : '–'}</td></tr>`).join('');
+  document.querySelectorAll('#robust th[data-rsort]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.rsort === rSort); th.classList.toggle('asc', th.dataset.rsort === rSort && rAsc);
+  });
+}
+$('robust-btn').addEventListener('click', () => { $('robust').classList.remove('hidden'); loadRobust(); });
+$('robust-close').addEventListener('click', () => $('robust').classList.add('hidden'));
+$('robust-all').addEventListener('click', () => {
+  $('robust').classList.toggle('all'); $('robust-all').textContent = $('robust').classList.contains('all') ? 'Top 30' : 'Alles tonen';
+});
+document.querySelector('#robust thead').addEventListener('click', e => {
+  const th = e.target.closest('th[data-rsort]'); if (!th) return;
+  if (rSort === th.dataset.rsort) rAsc = !rAsc; else { rSort = th.dataset.rsort; rAsc = false; }
+  renderRobust();
+});
+
 async function load(fromPoll) {
   data = await (await fetch('/api/watchlist')).json();
+  if (!fromPoll) Object.keys(detailCache).forEach(k => delete detailCache[k]);
   PERIODS = data.periods || []; fillPeriods();
   fillLists();
   renderStatus();
@@ -380,7 +507,9 @@ $('do-import').addEventListener('click', async () => {
   } catch (e) { $('import-result').textContent = 'Mislukt: ' + e.message; }
 });
 ['search', 'only-open', 'group-filter'].forEach(id => $(id).addEventListener('input', render));
-document.querySelector('thead').addEventListener('click', e => {
+['list-filter', 'start', 'group-filter', 'c-start', 'c-end'].forEach(id =>
+  $(id).addEventListener('change', () => { if (!$('robust').classList.contains('hidden')) loadRobust(); }));
+document.querySelector('#main-scroll thead').addEventListener('click', e => {
   const th = e.target.closest('th[data-sort]'); if (!th) return;
   if (sortKey === th.dataset.sort) sortAsc = !sortAsc; else { sortKey = th.dataset.sort; sortAsc = false; }
   render();

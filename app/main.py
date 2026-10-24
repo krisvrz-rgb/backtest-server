@@ -6,7 +6,7 @@ from typing import Any, Literal
 import pandas as pd
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -20,7 +20,8 @@ from .pine import to_pine
 from .ranking import rank_strategies
 from .watchlist import (PORTFOLIO_LIST, default_periods, PORTFOLIO_URL, SCANNER, TV_PREFIX, import_from_portfolio, import_from_tradingview,
                         list_name, load_watchlist, parse_tradingview, replace_lists, save_watchlist, tv_to_yahoo,
-                        watchlist_view)
+                        scan_cached, ticker_detail, watchlist_view)
+from .robust import cross_ticker
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
 from .strategies.plot import indicators
 
@@ -286,6 +287,20 @@ async def upload_data(symbol: str, file: UploadFile = File(...)):
 def get_watchlist():
     """Watchlist met groepen en per ticker de laatste scanresultaten."""
     return watchlist_view()
+
+
+@app.get("/api/watchlist/detail")
+def get_watchlist_detail(symbol: str):
+    """Per ticker: houdbaarheid van de beste strategie en de beste strategie per maand (laatste 24 maanden)."""
+    return ticker_detail(symbol)
+
+
+@app.get("/api/robust")
+def get_robust(period: str = "2j", list_: str | None = Query(None, alias="list"), group: str | None = None):
+    """Welke strategieën werken op veel tickers tegelijk (over een lijst of groep uit de watchlist)."""
+    syms = [s["yahoo"] for g in load_watchlist() if (not list_ or list_name(g) == list_) and (not group or g["name"] == group)
+            for s in g["symbols"] if s.get("yahoo")]
+    return cross_ticker(scan_cached()["results"], list(dict.fromkeys(syms)), period)
 
 
 class WatchlistImport(BaseModel):

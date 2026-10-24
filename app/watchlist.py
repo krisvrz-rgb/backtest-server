@@ -21,6 +21,7 @@ import pandas as pd
 
 from .data import DATA_DIR, WARMUP_DAYS, get_prices
 from .ranking import rank_strategies
+from .robust import analyze, oos_summary
 
 WATCHLIST_FILE = DATA_DIR / "watchlist.json"
 SCAN_FILE = DATA_DIR / "scan.json"
@@ -211,17 +212,43 @@ def save_watchlist(groups: list[dict[str, Any]]) -> None:
     WATCHLIST_FILE.write_text(json.dumps({"groups": groups}, indent=1, ensure_ascii=False), encoding="utf-8")
 
 
+def _retry(fn, tries: int = 20):
+    """Windows weigert een bestand te vervangen of te lezen zolang een ander verzoek het open heeft: even opnieuw."""
+    for i in range(tries):
+        try:
+            return fn()
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.05 * (i + 1))
+
+
 def load_scan() -> dict[str, Any]:
     if SCAN_FILE.exists():
-        return json.loads(SCAN_FILE.read_text(encoding="utf-8"))
+        return json.loads(_retry(lambda: SCAN_FILE.read_text(encoding="utf-8")))
     return {"results": {}, "settings": None, "finished": None}
+
+
+_cache: dict[str, Any] = {"key": None, "scan": None}
+
+
+def scan_cached() -> dict[str, Any]:
+    """Alleen-lezen versie van load_scan: het bestand pas opnieuw inlezen als het veranderd is."""
+    try:
+        st = SCAN_FILE.stat()
+        key = (str(SCAN_FILE), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key is None or key != _cache["key"]:
+        _cache["scan"], _cache["key"] = load_scan(), key
+    return _cache["scan"]
 
 
 def _save_scan(scan: dict[str, Any]) -> None:
     DATA_DIR.mkdir(exist_ok=True)
     tmp = SCAN_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(scan, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, SCAN_FILE)
+    _retry(lambda: os.replace(tmp, SCAN_FILE))
 
 
 # --------------------------------------------------------------------------- één ticker scannen
@@ -323,8 +350,11 @@ def scan_one(yahoo: str, periods: dict[str, Any] | str, fee_bps: float, source: 
     if isinstance(periods, str):
         periods = {periods[:4]: periods}
     first = min(_period(v)[0] for v in periods.values())
+    full = len(periods) > 1  # volledige scan: ook houdbaarheid en beste strategie per maand
+    if full:
+        first = min(first, (date.today() - pd.DateOffset(years=3)).date().isoformat())
     prices = get_prices(yahoo, source, first, None, warmup=True)
-    out: dict[str, Any] = {"periods": {}}
+    out: dict[str, Any] = {"periods": {}, "returns": {}}
     for key, v in periods.items():
         start, end = _period(v)
         try:
@@ -335,11 +365,19 @@ def scan_one(yahoo: str, periods: dict[str, Any] | str, fee_bps: float, source: 
                 raise ValueError("Geen koersen in deze periode")
             rank = rank_strategies(p, start, fee_bps=fee_bps)
             out["periods"][key] = summarize(rank, p[p.index >= start]) | {"start": start, "end": end}
+            # Rendement van elke strategie (voor de vergelijking over alle tickers; niet naar de pagina gestuurd).
+            out["returns"][key] = {x["strategy"]: round(x["total_return"], 4) for x in rank["results"]
+                                   if x["category"] != "benchmark"}
         except Exception as e:  # noqa: BLE001 - bv. geen koersen in deze periode
             out["periods"][key] = {"error": str(e)[:200], "start": start, "end": end}
     ok = [v for v in out["periods"].values() if "error" not in v]
     if not ok:
         raise ValueError(next(iter(out["periods"].values()))["error"])
+    if full:
+        try:
+            out |= analyze(prices, fee_bps)
+        except Exception as e:  # noqa: BLE001
+            out["oos"] = {"error": str(e)[:200]}
     return ok[0] | out
 
 
@@ -376,7 +414,10 @@ class Scanner:
             old = scan["results"].get(yahoo)
             # Een scan van één periode (bv. een eigen periode) mag de andere periodes niet wissen.
             if old and old.get("periods") and result.get("periods"):
-                result = result | {"periods": old["periods"] | result["periods"]}
+                # Houdbaarheid en maanden van de vorige scan houden als deze scan ze niet opnieuw berekende.
+                keep = {k: old[k] for k in ("oos", "monthly", "month_wins", "oos_returns") if k in old and k not in result}
+                result = keep | result | {"periods": old["periods"] | result["periods"],
+                                          "returns": (old.get("returns") or {}) | (result.get("returns") or {})}
             elif old and old.get("periods") and "error" in result:
                 result = old | {"error_last_scan": result["error"]}
                 self.state["errors"] += 1
@@ -454,13 +495,32 @@ STALL_SECONDS = int(os.getenv("SCAN_STALL_SECONDS", "300"))
 SCANNER = Scanner()
 
 
+HEAVY = ("returns", "monthly", "month_wins", "oos_returns")
+
+
+def _light(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Scanresultaat zonder de grote onderdelen (die haalt de pagina apart op per ticker)."""
+    if not result:
+        return result
+    out = {k: v for k, v in result.items() if k not in HEAVY}
+    if "oos" in out:
+        out["oos"] = oos_summary(out["oos"])
+    return out
+
+
+def ticker_detail(yahoo: str) -> dict[str, Any]:
+    """Houdbaarheid en beste strategie per maand voor één ticker (uit de laatste scan)."""
+    r = scan_cached()["results"].get(yahoo) or {}
+    return {"symbol": yahoo, "oos": r.get("oos"), "monthly": r.get("monthly"), "month_wins": r.get("month_wins")}
+
+
 def watchlist_view() -> dict[str, Any]:
-    scan = load_scan()
+    scan = scan_cached()
     groups = load_watchlist()
     out = []
     for g in groups:
         # Tickers zonder koersdata (indexen, futures, rentes) tonen we niet.
-        syms = [s | {"result": scan["results"].get(s["yahoo"])} for s in g["symbols"] if s.get("yahoo")]
+        syms = [s | {"result": _light(scan["results"].get(s["yahoo"]))} for s in g["symbols"] if s.get("yahoo")]
         if syms:
             out.append({"name": g["name"], "list": list_name(g), "symbols": syms})
     periods = [{"key": k, **v} for k, v in (default_periods() | scan.get("custom_periods", {})).items()]

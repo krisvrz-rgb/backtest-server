@@ -334,3 +334,30 @@ def test_schedule_settings_and_due(tmp_path, monkeypatch):
     assert not sc.due(cfg | {"last_run": "2026-10-23T22:30:05"}, fri)
     assert sc.next_run(cfg, datetime(2026, 10, 24, 12, 0)).startswith("2026-10-26T22:30")
     assert client.post("/api/schedule", json={"time": "25u"}).status_code == 422
+
+
+def test_out_of_sample_monthly_and_cross_ticker(tmp_path, monkeypatch):
+    import json
+    import app.watchlist as wl
+    periods = {"2022": "2022-01-01", "2024": "2024-01-01"}
+    res = {s: wl.scan_one(s, periods, 5, "synthetic") for s in ("AAA", "BBB")}
+    r = res["AAA"]
+    o = r["oos"]
+    assert o["train"]["end"] < o["test"]["start"] and 1 <= o["test_rank"] <= o["of"]
+    assert o["verdict"] in ("good", "mixed", "bad") and len(o["top5"]) == 5
+    assert len(r["monthly"]) == 24 and all(m["best_return"] >= m["top3"][-1]["return"] for m in r["monthly"])
+    assert set(r["returns"]) == set(periods) and "buy_and_hold" not in r["returns"]["2024"]
+
+    monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
+    monkeypatch.setattr(wl, "SCAN_FILE", tmp_path / "scan.json")
+    monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
+    wl.save_watchlist([{"name": "G", "list": "L", "symbols": [{"tv": "AAA", "yahoo": "AAA"}, {"tv": "BBB", "yahoo": "BBB"}]}])
+    (tmp_path / "scan.json").write_text(json.dumps({"results": res}))
+    view = client.get("/api/watchlist").json()["groups"][0]["symbols"][0]["result"]
+    assert "returns" not in view and "monthly" not in view and view["oos"]["strategy"] == o["strategy"]
+    d = client.get("/api/watchlist/detail", params={"symbol": "AAA"}).json()
+    assert len(d["monthly"]) == 24 and d["oos"]["top5"]
+    rob = client.get("/api/robust", params={"period": "2024", "list": "L"}).json()
+    assert rob["tickers"] == 2 and rob["oos_tickers"] == 2
+    top = rob["rows"][0]
+    assert top["tickers"] == 2 and 0 <= top["beats"] <= 2 and top["oos_n"] == 2

@@ -322,6 +322,36 @@ async function loadStrategies() {
   renderParams();
 }
 
+// Keuzelijst gerangschikt van beste naar slechtste voor het gekozen symbool en de gekozen periode.
+let orderKey = null;
+const rankKey = r => [r.symbol, r.source, r.start, r.end, r.fee_bps].join('|');
+function orderDropdown(d, key) {
+  orderKey = key;
+  const cur = $('strategy').value, seen = new Set();
+  const rows = d.results.filter(x => strategies.some(s => s.name === x.strategy));
+  const bh = d.buy_and_hold?.total_return;
+  const opts = rows.map((x, i) => {
+    seen.add(x.strategy);
+    const mark = x.strategy === 'buy_and_hold' ? ' ◆' : bh != null && x.total_return > bh ? ' ✓' : '';
+    return `<option value="${x.strategy}">${i + 1}. ${x.strategy}  ${pct(x.total_return, true)}${mark}</option>`;
+  }).join('');
+  const rest = strategies.filter(s => !seen.has(s.name)).map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+  const per = `${d.results[0]?.period?.start || ''} t/m ${d.results[0]?.period?.end || ''}`;
+  $('strategy').innerHTML = `<optgroup label="Van beste naar slechtste · ${per} · ✓ = beter dan buy & hold">${opts}</optgroup>` +
+    (rest ? `<optgroup label="Overige">${rest}</optgroup>` : '');
+  $('strategy').value = cur;
+}
+async function refreshOrder() {
+  const r = request(), key = rankKey(r);
+  if (key === orderKey) return;
+  orderKey = key;  // niet dubbel opvragen terwijl het loopt
+  try {
+    const d = await (await post('/rank', { symbol: r.symbol, source: r.source, start: r.start, end: r.end,
+      initial_capital: r.initial_capital, fee_bps: r.fee_bps })).json();
+    if (rankKey(request()) === key) orderDropdown(d, key);
+  } catch { orderKey = null; }
+}
+
 function renderParams() {
   const s = strategies.find(x => x.name === $('strategy').value);
   $('strategy-desc').textContent = s.description;
@@ -585,14 +615,14 @@ $('tabs').addEventListener('click', e => {
   requestAnimationFrame(() => charts.slice(1).filter(c => !c._pane).forEach(c => c.timeScale().fitContent()));
 });
 
-$('strategy').addEventListener('change', renderParams);
+$('strategy').addEventListener('change', () => { renderParams(); $('form').requestSubmit(); });
 
 let view = 'bt';  // wat laatst getoond is, zodat een snelknop voor de periode dat opnieuw draait
 
 $('form').addEventListener('submit', async e => {
   e.preventDefault(); view = 'bt';
   $('error').textContent = ''; $('run').disabled = true; $('run').textContent = 'Bezig...';
-  try { render(await (await post('/backtest', request())).json()); }
+  try { render(await (await post('/backtest', request())).json()); refreshOrder(); }
   catch (err) { $('error').textContent = err.message; }
   finally { $('run').disabled = false; $('run').textContent = 'Backtest draaien'; }
 });
@@ -722,6 +752,7 @@ async function runRank() {
     rankData = await (await post('/rank', { symbol: r.symbol, source: r.source, start: r.start, end: r.end,
       initial_capital: r.initial_capital, fee_bps: r.fee_bps })).json();
     rankCats = new Set();
+    orderDropdown(rankData, rankKey(r));
     $('empty').classList.add('hidden'); $('rank').classList.remove('hidden');
     renderRank();
     $('rank').scrollIntoView({ behavior: 'smooth', block: 'start' });
