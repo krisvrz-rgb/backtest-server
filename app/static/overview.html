@@ -141,6 +141,8 @@ const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, m
 const pct = (v, sign) => v == null ? '–' : (sign && v > 0 ? '+' : '') + nl(v * 100, Math.abs(v) >= 10 ? 0 : 1) + '%';
 const pp = v => v == null ? '–' : (v > 0 ? '+' : '') + nl(v * 100, Math.abs(v) >= 10 ? 0 : 1) + ' pp';
 const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const STAKE = 10000;
+const eur = ret => ret == null ? '–' : '€' + Math.round(STAKE * (1 + ret)).toLocaleString('nl-BE');
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let data = null, PERIODS = [], sortKey = 'tv', sortAsc = true, collapsed = new Set(), expanded = new Set(), poll = null;
 try { collapsed = new Set(JSON.parse(localStorage.getItem('ov-collapsed') || '[]')); } catch {}
@@ -215,7 +217,8 @@ function bestCell(s, f) {
     : `<small>geen open buy${b.last_buy_signal ? ' · laatste buy ' + b.last_buy_signal : ''}</small>`;
   return `<td class="best"><a class="nm" style="color:inherit;text-decoration:none" href="${toolLink(s, f, b.strategy)}" onclick="event.stopPropagation()">${esc(b.strategy)}</a> ` +
     `<span class="${cls(b.total_return)}">${pct(b.total_return, true)}</span> · ` +
-    `<span class="${cls(b.vs_bh)}" title="Verschil met buy &amp; hold">${pp(b.vs_bh)} t.o.v. B&amp;H</span>${open}</td>`;
+    `<span class="${cls(b.vs_bh)}" title="Verschil met buy &amp; hold">${pp(b.vs_bh)} t.o.v. B&amp;H</span>` +
+    `<small>€10.000 → <b class="${cls(b.total_return)}">${eur(b.total_return)}</b> · buy &amp; hold ${eur(r.buy_and_hold_return)}</small>${open}</td>`;
 }
 
 function row(s, g) {
