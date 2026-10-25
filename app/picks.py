@@ -9,17 +9,23 @@ strategie die op dit moment een open koopsignaal heeft en geven punten voor bewi
 * het signaal is vers (je stapt niet pas in als de beweging al gebeurd is);
 * de trade loopt nog niet te ver weg van de instapkoers.
 
-De strategie met de meeste punten bepaalt de score van de ticker. Hoeveel andere goede strategieën
+Daarbovenop een fijnere verdeling: de voorsprong op buy & hold in het testjaar en over 2 jaar, en het
+percentage winnende trades. De strategie met de meeste punten bepaalt de score van de ticker. Hoeveel andere goede strategieën
 tegelijk een open koopsignaal hebben, staat erbij als "eensgezindheid".
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from .robust import cross_ticker
 from .strategies import CATEGORIES, STRATEGIES
 
 PERIOD_POINTS = {"2j": 1.5, "1j": 1.0, "6m": 0.5}
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
 
 
 def _beats(r: dict[str, Any], period: str, strategy: str) -> tuple[bool | None, float | None, float | None]:
@@ -79,6 +85,15 @@ def score_strategy(r: dict[str, Any], name: str, sig: dict[str, Any], robust: di
     if (sig.get("trades") or 0) < 3:
         pts -= 0.5
         why.append(("mixed", "weinig trades in de test"))
+    # Fijnere verdeling (zodat niet tien tickers gelijk op het maximum staan): hoe groot de voorsprong op buy & hold
+    # was in het testjaar en over 2 jaar, en hoe vaak de trades winst gaven.
+    if oret and None not in oret and o.get("bh_test") is not None:
+        pts += _clamp(oret[1] - o["bh_test"], -0.5, 1.0)
+    r2, bh2 = periods["2j"]["return"], periods["2j"]["bh"]
+    if r2 is not None and bh2 is not None and r2 > -1 and bh2 > -1:
+        pts += 0.5 * _clamp(math.log((1 + r2) / (1 + bh2)), -1.0, 1.0)
+    if sig.get("win_rate") is not None:
+        pts += sig["win_rate"] - 0.5
     cls = STRATEGIES.get(name)
     return {"strategy": name, "category_label": CATEGORIES.get(cls.category, "") if cls else "", "score": round(pts, 2),
             "why": [{"kind": k, "text": t} for k, t in why], "signal": sig, "periods": periods,
