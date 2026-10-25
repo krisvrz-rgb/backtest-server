@@ -141,6 +141,17 @@
     </select>
     <label for="strategy">Strategie</label>
     <select id="strategy"></select>
+    <details class="explain" id="score-help"><summary>ⓘ Wat betekent de score in de lijst?</summary>
+      <p>De score telt bewijs dat de strategie op dit aandeel werkt, altijd over vaste stukken van de laatste 3 jaar (niet de gekozen periode):
+        <b>houdt stand</b> (verslaat buy &amp; hold in de leerperiode én in het laatste jaar dat ze niet zag) tot 3,
+        <b>beter dan buy &amp; hold</b> over 2 jaar 1,5 · 1 jaar 1 · 6 maanden 0,5,
+        <b>werkt op minstens de helft van de tickers</b> in je lijst 1,5,
+        <b>vers koopsignaal</b> (≤ 3 dagen) 1,5 of (≤ 10 dagen) 0,75,
+        plus tot ±2 voor de voorsprong op buy &amp; hold en het percentage winnende trades.
+        Minpunten: verlies over 2 jaar −2, koers al &gt; 25% boven de instap −1, minder dan 3 trades −0,5.</p>
+      <p>Maximum ongeveer 11. <b>8+</b> sterk op alle punten · <b>5–7</b> goed met een zwak punt · <b>onder 3</b> weinig bewijs.
+        Blauw = het koopsignaal staat nu open. Geen score = ticker nog niet gescand in Watchlist-details.</p>
+    </details>
     <div class="desc" id="strategy-desc"></div>
     <div id="params"></div>
     <div class="row">
