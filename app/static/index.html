@@ -55,6 +55,16 @@
                          pointer-events: none; background: color-mix(in srgb, var(--panel) 80%, transparent); padding: 1px 4px; border-radius: 3px; }
   .ind-pane .ind-title b { color: var(--text); font-weight: 600; margin-right: 6px; }
   .ind-pane .ind-chart { height: 150px; }
+  .ind-info { font-size: 12px; color: var(--muted); padding: 4px 12px 8px; line-height: 1.45; }
+  .ind-info b { color: var(--text); font-weight: 600; }
+  #ind-explain { padding: 6px 12px 10px; border-top: 1px solid var(--border); }
+  #ind-explain:empty { display: none; }
+  #ind-explain summary { cursor: pointer; font-size: 12px; color: var(--accent); }
+  #ind-explain p { margin: 6px 0; font-size: 12px; color: var(--muted); }
+  .explain { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .explain p { margin: 4px 0; }
+  .explain b { color: var(--text); font-weight: 600; }
+  .explain details summary { cursor: pointer; color: var(--accent); margin-top: 4px; }
   .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); padding: 0 10px; overflow-x: auto; }
   .tab { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 12px; color: var(--muted); }
   .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
@@ -252,6 +262,7 @@
       <div class="ind-legend" id="ind-legend"></div>
       <div id="price-chart"></div>
       <div id="ind-panes"></div>
+      <div id="ind-explain"></div>
 
       <nav class="tabs" id="tabs">
         <button class="tab active" data-tab="summary">Overzicht</button>
@@ -353,9 +364,18 @@ async function refreshOrder() {
   } catch { orderKey = null; }
 }
 
+// Uitleg bij een strategie: hoe ze werkt, waar ze goed in is, haar zwakke punt en de indicatoren die ze gebruikt.
+function explainHtml(s) {
+  const e = s.explain; if (!e) return '';
+  return `<div class="explain">` + (e.how ? `<p><b>Hoe:</b> ${esc(e.how)}</p>` : '') +
+    (e.suits ? `<p><b>Werkt het best:</b> ${esc(e.suits)}</p>` : '') + (e.weak ? `<p><b>Zwak punt:</b> ${esc(e.weak)}</p>` : '') +
+    (e.indicators.length ? `<details><summary>Gebruikte indicatoren (${e.indicators.map(i => esc(i.name)).join(', ')})</summary>` +
+      e.indicators.map(i => `<p><b>${esc(i.name)}</b>: ${esc(i.text)}</p>`).join('') + '</details>' : '') + '</div>';
+}
+
 function renderParams() {
   const s = strategies.find(x => x.name === $('strategy').value);
-  $('strategy-desc').textContent = s.description;
+  $('strategy-desc').innerHTML = esc(s.description) + explainHtml(s);
   const entries = Object.entries(s.params);
   $('params').innerHTML = entries.length ? '<div class="row">' + entries.map(([k, v]) =>
     `<div><label for="p_${k}">${k}</label><input id="p_${k}" data-param="${k}" type="number" step="any" value="${v}"></div>`
@@ -414,6 +434,13 @@ function renderIndicators(pc, d) {
     legend.push(`<span><i style="background:${color}"></i>${esc(o.label)}</span>`);
   });
   $('ind-legend').innerHTML = legend.join('');
+  // Uitleg bij de lijnen op de koersgrafiek (één keer per soort lijn).
+  const seen = new Set(), lines = [];
+  ind.overlays.forEach(o => {
+    const k = o.label.split(' ')[0];
+    if (o.info && !seen.has(k)) { seen.add(k); lines.push(`<p><b>${esc(k)}</b>: ${esc(o.info)}</p>`); }
+  });
+  $('ind-explain').innerHTML = lines.length ? `<details><summary>Wat betekenen de lijnen op de koersgrafiek?</summary>${lines.join('')}</details>` : '';
   const host = $('ind-panes');
   host.innerHTML = '';
   const blank = d.prices.map(p => ({ time: p.date }));   // zelfde bars als de koers, zodat de tijdassen gelijk lopen
@@ -425,7 +452,8 @@ function renderIndicators(pc, d) {
     const names = pane.series.map((s, i) =>
       `<span style="color:${IND_COLORS[i % IND_COLORS.length]}">${esc(s.label)}</span>`).join(' · ');
     const lv = pane.levels.map(l => (l.label ? `${esc(l.label)} ` : '') + num(l.value)).join(', ');
-    wrap.innerHTML = `<div class="ind-title"><b>${esc(pane.title)}</b>${names}${lv ? ' · niveaus ' + lv : ''}</div><div class="ind-chart"></div>`;
+    wrap.innerHTML = `<div class="ind-title"><b>${esc(pane.title)}</b>${names}${lv ? ' · niveaus ' + lv : ''}</div><div class="ind-chart"></div>` +
+      (pane.info ? `<div class="ind-info"><b>Wat is dit?</b> ${esc(pane.info)}</div>` : '');
     host.appendChild(wrap);
     const c = baseChart(wrap.querySelector('.ind-chart'), { timeScale: { borderColor: css('--border'), minBarSpacing: 0.05, visible: false } });
     c._pane = true;
@@ -789,7 +817,8 @@ function renderRank() {
       return `<tr data-name="${x.strategy}" class="${isBh ? 'bh' : ''}"><td>${isBh ? '–' : rank}</td>` +
         `<td class="name">${x.strategy} <span class="badge">${x.category_label}</span>` +
         (x.beats_bh_risk && !isBh ? ' <span class="badge risk" title="Hogere Sharpe en kleinere drawdown dan buy &amp; hold">beter risico</span>' : '') +
-        `<small>${x.description}</small></td>` +
+        `<small>${x.description}${(() => { const e = strategies.find(s => s.name === x.strategy)?.explain;
+          return e && e.weak ? `<br>Werkt het best: ${esc(e.suits)} · Zwak punt: ${esc(e.weak)}` : ''; })()}</small></td>` +
         `<td class="${cls(x.total_return)}">${pct(x.total_return, true)}</td>` +
         `<td>${buyCell(x)}</td>` +
         `<td class="${cls(x.net_profit)}">${money(x.net_profit, true)}</td>` +

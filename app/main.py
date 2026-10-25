@@ -26,6 +26,7 @@ from .robust import cross_ticker
 from .picks import picks
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
 from .strategies.plot import indicators
+from .strategies.explain import explain_strategy, indicator_info
 
 app = FastAPI(title="Backtest Server", version="0.1.0",
               description="Backtest handelsstrategieën op aandelen en exporteer ze naar TradingView Pine Script.")
@@ -115,7 +116,13 @@ def _run(req: BacktestRequest, prices: pd.DataFrame | None = None) -> dict:
                          for d, r in zip(prices.index, prices.itertuples())]
         try:
             entry, exit_ = strat.rules()
-            out["indicators"] = indicators(entry, exit_, full_prices, prices.index)
+            ind = indicators(entry, exit_, full_prices, prices.index)
+            # Uitleg in gewone taal bij elk indicatorvenster en elke lijn op de koersgrafiek.
+            for pane in ind["panes"]:
+                pane["info"] = indicator_info(pane["title"])
+            for ov in ind["overlays"]:
+                ov["info"] = indicator_info(ov["label"])
+            out["indicators"] = ind
         except Exception:  # tekenen mag een backtest nooit doen mislukken
             out["indicators"] = {"overlays": [], "panes": []}
     return out
@@ -154,7 +161,8 @@ def health():
 @app.get("/strategies")
 def list_strategies():
     return [{"name": n, "category": c.category, "category_label": CATEGORIES.get(c.category, c.category),
-             "description": c.description, "params": c.params} for n, c in STRATEGIES.items()]
+             "description": c.description, "params": c.params, "explain": explain_strategy(n, c.category)}
+            for n, c in STRATEGIES.items()]
 
 
 @app.get("/categories")

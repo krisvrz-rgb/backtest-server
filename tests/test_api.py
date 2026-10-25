@@ -385,3 +385,13 @@ def test_picks(tmp_path, monkeypatch):
         assert r["yahoo"] in res and sig["entry"] > 0 and sig["bars"] >= 0 and r["open_count"] >= 1
         assert r["best"]["strategy"] in res[r["yahoo"]]["open_now"]
     assert client.get("/aanraders").status_code == 200
+
+
+def test_explanations():
+    strats = {s["name"]: s for s in client.get("/strategies").json()}
+    e = strats["cci_reversion"]["explain"]
+    assert e["how"] and e["suits"] and e["weak"] and [i["name"] for i in e["indicators"]] == ["CCI"]
+    assert all(s["explain"]["how"] for s in strats.values())
+    d = client.post("/backtest", json={"symbol": "AAA", "source": "synthetic", "strategy": "cci_reversion",
+                                       "start": "2022-01-01", "include_prices": True}).json()
+    assert "CCI" in d["indicators"]["panes"][0]["info"]
