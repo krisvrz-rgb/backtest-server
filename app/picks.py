@@ -82,7 +82,7 @@ def score_strategy(r: dict[str, Any], name: str, sig: dict[str, Any], robust: di
     if tr is not None and tr > 0.25:
         pts -= 1
         why.append(("mixed", f"al {round(tr * 100)}% gestegen sinds het signaal"))
-    if (sig.get("trades") or 0) < 3:
+    if "trades" in sig and (sig.get("trades") or 0) < 3:
         pts -= 0.5
         why.append(("mixed", "weinig trades in de test"))
     # Fijnere verdeling (zodat niet tien tickers gelijk op het maximum staan): hoe groot de voorsprong op buy & hold
@@ -125,3 +125,21 @@ def picks(results: dict[str, dict[str, Any]], tickers: list[dict[str, Any]], min
         })
     rows.sort(key=lambda x: (-x["score"], -x["agree"]))
     return {"rows": rows, "tickers": len(tickers), "missing": missing}
+
+
+def strategy_scores(results: dict[str, dict[str, Any]], yahoo: str, peers: list[str]) -> dict[str, Any]:
+    """Score van elke strategie voor één ticker (zelfde puntentelling als de aanraders).
+
+    Strategieën zonder open koopsignaal krijgen geen punten voor een vers signaal; zo is de score vergelijkbaar
+    met die op de pagina Aanraders voor de strategieën die wel open staan."""
+    r = results.get(yahoo) or {}
+    if not r.get("returns"):
+        return {"symbol": yahoo, "scores": {}, "scanned": False}
+    robust = {x["strategy"]: x for x in cross_ticker(results, peers, "2j")["rows"]}
+    open_now = r.get("open_now") or {}
+    names = set((r.get("returns") or {}).get("2j") or {}) | set(open_now)
+    scores = {}
+    for n in names:
+        x = score_strategy(r, n, open_now.get(n, {}), robust)
+        scores[n] = {"score": x["score"], "open": n in open_now}
+    return {"symbol": yahoo, "scores": scores, "scanned": True}

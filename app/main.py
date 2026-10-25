@@ -23,7 +23,7 @@ from .watchlist import (PORTFOLIO_LIST, default_periods, PORTFOLIO_URL, SCANNER,
                         list_name, load_watchlist, parse_tradingview, replace_lists, save_watchlist, tv_to_yahoo,
                         scan_cached, ticker_detail, watchlist_view)
 from .robust import cross_ticker
-from .picks import picks
+from .picks import picks, strategy_scores
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
 from .strategies.plot import indicators
 from .strategies.explain import explain_strategy, indicator_info
@@ -324,6 +324,16 @@ def get_picks(list_: str | None = Query(None, alias="list"), group: str | None =
                 seen.add(s["yahoo"])
                 tickers.append({"yahoo": s["yahoo"], "tv": s["tv"], "group": g["name"], "list": list_name(g)})
     return picks(scan_cached()["results"], tickers, min_score)
+
+
+@app.get("/api/scores")
+def get_scores(symbol: str):
+    """Score per strategie voor één ticker uit de laatste scan (vergeleken met de andere tickers in dezelfde lijsten)."""
+    scan = scan_cached()["results"]
+    lists = {list_name(g) for g in load_watchlist() if any(s.get("yahoo") == symbol for s in g["symbols"])}
+    peers = list(dict.fromkeys(s["yahoo"] for g in load_watchlist() if list_name(g) in lists
+                               for s in g["symbols"] if s.get("yahoo"))) or [symbol]
+    return strategy_scores(scan, symbol, peers)
 
 
 @app.get("/api/robust")

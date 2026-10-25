@@ -395,3 +395,18 @@ def test_explanations():
     d = client.post("/backtest", json={"symbol": "AAA", "source": "synthetic", "strategy": "cci_reversion",
                                        "start": "2022-01-01", "include_prices": True}).json()
     assert "CCI" in d["indicators"]["panes"][0]["info"]
+
+
+def test_strategy_scores(tmp_path, monkeypatch):
+    import json
+    import app.watchlist as wl
+    res = {"AAA": wl.scan_one("AAA", {"2j": "2023-01-01", "1j": "2024-01-01"}, 5, "synthetic")}
+    monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
+    monkeypatch.setattr(wl, "SCAN_FILE", tmp_path / "scan.json")
+    monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
+    wl.save_watchlist([{"name": "G", "list": "L", "symbols": [{"tv": "AAA", "yahoo": "AAA"}]}])
+    (tmp_path / "scan.json").write_text(json.dumps({"results": res}))
+    d = client.get("/api/scores", params={"symbol": "AAA"}).json()
+    assert d["scanned"] and len(d["scores"]) >= 150
+    assert {n for n, v in d["scores"].items() if v["open"]} == set(res["AAA"]["open_now"])
+    assert client.get("/api/scores", params={"symbol": "ZZZ"}).json()["scores"] == {}

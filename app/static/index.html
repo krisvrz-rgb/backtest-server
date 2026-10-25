@@ -337,7 +337,16 @@ async function loadStrategies() {
 // Keuzelijst gerangschikt van beste naar slechtste voor het gekozen symbool en de gekozen periode.
 let orderKey = null;
 const rankKey = r => [r.symbol, r.source, r.start, r.end, r.fee_bps].join('|');
-function orderDropdown(d, key) {
+// Score per strategie (zelfde puntentelling als Aanraders), uit de laatste watchlist-scan van dit symbool.
+const scoreCache = {};
+async function loadScores(symbol) {
+  if (!(symbol in scoreCache)) {
+    try { scoreCache[symbol] = (await (await fetch('/api/scores?symbol=' + encodeURIComponent(symbol))).json()).scores || {}; }
+    catch { scoreCache[symbol] = {}; }
+  }
+  return scoreCache[symbol];
+}
+function orderDropdown(d, key, scores = {}) {
   orderKey = key;
   const cur = $('strategy').value, seen = new Set();
   const rows = d.results.filter(x => strategies.some(s => s.name === x.strategy));
@@ -345,11 +354,15 @@ function orderDropdown(d, key) {
   const opts = rows.map((x, i) => {
     seen.add(x.strategy);
     const mark = x.strategy === 'buy_and_hold' ? ' ◆' : bh != null && x.total_return > bh ? ' ✓' : '';
-    return `<option value="${x.strategy}">${i + 1}. ${x.strategy}  ${pct(x.total_return, true)}${mark}</option>`;
+    const sc = scores[x.strategy]?.score;
+    // Open koopsignaal: blauw, zoals de open trade (B) op de grafiek.
+    const style = x.signal_open ? ` style="color:${getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#3b82f6'};font-weight:600"` : '';
+    return `<option value="${x.strategy}"${style}>${i + 1}. ${x.strategy}  ${pct(x.total_return, true)}${mark}` +
+      `${sc != null ? ' · score ' + nl(sc, 1) : ''}${x.signal_open ? ' · OPEN' : ''}</option>`;
   }).join('');
   const rest = strategies.filter(s => !seen.has(s.name)).map(s => `<option value="${s.name}">${s.name}</option>`).join('');
   const per = `${d.results[0]?.period?.start || ''} t/m ${d.results[0]?.period?.end || ''}`;
-  $('strategy').innerHTML = `<optgroup label="Van beste naar slechtste · ${per} · ✓ = beter dan buy & hold">${opts}</optgroup>` +
+  $('strategy').innerHTML = `<optgroup label="Van beste naar slechtste · ${per} · ✓ = beter dan buy & hold · blauw = koopsignaal staat open">${opts}</optgroup>` +
     (rest ? `<optgroup label="Overige">${rest}</optgroup>` : '');
   $('strategy').value = cur;
 }
@@ -360,7 +373,8 @@ async function refreshOrder() {
   try {
     const d = await (await post('/rank', { symbol: r.symbol, source: r.source, start: r.start, end: r.end,
       initial_capital: r.initial_capital, fee_bps: r.fee_bps })).json();
-    if (rankKey(request()) === key) orderDropdown(d, key);
+    const scores = await loadScores(r.symbol);
+    if (rankKey(request()) === key) orderDropdown(d, key, scores);
   } catch { orderKey = null; }
 }
 
@@ -782,6 +796,7 @@ async function runRank() {
       initial_capital: r.initial_capital, fee_bps: r.fee_bps })).json();
     rankCats = new Set();
     orderDropdown(rankData, rankKey(r));
+    loadScores(r.symbol).then(sc => { if (rankKey(request()) === rankKey(r)) orderDropdown(rankData, rankKey(r), sc); });
     $('empty').classList.add('hidden'); $('rank').classList.remove('hidden');
     renderRank();
     $('rank').scrollIntoView({ behavior: 'smooth', block: 'start' });
