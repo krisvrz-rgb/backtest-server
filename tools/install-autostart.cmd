@@ -7,7 +7,8 @@ rem    en start een gestopte server opnieuw met zijn eigen startcommando.
 if not exist C:\watchdog mkdir C:\watchdog
 copy /Y "%~dp0watchdog.ps1" C:\watchdog\watchdog.ps1 >nul
 
-schtasks /create /tn "Backtest Server" /sc onlogon /tr "C:\backtest-server\start-backtest-server.cmd" /rl limited /f
+rem De taak "Backtest Server" bestaat al (aangemaakt per gebruiker, zonder adminrechten): dan niet opnieuw maken.
+schtasks /query /tn "Backtest Server" >nul 2>&1 || schtasks /create /tn "Backtest Server" /sc onlogon /tr "C:\backtest-server\start-backtest-server.cmd" /rl limited /f
 schtasks /create /tn "Server Watchdog" /sc minute /mo 2 /tr "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\watchdog\watchdog.ps1" /rl limited /f
 
 echo.
