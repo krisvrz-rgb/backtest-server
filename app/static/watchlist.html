@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watchlist · Backtest Server</title>
+<style>
+  :root {
+    --bg: #0d0f13; --panel: #151820; --panel-2: #1b1f29; --text: #e6e8eb; --muted: #8b93a1; --border: #262b36;
+    --accent: #3b82f6; --up: #22c55e; --down: #ef4444; --warn: #f59e0b;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f7f8fa; --text: #1b1f24; --muted: #6b7280; --border: #e3e6ea;
+      --accent: #2563eb; --up: #16a34a; --down: #dc2626; --warn: #d97706;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; display: flex; align-items: baseline; gap: 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header a { color: var(--muted); font-size: 13px; }
+  header a.active { color: var(--text); font-weight: 600; text-decoration: none; }
+  main { padding: 16px 20px 40px; max-width: 1600px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 700px) { main { padding: 12px 16px 40px; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; padding: 12px 14px; }
+  .toolbar .field { display: grid; gap: 4px; }
+  label { font-size: 12px; color: var(--muted); }
+  input, select, textarea { padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-2);
+                            color: var(--text); font: inherit; min-width: 0; }
+  textarea { width: 100%; min-height: 110px; font-family: ui-monospace, monospace; font-size: 12px; }
+  button { font: inherit; border-radius: 5px; padding: 7px 12px; cursor: pointer; border: 1px solid var(--border);
+           background: var(--panel-2); color: var(--text); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .grow { flex: 1; }
+  .progress { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .progress div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+  .status { font-size: 12px; color: var(--muted); padding: 0 14px 12px; }
+  .hidden { display: none !important; }
+  .import { padding: 12px 14px; display: grid; gap: 8px; border-top: 1px solid var(--border); }
+  .desc { font-size: 12px; color: var(--muted); }
+  .error { color: var(--down); }
+
+  .scroll { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align: right; }
+  th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--panel); cursor: pointer; user-select: none; }
+  th.left, td.left { text-align: left; }
+  th.sorted::after { content: " ↓"; color: var(--accent); }
+  th.sorted.asc::after { content: " ↑"; }
+  tr.group td { background: var(--panel-2); font-weight: 600; cursor: pointer; text-align: left; letter-spacing: .03em; }
+  tr.group td .count { float: right; color: var(--muted); font-weight: 400; }
+  tr.group td .caret { display: inline-block; width: 14px; color: var(--muted); }
+  tr.row { cursor: pointer; }
+  tr.row:hover td { background: var(--panel-2); }
+  td .sym { font-weight: 600; }
+  td small { display: block; color: var(--muted); font-size: 11px; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .badge { font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; color: var(--muted); }
+  .badge.open { color: var(--up); border-color: var(--up); font-weight: 600; }
+  .badge.new { color: #fff; background: var(--up); border-color: var(--up); font-weight: 600; }
+  .bar { display: inline-block; width: 60px; height: 6px; background: var(--panel-2); border-radius: 3px; vertical-align: middle; margin-left: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--up); }
+  .warn { color: var(--warn); }
+  .x { border: none; background: none; color: var(--muted); padding: 2px 6px; }
+  .x:hover { color: var(--down); }
+  a.lnk { color: var(--accent); text-decoration: none; font-size: 12px; margin-left: 6px; }
+  tr.row.opened td { background: var(--panel-2); }
+  tr.detail > td { padding: 0 12px 12px; background: var(--panel-2); white-space: normal; text-align: left; }
+  .detail-box { position: sticky; left: 12px; }
+  .detail-bar { display: flex; gap: 8px; align-items: center; padding: 8px 0 0; flex-wrap: wrap; }
+  .detail-bar b { margin-right: auto; }
+  .detail-bar button, .detail-bar a { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 5px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); text-decoration: none; cursor: pointer; }
+  .detail-bar button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .badge.good { color: var(--up); border-color: var(--up); }
+  .badge.bad { color: var(--down); border-color: var(--down); }
+  .badge.mixed { color: var(--warn, #d97706); border-color: var(--warn, #d97706); }
+  .info { padding: 12px 0; }
+  .info table { width: auto; min-width: 60%; }
+  .info th { position: static; cursor: default; }
+  .info p { margin: 6px 0 10px; max-width: 900px; }
+  .mini { display: inline-block; width: 70px; height: 6px; background: var(--panel); border-radius: 3px; vertical-align: middle; margin-left: 6px; overflow: hidden; }
+  .mini i { display: block; height: 100%; background: var(--up); }
+  #robust .head { display: flex; gap: 12px; align-items: baseline; padding: 12px 14px 0; flex-wrap: wrap; }
+  #robust .head b { font-size: 15px; }
+  #robust table th { position: static; }
+  #robust tbody tr:nth-child(n+31) { display: none; }
+  #robust.all tbody tr { display: table-row !important; }
+  .detail iframe { display: block; width: 100%; height: 900px; border: 0; background: var(--bg); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Backtest Server</h1>
+  <a href="/">Overzicht</a>
+  <a href="/tool">Backtest</a>
+  <a href="/watchlist" class="active">Watchlist-details</a>
+  <a href="/aanraders">Aanraders</a>
+  <a href="/docs">API-documentatie</a>
+</header>
+<main>
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label for="list-filter">Lijst</label><select id="list-filter"></select></div>
+      <div class="field"><label for="start">Testperiode</label><select id="start"></select></div>
+      <div class="field hidden" id="custom-wrap"><label for="c-start">Van – tot (leeg = vandaag)</label>
+        <div style="display:flex;gap:6px"><input type="date" id="c-start"><input type="date" id="c-end"></div></div>
+      <div class="field"><label for="group-filter">Groep</label><select id="group-filter"><option value="">Alle groepen</option></select></div>
+      <button class="primary" id="scan" title="Standaardperiodes: alle periodes tegelijk. Eigen periode: alleen die periode.">Scan starten</button>
+      <button id="stop" class="hidden">Stoppen</button>
+      <div class="grow"></div>
+      <div class="field"><label for="search">Zoeken</label><input id="search" placeholder="ticker…"></div>
+      <div class="field"><label for="only-open">Filter</label>
+        <select id="only-open">
+          <option value="">Alles tonen</option>
+          <option value="open">Alleen open buy-signalen</option>
+          <option value="new">Buy-signaal ≤ 5 dagen</option>
+          <option value="beat">Minstens 1 strategie beter dan B&amp;H</option>
+          <option value="beatprofit">Beter dan B&amp;H én winstgevend</option>
+          <option value="oos">Beste strategie houdt stand</option>
+        </select>
+      </div>
+      <button id="import-pf" title="Groepen GEZIN, KRISTOF, FREYA, CÉZANNE en WATCHLIST overnemen van de portfolio server">Portfolio server overnemen</button>
+      <button id="import-tv" title="Alle TradingView-watchlists overnemen: Watchlist, M, Legacy en de gekleurde vlaglijsten">TradingView-lijsten overnemen</button>
+      <button id="toggle-import">Plakken</button>
+      <button id="robust-btn" title="Welke strategieën werken op veel tickers van deze lijst tegelijk?">Strategieën over alle tickers</button>
+    </div>
+    <div class="status" id="status">Nog niet gescand.</div>
+    <div class="import hidden" id="import">
+      <div class="desc">Plak een TradingView-watchlist (in TradingView: watchlist-menu → <i>Lijst exporteren</i>, of kopieer de tickers).
+        Secties (###NAAM) worden groepen. Eén ticker per regel mag ook.</div>
+      <textarea id="import-text" placeholder="###AANDELEN,NASDAQ:MU,NYSE:ANET,###CRYPTO,BITSTAMP:BTCUSD"></textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="import-mode"><option value="merge">Toevoegen aan huidige lijst</option><option value="replace">Huidige lijst vervangen</option></select>
+        <input id="import-group" value="WATCHLIST" title="Groep voor tickers zonder ###sectie" style="width:140px">
+        <button class="primary" id="do-import">Importeren</button>
+        <span class="desc" id="import-result"></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel hidden" id="robust">
+    <div class="head"><b>Strategieën over alle tickers</b><span class="desc" id="robust-sub"></span>
+      <div class="grow" style="flex:1"></div><button id="robust-all">Alles tonen</button><button id="robust-close">Sluiten</button></div>
+    <p class="desc" style="padding:0 14px">Hoe meer tickers een strategie wint, hoe kleiner de kans dat het toeval is.
+      <b>Houdbaar</b> = verslaat buy &amp; hold in de leerperiode (2 jaar) én in het jaar daarna dat ze niet zag.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th class="left" data-rsort="strategy">Strategie</th>
+        <th data-rsort="beat_share" title="Op hoeveel tickers de strategie buy &amp; hold verslaat in de gekozen periode">Beter dan B&amp;H</th>
+        <th data-rsort="median_return">Mediaan rendement</th><th data-rsort="avg_return">Gem. rendement</th>
+        <th data-rsort="avg_place" title="Gemiddelde plaats in de ranglijst per ticker: top 10% = meestal bij de besten">Gem. plaats</th>
+        <th data-rsort="top10" title="Aantal tickers waar ze bij de beste 10% hoort">In top 10%</th>
+        <th data-rsort="oos_share" title="Verslaat buy &amp; hold in de leerperiode én in het testjaar erna">Houdbaar</th></tr></thead>
+      <tbody id="robust-rows"></tbody></table></div>
+  </section>
+
+  <section class="panel">
+    <div class="scroll" id="main-scroll">
+      <table>
+        <thead><tr>
+          <th class="left" data-sort="tv">Symbool</th>
+          <th data-sort="last_close">Koers</th>
+          <th data-sort="change_pct">Wijz.%</th>
+          <th data-sort="beat_count">Beter dan B&amp;H</th>
+          <th class="left" data-sort="best_return">Beste strategie</th>
+          <th data-sort="best_value" title="Eindwaarde van €10.000 met de beste strategie">€10.000 → beste</th>
+          <th data-sort="bh_value" title="Eindwaarde van €10.000 met gewoon vasthouden">€10.000 → B&amp;H</th>
+          <th data-sort="diff_value" title="Eindwaarde met de beste strategie gedeeld door eindwaarde met vasthouden (1,80× = 80% meer geld)">Verschil</th>
+          <th data-sort="avg_return" title="Winst van alle strategieën samen op €10.000 elk, gedeeld door het aantal strategieën">Gem. winst / strategie</th>
+          <th class="left" data-sort="oos" title="Beste strategie gekozen op de 2 jaar ervoor, getest op het laatste jaar dat ze niet zag">Houdt de beste stand?</th>
+          <th class="left" data-sort="bars_since_buy">Laatste buy-signaal</th>
+          <th data-sort="open_signals">Open signalen</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+  <div class="desc">Per ticker worden alle strategieën met hun standaardinstellingen getest. <b>€10.000 →</b> = wat €10.000 aan het begin van de periode op het einde waard was, met de beste strategie en met gewoon vasthouden;
+    <b>Verschil</b> = €10.000 → beste gedeeld door €10.000 → B&amp;H (1,80× = 80% meer geld dan vasthouden).
+    <b>Gem. winst / strategie</b> = de winst van alle strategieën samen (elk met €10.000) gedeeld door het aantal strategieën: hoe goed strategieën in het algemeen werken op deze ticker. Daalde het aandeel zelf sterk, dan verslaat bijna elke strategie buy &amp; hold
+    (ze zitten deels in cash); kijk dan naar <b>ook winstgevend</b> en het rendement van de beste strategie. <b>Laatste buy-signaal</b> = het meest recente koopsignaal dat nog niet gevolgd werd door een verkoop,
+    bij de strategieën die buy &amp; hold verslaan. <b>Open signalen</b> = hoeveel van die strategieën nu in het aandeel zitten.
+    Klik op een ticker voor de backtest met de beste strategie.</div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let PERIODS = [];
+const per = () => $('start').value, pinfo = () => PERIODS.find(p => p.key === per()) || { start: '2020-01-01' };
+const startDate = () => pinfo().start + (pinfo().end ? '&end=' + pinfo().end : '');
+// Resultaat voor de gekozen testperiode (oudere scans hebben alleen één periode).
+const res = s => !s.result ? null : s.result.error ? s.result : (s.result.periods ? s.result.periods[per()] || null : s.result);
+// Verschil als verhouding: eindwaarde beste strategie / eindwaarde buy & hold.
+const ratio = (a, bh) => (1 + bh) > 0 ? (1 + a) / (1 + bh) : null;
+const times = v => v == null ? '–' : nl(v, 2) + '×';
+let data = null, sortKey = 'diff_value', sortAsc = false, collapsed = new Set(), poll = null;
+// Opengeklapte ticker: de volledige backtest staat dan in een kader onder de rij.
+let openKey = null, openView = 'bt';
+const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (v, sign) => v == null ? '–' : (sign && v > 0 ? '+' : '') + nl(v * 100, 1) + '%';
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const STAKE = 10000;
+const eur = ret => ret == null ? '–' : '€' + Math.round(STAKE * (1 + ret)).toLocaleString('nl-BE');
+const eurDiff = d => (d > 0 ? '+' : d < 0 ? '−' : '') + '€' + Math.abs(Math.round(STAKE * d)).toLocaleString('nl-BE');
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+try { collapsed = new Set(JSON.parse(localStorage.getItem('wl-collapsed') || '[]')); } catch {}
+
+function ago(bars, days) {
+  if (bars === 0) return 'vandaag';
+  if (bars === 1) return 'gisteren';
+  return days < 14 ? `${bars} dagen geleden` : days < 60 ? `${Math.round(days / 7)} weken geleden` : `${Math.round(days / 30)} mnd geleden`;
+}
+
+function value(s, key) {
+  const r = res(s);
+  if (key === 'tv') return s.tv;
+  if (!r || r.error) return null;
+  return { best_return: r.best?.total_return, best_value: r.best?.total_return, bh_value: r.buy_and_hold_return,
+           diff_value: r.best ? ratio(r.best.total_return, r.buy_and_hold_return) : null,
+           oos: s.result?.oos?.test_return != null ? s.result.oos.test_return - s.result.oos.bh_test : null,
+           bars_since_buy: r.latest_buy ? r.latest_buy.bars_since_buy : null }[key] ?? r[key] ?? null;
+}
+
+function passes(s) {
+  const q = $('search').value.trim().toUpperCase();
+  if (q && !s.tv.toUpperCase().includes(q) && !(s.yahoo || '').toUpperCase().includes(q)) return false;
+  const f = $('only-open').value, r = res(s);
+  if (!f) return true;
+  if (!r || r.error) return false;
+  if (f === 'open') return !!r.latest_buy;
+  if (f === 'new') return !!r.latest_buy && r.latest_buy.bars_since_buy <= 5;
+  if (f === 'beat') return r.beat_count > 0;
+  if (f === 'beatprofit') return r.beat_profitable_count > 0;
+  if (f === 'oos') return s.result?.oos?.verdict === 'good';
+  return true;
+}
+
+function row(s, group) {
+  const key = group.list + '|' + group.name + '|' + s.tv;
+  return rowHtml(s, group).replace('<tr class="row"', `<tr class="row${key === openKey ? ' opened' : ''}" data-key="${esc(key)}"`) +
+    (key === openKey ? detailRow(s, group) : '');
+}
+
+// Backtestpagina ingebed; de periode volgt de gekozen testperiode en is in het kader te wisselen (1M t/m 2J en meer).
+function detailRow(s, group) {
+  const r = res(s), best = r && !r.error ? r.best?.strategy : '';
+  const base = `/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${startDate()}` +
+    (best ? '&strategy=' + encodeURIComponent(best) : '');
+  const src = base + (openView === 'rank' || openView === 'auto' ? '&view=' + openView : '');
+  const tab = (v, label) => `<button type="button" data-view="${v}" class="${openView === v ? 'active' : ''}">${label}</button>`;
+  return `<tr class="detail"><td colspan="13"><div class="detail-box">` +
+    `<div class="detail-bar"><b>${esc(s.tv)}${best ? ' · ' + esc(best) : ''}</b>` +
+    tab('bt', 'Backtest') + tab('rank', 'Ranglijst') + tab('month', 'Per maand') + tab('oos', 'Houdbaarheid') + tab('auto', 'Automatische keuze') +
+    `<a href="${src}" target="_blank" rel="noopener">Nieuw tabblad</a><button type="button" data-close>Sluiten</button></div>` +
+    (openView === 'month' || openView === 'oos' ? `<div class="info" data-sym="${esc(s.yahoo)}">Laden…</div>`
+      : `<iframe src="${src}&embed=1" title="Backtest ${esc(s.tv)}"></iframe>`) + '</div></td></tr>';
+}
+
+function oosCell(o) {
+  if (!o) return '<td class="left desc">opnieuw scannen</td>';
+  if (o.error) return `<td class="left desc" title="${esc(o.error)}">te korte historie</td>`;
+  return `<td class="left"><span class="badge ${o.verdict}">${esc(o.verdict_label)}</span> ${esc(o.strategy)}` +
+    `<small>testjaar ${pct(o.test_return, true)} vs B&amp;H ${pct(o.bh_test, true)} · plaats ${o.test_rank}/${o.of}</small></td>`;
+}
+
+const detailCache = {};
+async function fillInfo() {
+  const box = document.querySelector('.detail .info'); if (!box) return;
+  const sym = box.dataset.sym;
+  if (!detailCache[sym]) {
+    try { detailCache[sym] = await (await fetch('/api/watchlist/detail?symbol=' + encodeURIComponent(sym))).json(); }
+    catch (e) { box.innerHTML = `<span class="error">Kon gegevens niet laden: ${esc(e.message)}</span>`; return; }
+  }
+  const d = detailCache[sym], cur = document.querySelector('.detail .info');
+  if (cur) cur.innerHTML = openView === 'month' ? monthHtml(d) : oosHtml(d);
+}
+
+function monthHtml(d) {
+  if (!d.monthly?.length) return '<span class="desc">Nog geen maandgegevens: start een nieuwe scan (standaardperiodes).</span>';
+  const wins = (d.month_wins || []).slice(0, 5).map(w => `${esc(w.strategy)} (${w.months}×)`).join(', ');
+  return `<p class="desc">Per kalendermaand de strategie die in die maand het meest opbracht, over de laatste ${d.monthly.length} maanden.
+    Posities lopen door over de maandgrens, zoals in een gewone backtest. Vaakst de beste: ${wins || '–'}.
+    Let op: achteraf de maandwinnaar aanwijzen is makkelijk, vooraf niet; wisselt de winnaar elke maand, dan is er geen vaste voorsprong.</p>` +
+    `<table><thead><tr><th class="left">Maand</th><th class="left">Beste strategie</th><th>Rendement</th><th>Buy &amp; hold</th>` +
+    `<th>Verschil</th><th title="Aantal strategieën dat die maand buy &amp; hold versloeg">Strategieën beter dan B&amp;H</th><th class="left">Nr. 2 en 3</th></tr></thead><tbody>` +
+    d.monthly.slice().reverse().map(m => `<tr><td class="left">${m.month}${m.partial ? ' <small>lopend</small>' : ''}</td>` +
+      `<td class="left">${esc(m.best)}<small>${esc(m.category_label)}</small></td><td class="${cls(m.best_return)}">${pct(m.best_return, true)}</td>` +
+      `<td class="${cls(m.bh_return)}">${pct(m.bh_return, true)}</td><td class="${cls(m.best_return - m.bh_return)}">${pct(m.best_return - m.bh_return, true)}</td>` +
+      `<td>${m.beat_count}</td><td class="left">${m.top3.slice(1).map(t => `${esc(t.strategy)} <small style="display:inline">${pct(t.return, true)}</small>`).join('<br>')}</td></tr>`).join('') +
+    '</tbody></table>';
+}
+
+function oosHtml(d) {
+  const o = d.oos;
+  if (!o) return '<span class="desc">Nog niet berekend: start een nieuwe scan (standaardperiodes).</span>';
+  if (o.error) return `<span class="desc">${esc(o.error)}</span>`;
+  return `<p><span class="badge ${o.verdict}">${esc(o.verdict_label)}</span> De beste strategie in de leerperiode
+    (${o.train.start} t/m ${o.train.end}) was <b>${esc(o.strategy)}</b> met ${pct(o.train_return, true)} (buy &amp; hold ${pct(o.bh_train, true)}).
+    In het jaar daarna (${o.test.start} t/m ${o.test.end}), dat ze bij die keuze niet zag, haalde ze <b class="${cls(o.test_return)}">${pct(o.test_return, true)}</b>
+    tegenover ${pct(o.bh_test, true)} voor buy &amp; hold: plaats ${o.test_rank} van ${o.of}.</p>` +
+    `<p class="desc">De top 5 uit de leerperiode haalde in het testjaar gemiddeld ${pct(o.top5_avg_test, true)}.
+    De echte winnaar van het testjaar was ${esc(o.test_best.strategy)} (${pct(o.test_best.test_return, true)}), die in de leerperiode op plaats ${o.test_best.train_rank} stond.</p>` +
+    `<table><thead><tr><th class="left">Top 5 leerperiode</th><th>Leerperiode</th><th>Testjaar</th><th>Testjaar vs B&amp;H</th></tr></thead><tbody>` +
+    o.top5.map(t => `<tr><td class="left">${esc(t.strategy)}</td><td class="${cls(t.train_return)}">${pct(t.train_return, true)}</td>` +
+      `<td class="${cls(t.test_return)}">${pct(t.test_return, true)}</td><td class="${cls(t.test_return - o.bh_test)}">${pct(t.test_return - o.bh_test, true)}</td></tr>`).join('') +
+    `<tr><td class="left desc">buy &amp; hold</td><td>${pct(o.bh_train, true)}</td><td>${pct(o.bh_test, true)}</td><td></td></tr></tbody></table>`;
+}
+
+function sizeDetail() {
+  const w = $('main-scroll').clientWidth - 24;
+  document.querySelectorAll('.detail-box').forEach(d => d.style.width = w + 'px');
+}
+
+function rowHtml(s, group) {
+  const r = res(s), link = `/tool?symbol=${encodeURIComponent(s.yahoo || '')}&source=yahoo&start=${startDate()}`;
+  const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
+  const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.tv)}${s.yahoo && s.yahoo !== tvShort ? ' · ' + esc(s.yahoo) : ''}</small>`;
+  const del = `<button class="x" title="Verwijderen" data-del="${esc(s.tv)}" data-group="${esc(group.name)}" data-list="${esc(group.list)}">×</button>`;
+  if (!s.yahoo) return `<tr><td class="left">${sym}</td><td colspan="11" class="left desc">Geen koersdata (index, future of macro)</td><td>${del}</td></tr>`;
+  if (!r) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="11" class="left desc">Nog niet gescand${s.result ? ' voor deze periode' : ''}</td><td>${del}</td></tr>`;
+  if (r.error) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="11" class="left error" title="${esc(r.error)}">Fout: ${esc(r.error.slice(0, 90))}</td><td>${del}</td></tr>`;
+  const b = r.best, lb = r.latest_buy;
+  const share = r.strategies ? r.beat_count / r.strategies : 0;
+  const buy = lb ? `<span class="badge ${lb.bars_since_buy <= 5 ? 'new' : 'open'}">OPEN</span> ${esc(lb.strategy)}` +
+      `<small>${lb.last_buy_signal} · ${ago(lb.bars_since_buy, lb.days_since_buy)} · ${pct(lb.total_return, true)}</small>`
+    : '<span class="desc">geen open signaal</span>';
+  return `<tr class="row" data-link="${link}&strategy=${encodeURIComponent(b?.strategy || '')}">` +
+    `<td class="left">${sym}</td><td>${nl(r.last_close)}</td><td class="${cls(r.change_pct)}">${pct(r.change_pct, true)}</td>` +
+    `<td>${r.beat_count}/${r.strategies}<span class="bar"><i style="width:${Math.round(share * 100)}%"></i></span>` +
+      `<small>${r.beat_profitable_count ?? '?'} ook winstgevend${r.history_days != null && r.history_days < 365 ? ' · <span class="warn">korte historie</span>' : ''}</small></td>` +
+    `<td class="left">${b ? esc(b.strategy) + `<small>${pct(b.total_return, true)} · ${b.num_trades} trades · ${pct(b.percent_profitable)} rendabel</small>` : '–'}</td>` +
+    `<td>${b ? eur(b.total_return) : '–'}<small class="${cls(b?.total_return)}">${b ? pct(b.total_return, true) : ''}</small></td>` +
+    `<td>${eur(r.buy_and_hold_return)}<small class="${cls(r.buy_and_hold_return)}">${pct(r.buy_and_hold_return, true)}</small></td>` +
+    `<td class="${cls(b ? ratio(b.total_return, r.buy_and_hold_return) - 1 : 0)}">${b ? times(ratio(b.total_return, r.buy_and_hold_return)) : '–'}` +
+      `<small>${b ? eurDiff(b.total_return - r.buy_and_hold_return) : ''}</small></td>` +
+    (r.avg_return == null ? '<td class="desc">opnieuw scannen</td>'
+      : `<td class="${cls(r.avg_return)}">${eurDiff(r.avg_return)}<small>totaal ${eurDiff(r.sum_return)} over ${r.strategies}</small></td>`) +
+    oosCell(s.result?.oos) +
+    `<td class="left">${buy}</td><td>${r.open_signals}${r.recent_buys ? `<small>${r.recent_buys} nieuw</small>` : ''}</td>` +
+    `<td><a class="lnk" href="/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${startDate()}&view=rank" title="Ranglijst" data-rank>ranglijst</a>${del}</td></tr>`;
+}
+
+function render() {
+  if (!data) return;
+  const groups = data.groups.filter(g => g.list === $('list-filter').value && (!$('group-filter').value || g.name === $('group-filter').value));
+  $('rows').innerHTML = groups.map(g => {
+    const syms = g.symbols.filter(passes).sort((a, b) => {
+      const va = value(a, sortKey), vb = value(b, sortKey);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      const c = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+      return sortKey === 'bars_since_buy' || sortKey === 'tv' ? (sortAsc ? -c : c) : (sortAsc ? c : -c);
+    });
+    const key = g.list + '/' + g.name, open = !collapsed.has(key);
+    return `<tr class="group" data-group="${esc(key)}"><td colspan="13"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
+      `<span class="count">${syms.length}${syms.length !== g.symbols.length ? ' / ' + g.symbols.length : ''}</span></td></tr>` +
+      (open ? syms.map(s => row(s, g)).join('') : '');
+  }).join('');
+  sizeDetail(); fillInfo();
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === sortKey);
+    th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
+  });
+}
+
+function renderStatus() {
+  const st = data.scan, s = data.settings;
+  $('scan').disabled = st.running; $('stop').classList.toggle('hidden', !st.running);
+  const lg = data.groups.filter(g => g.list === $('list-filter').value);
+  const total = lg.reduce((n, g) => n + g.symbols.length, 0);
+  const scanned = lg.reduce((n, g) => n + g.symbols.filter(x => res(x) && !res(x).error).length, 0);
+  let txt = `${total} tickers in ${lg.length} groepen · ${scanned} gescand voor ${pinfo().label || per()}`;
+  if (st.running) txt = `Scannen: ${st.done}/${st.total}` + (st.errors ? ` · ${st.errors} fouten` : '') + (st.current ? ` · laatst ${st.current}` : '') + ' — ' + txt;
+  else if (data.finished) txt += ` · laatste scan ${data.finished.replace('T', ' ')}`;
+  $('status').innerHTML = esc(txt) + (st.running ? `<div class="progress"><div style="width:${st.total ? 100 * st.done / st.total : 0}%"></div></div>` : '');
+}
+
+function fillPeriods() {
+  const cur = $('start').value || '2j';
+  $('start').innerHTML = PERIODS.filter(p => p.key !== 'eigen').map(p => `<option value="${p.key}">${esc(p.label)}</option>`).join('') +
+    `<option value="eigen">${esc(PERIODS.find(p => p.key === 'eigen')?.label || 'Eigen periode…')}</option>`;
+  $('start').value = [...$('start').options].some(o => o.value === cur) ? cur : '2j';
+  const own = PERIODS.find(p => p.key === 'eigen');
+  if (own && !$('c-start').value) { $('c-start').value = own.start; $('c-end').value = own.end || ''; }
+  $('custom-wrap').classList.toggle('hidden', $('start').value !== 'eigen');
+}
+
+function fillLists() {
+  const lists = [...new Set(data.groups.map(g => g.list))];
+  const ls = $('list-filter');
+  let cur = ls.value;
+  if (!cur) { try { cur = localStorage.getItem('wl-list') || ''; } catch {} }
+  ls.innerHTML = lists.map(l => `<option>${esc(l)}</option>`).join('');
+  ls.value = lists.includes(cur) ? cur : (lists.find(l => l.startsWith('TradingView · Watchlist')) || lists[0] || '');
+  const sel = $('group-filter'), g = sel.value;
+  const names = data.groups.filter(x => x.list === ls.value).map(x => x.name);
+  sel.innerHTML = '<option value="">Alle groepen</option>' + names.map(n => `<option>${esc(n)}</option>`).join('');
+  sel.value = names.includes(g) ? g : '';
+}
+
+// ---------------------------------------------------------------- strategieën over alle tickers
+let robust = null, rSort = 'beat_share', rAsc = false;
+async function loadRobust() {
+  const q = new URLSearchParams({ period: per(), list: $('list-filter').value });
+  if ($('group-filter').value) q.set('group', $('group-filter').value);
+  $('robust-sub').textContent = 'Laden…';
+  robust = await (await fetch('/api/robust?' + q)).json();
+  renderRobust();
+}
+function renderRobust() {
+  if (!robust) return;
+  $('robust-sub').textContent = `${robust.tickers} tickers · ${pinfo().label || per()}` +
+    ($('group-filter').value ? ' · groep ' + $('group-filter').value : '') + ` · houdbaarheid over ${robust.oos_tickers} tickers` +
+    (robust.tickers ? '' : ' · nog geen resultaten: start een nieuwe scan');
+  const rows = robust.rows.slice().sort((a, b) => {
+    const va = a[rSort], vb = b[rSort];
+    if (va == null) return 1; if (vb == null) return -1;
+    const c = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+    return (rSort === 'avg_place' || rSort === 'strategy') ? (rAsc ? -c : c) : (rAsc ? c : -c);
+  });
+  $('robust-rows').innerHTML = rows.map((r, i) => `<tr><td>${i + 1}</td><td class="left">${esc(r.strategy)}<small>${esc(r.category_label)}</small></td>` +
+    `<td>${r.beats}/${r.tickers}<span class="mini"><i style="width:${Math.round((r.beat_share || 0) * 100)}%"></i></span><small>${pct(r.beat_share)}</small></td>` +
+    `<td class="${cls(r.median_return)}">${pct(r.median_return, true)}</td><td class="${cls(r.avg_return)}">${pct(r.avg_return, true)}</td>` +
+    `<td>${r.avg_place == null ? '–' : 'top ' + Math.max(1, Math.round(r.avg_place * 100)) + '%'}</td><td>${r.top10}</td>` +
+    `<td>${r.oos_n ? `${r.oos_both}/${r.oos_n}<small>${pct(r.oos_share)} · testjaar ${r.oos_test_beats}× beter</small>` : '–'}</td></tr>`).join('');
+  document.querySelectorAll('#robust th[data-rsort]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.rsort === rSort); th.classList.toggle('asc', th.dataset.rsort === rSort && rAsc);
+  });
+}
+$('robust-btn').addEventListener('click', () => { $('robust').classList.remove('hidden'); loadRobust(); });
+$('robust-close').addEventListener('click', () => $('robust').classList.add('hidden'));
+$('robust-all').addEventListener('click', () => {
+  $('robust').classList.toggle('all'); $('robust-all').textContent = $('robust').classList.contains('all') ? 'Top 30' : 'Alles tonen';
+});
+document.querySelector('#robust thead').addEventListener('click', e => {
+  const th = e.target.closest('th[data-rsort]'); if (!th) return;
+  if (rSort === th.dataset.rsort) rAsc = !rAsc; else { rSort = th.dataset.rsort; rAsc = false; }
+  renderRobust();
+});
+
+async function load(fromPoll) {
+  data = await (await fetch('/api/watchlist')).json();
+  data.groups.forEach(g => g.symbols.forEach(s => { s.result = data.results?.[s.yahoo] || null; }));
+  if (!fromPoll) Object.keys(detailCache).forEach(k => delete detailCache[k]);
+  PERIODS = data.periods || []; fillPeriods();
+  fillLists();
+  renderStatus();
+  // Tijdens een scan niet telkens de tabel hertekenen als er een backtest open staat (het kader zou herladen).
+  if (!(fromPoll && openKey)) render();
+  if (data.scan.running && !poll) poll = setInterval(() => load(true), 3000);
+  if (!data.scan.running && poll) { clearInterval(poll); poll = null; }
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail; } catch {} throw new Error(m); }
+  return r.json();
+}
+
+$('scan').addEventListener('click', async () => {
+  try {
+    const body = { lists: [$('list-filter').value], groups: $('group-filter').value ? [$('group-filter').value] : null };
+    if ($('start').value === 'eigen') {
+      const a = $('c-start').value, b = $('c-end').value;
+      if (!a) throw new Error('kies een startdatum');
+      body.periods = { eigen: { start: a, ...(b ? { end: b } : {}), label: `${a} – ${b || 'nu'}` } };
+    }
+    await api('/api/watchlist/scan', { method: 'POST', body: JSON.stringify(body) });
+    load();
+  } catch (e) { $('status').textContent = 'Scan starten mislukt: ' + e.message; }
+});
+$('import-pf').addEventListener('click', async () => {
+  if (!confirm('De lijst "Portfolio server" opnieuw overnemen (GEZIN, KRISTOF, FREYA, CÉZANNE, WATCHLIST)? TradingView-lijsten blijven staan.')) return;
+  $('import-pf').disabled = true;
+  try {
+    const r = await api('/api/watchlist/import-portfolio', { method: 'POST', body: '{}' });
+    $('status').textContent = `Overgenomen: ${r.groups.map(g => `${g.name} ${g.count}`).join(' · ')}. Start nu een scan.`;
+    await load();
+  } catch (e) { $('status').textContent = 'Overnemen mislukt: ' + e.message; }
+  finally { $('import-pf').disabled = false; }
+});
+$('stop').addEventListener('click', async () => { await api('/api/watchlist/scan/stop', { method: 'POST' }); load(); });
+$('import-tv').addEventListener('click', async () => {
+  $('import-tv').disabled = true;
+  try {
+    const r = await api('/api/watchlist/import-tradingview', { method: 'POST', body: '{}' });
+    $('status').textContent = `Overgenomen uit TradingView: ${r.lists.map(l => `${l.name.replace('TradingView · ', '')} ${l.count}`).join(' · ')}. Start nu een scan.`;
+    $('list-filter').value = '';
+    try { localStorage.setItem('wl-list', r.lists[0].name); } catch {}
+    await load();
+  } catch (e) { $('status').textContent = 'Overnemen mislukt: ' + e.message; }
+  finally { $('import-tv').disabled = false; }
+});
+$('list-filter').addEventListener('change', () => {
+  try { localStorage.setItem('wl-list', $('list-filter').value); } catch {}
+  $('group-filter').value = ''; fillLists(); renderStatus(); render();
+});
+$('start').addEventListener('change', () => {
+  $('custom-wrap').classList.toggle('hidden', $('start').value !== 'eigen'); renderStatus(); render();
+});
+$('toggle-import').addEventListener('click', () => $('import').classList.toggle('hidden'));
+$('do-import').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/watchlist/import', { method: 'POST', body: JSON.stringify({ text: $('import-text').value,
+      mode: $('import-mode').value, group: $('import-group').value || 'WATCHLIST' }) });
+    $('import-result').textContent = `${r.symbols} tickers in ${r.groups} groepen` + (r.without_data.length ? ` · ${r.without_data.length} zonder koersdata` : '') + '. Start daarna een scan.';
+    load();
+  } catch (e) { $('import-result').textContent = 'Mislukt: ' + e.message; }
+});
+['search', 'only-open', 'group-filter'].forEach(id => $(id).addEventListener('input', render));
+['list-filter', 'start', 'group-filter', 'c-start', 'c-end'].forEach(id =>
+  $(id).addEventListener('change', () => { if (!$('robust').classList.contains('hidden')) loadRobust(); }));
+document.querySelector('#main-scroll thead').addEventListener('click', e => {
+  const th = e.target.closest('th[data-sort]'); if (!th) return;
+  if (sortKey === th.dataset.sort) sortAsc = !sortAsc; else { sortKey = th.dataset.sort; sortAsc = false; }
+  render();
+});
+$('rows').addEventListener('click', async e => {
+  const del = e.target.closest('[data-del]');
+  if (del) {
+    e.stopPropagation();
+    if (!confirm(`${del.dataset.del} uit ${del.dataset.group} verwijderen?`)) return;
+    await api(`/api/watchlist/symbols?group=${encodeURIComponent(del.dataset.group)}&symbol=${encodeURIComponent(del.dataset.del)}&list=${encodeURIComponent(del.dataset.list)}`, { method: 'DELETE' });
+    return load();
+  }
+  const g = e.target.closest('tr.group');
+  if (g) {
+    collapsed.has(g.dataset.group) ? collapsed.delete(g.dataset.group) : collapsed.add(g.dataset.group);
+    try { localStorage.setItem('wl-collapsed', JSON.stringify([...collapsed])); } catch {}
+    return render();
+  }
+  const d = e.target.closest('tr.detail');
+  if (d) {
+    const v = e.target.closest('[data-view]');
+    if (e.target.closest('[data-close]')) { openKey = null; return render(); }
+    if (v) { openView = v.dataset.view; render(); }
+    return;
+  }
+  const tr = e.target.closest('tr.row');
+  if (!tr) return;
+  if (e.target.closest('[data-rank]')) { e.preventDefault(); openView = 'rank'; openKey = tr.dataset.key; }
+  else if (openKey === tr.dataset.key) openKey = null;
+  else { openKey = tr.dataset.key; openView = 'bt'; }
+  render();
+  document.querySelector('tr.row.opened')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+window.addEventListener('message', e => {
+  if (e.data?.type !== 'tool-height') return;
+  const f = [...document.querySelectorAll('.detail iframe')].find(x => x.contentWindow === e.source);
+  if (f) f.style.height = Math.max(400, e.data.h) + 'px';
+});
+window.addEventListener('resize', sizeDetail);
+
+load().catch(e => $('status').textContent = 'Kon watchlist niet laden: ' + e.message);
+</script>
+</body>
+</html>

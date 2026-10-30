@@ -1,0 +1,9 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pandas>=2.2
+numpy>=1.26
+yfinance>=0.2.40
+python-multipart>=0.0.9
+pytest>=8.0
+httpx>=0.27
+ib_async>=1.0

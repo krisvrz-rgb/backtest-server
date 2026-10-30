@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overzicht · Backtest Server</title>
+<style>
+  :root {
+    --bg: #0d0f13; --panel: #151820; --panel-2: #1b1f29; --text: #e6e8eb; --muted: #8b93a1; --border: #262b36;
+    --accent: #3b82f6; --up: #22c55e; --down: #ef4444; --warn: #f59e0b;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f7f8fa; --text: #1b1f24; --muted: #6b7280; --border: #e3e6ea;
+      --accent: #2563eb; --up: #16a34a; --down: #dc2626; --warn: #d97706;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; display: flex; align-items: baseline; gap: 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header a { color: var(--muted); font-size: 13px; }
+  header a.active { color: var(--text); font-weight: 600; text-decoration: none; }
+  main { padding: 16px 20px 40px; max-width: 1600px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 700px) { main { padding: 12px 16px 40px; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; padding: 12px 14px; }
+  .toolbar .field { display: grid; gap: 4px; }
+  label { font-size: 12px; color: var(--muted); }
+  input, select, textarea { padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-2);
+                            color: var(--text); font: inherit; min-width: 0; }
+  textarea { width: 100%; min-height: 110px; font-family: ui-monospace, monospace; font-size: 12px; }
+  button { font: inherit; border-radius: 5px; padding: 7px 12px; cursor: pointer; border: 1px solid var(--border);
+           background: var(--panel-2); color: var(--text); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .grow { flex: 1; }
+  .progress { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .progress div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+  .status { font-size: 12px; color: var(--muted); padding: 0 14px 12px; }
+  .hidden { display: none !important; }
+  .import { padding: 12px 14px; display: grid; gap: 8px; border-top: 1px solid var(--border); }
+  .desc { font-size: 12px; color: var(--muted); }
+  .error { color: var(--down); }
+
+  .scroll { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align: right; }
+  th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--panel); cursor: pointer; user-select: none; }
+  th.left, td.left { text-align: left; }
+  th.sorted::after { content: " ↓"; color: var(--accent); }
+  th.sorted.asc::after { content: " ↑"; }
+  tr.group td { background: var(--panel-2); font-weight: 600; cursor: pointer; text-align: left; letter-spacing: .03em; }
+  tr.group td .count { float: right; color: var(--muted); font-weight: 400; }
+  tr.group td .caret { display: inline-block; width: 14px; color: var(--muted); }
+  tr.row { cursor: pointer; }
+  tr.row:hover td { background: var(--panel-2); }
+  td .sym { font-weight: 600; }
+  td small { display: block; color: var(--muted); font-size: 11px; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .badge { font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; color: var(--muted); }
+  .badge.open { color: var(--up); border-color: var(--up); font-weight: 600; }
+  .badge.new { color: #fff; background: var(--up); border-color: var(--up); font-weight: 600; }
+  .bar { display: inline-block; width: 60px; height: 6px; background: var(--panel-2); border-radius: 3px; vertical-align: middle; margin-left: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--up); }
+  .warn { color: var(--warn); }
+  .x { border: none; background: none; color: var(--muted); padding: 2px 6px; }
+  .x:hover { color: var(--down); }
+  a.lnk { color: var(--accent); text-decoration: none; font-size: 12px; margin-left: 6px; }
+
+  .pcell b { font-size: 13px; }
+  .pcell .rank1 { color: var(--warn); }
+  td.pcell { border-left: 1px solid var(--border); }
+  th.pgroup { text-align: center; border-left: 1px solid var(--border); cursor: default; }
+  .strats { white-space: normal; min-width: 240px; max-width: 420px; }
+  .chip { display: inline-block; font-size: 11px; border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; margin: 1px 2px 1px 0; color: var(--text); text-decoration: none; }
+  .chip:hover { border-color: var(--accent); }
+  .chip.beat { border-color: var(--up); }
+  .chip.open::before { content: "● "; color: var(--up); }
+  tr.detail td { background: var(--panel-2); white-space: normal; text-align: left; }
+  .dgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; padding: 6px 2px; }
+  .dgrid h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .dgrid table { font-size: 12px; }
+  .dgrid td { padding: 3px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .dgrid a { color: var(--text); text-decoration: none; }
+  .dgrid a:hover { color: var(--accent); }
+  .legend { font-size: 12px; color: var(--muted); }
+  td.pcell { padding: 7px 8px; }
+  td.best { white-space: normal; min-width: 230px; text-align: left; }
+  td.best .nm { font-weight: 600; }
+  th.focus { color: var(--accent); }
+  .autopanel { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; padding: 10px 14px 12px; border-top: 1px solid var(--border); }
+  .autopanel .field { display: grid; gap: 4px; }
+  .autopanel .chk { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--text); }
+  .autopanel .days { display: flex; flex-wrap: wrap; gap: 4px; max-width: 640px; }
+  .autopanel .days label { display: flex; gap: 4px; align-items: center; font-size: 12px; color: var(--text);
+                           border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; cursor: pointer; }
+  .pchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; align-items: center; font-size: 12px; color: var(--muted); }
+  .pchips button { font-size: 12px; padding: 2px 9px; border-radius: 12px; }
+  .pchips button.on { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Backtest Server</h1>
+  <a href="/" class="active">Overzicht</a>
+  <a href="/tool">Backtest</a>
+  <a href="/watchlist">Watchlist-details</a>
+  <a href="/aanraders">Aanraders</a>
+  <a href="/docs">API-documentatie</a>
+</header>
+<main>
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label for="list">Lijst</label><select id="list"></select></div>
+      <div class="field"><label for="group">Groep</label><select id="group"><option value="">Alle groepen</option></select></div>
+      <div class="field"><label for="focus">Beste strategie voor</label><select id="focus"></select></div>
+      <button class="primary" id="refresh" title="Alle strategieën opnieuw testen op elke ticker van deze lijst, voor alle periodes">Vernieuwen</button>
+      <button id="stop" class="hidden">Stoppen</button>
+      <button id="auto-toggle" title="Automatisch vernieuwen instellen">Automatisch: …</button>
+      <div class="grow"></div>
+      <div class="field"><label for="search">Zoeken</label><input id="search" placeholder="ticker…"></div>
+      <div class="field"><label for="filter">Filter</label>
+        <select id="filter">
+          <option value="">Alles tonen</option>
+          <option value="open">Beste strategie staat in een open buy</option>
+          <option value="new">Open buy ≤ 5 dagen geleden</option>
+          <option value="beaten">Beste strategie verslaat buy &amp; hold</option>
+        </select>
+      </div>
+    </div>
+    <div class="autopanel hidden" id="autopanel">
+      <label class="chk"><input type="checkbox" id="a-on"> Automatisch vernieuwen</label>
+      <div class="field"><label for="a-time">Om</label><input type="time" id="a-time" value="22:30"></div>
+      <div class="field"><label>Op</label><div class="days" id="a-days"></div></div>
+      <div class="field"><label>Lijsten (niets aangevinkt = alle)</label><div class="days" id="a-lists"></div></div>
+      <button class="primary" id="a-save">Opslaan</button>
+      <span class="desc" id="a-info"></span>
+    </div>
+    <div class="pchips" id="pchips"></div>
+    <div class="status" id="status">Laden…</div>
+  </section>
+
+  <section class="panel">
+    <div class="scroll">
+      <table>
+        <thead id="thead"></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+  <div class="desc"><b>Plaats van buy &amp; hold</b>: #1 betekent dat geen enkele strategie meer opbracht dan het aandeel gewoon vasthouden;
+    #15 betekent dat 14 strategieën het beter deden. Ernaast het rendement van vasthouden, daaronder hoeveel strategieën winst maakten.
+    <b>Beste strategie</b>: de strategie met het hoogste rendement in de gekozen periode, hoeveel procentpunt dat meer (of minder) is dan
+    buy &amp; hold, en of die strategie nu in een open buy zit. Klik op een rij voor de top per periode.</div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (v, sign) => v == null ? '–' : (sign && v > 0 ? '+' : '') + nl(v * 100, Math.abs(v) >= 10 ? 0 : 1) + '%';
+const pp = v => v == null ? '–' : (v > 0 ? '+' : '') + nl(v * 100, Math.abs(v) >= 10 ? 0 : 1) + ' pp';
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const STAKE = 10000;
+const eur = ret => ret == null ? '–' : '€' + Math.round(STAKE * (1 + ret)).toLocaleString('nl-BE');
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let data = null, PERIODS = [], sortKey = 'vs_bh', sortAsc = false, collapsed = new Set(), expanded = new Set(), poll = null;
+try { collapsed = new Set(JSON.parse(localStorage.getItem('ov-collapsed') || '[]')); } catch {}
+let hidden = new Set();
+try { hidden = new Set(JSON.parse(localStorage.getItem('ov-hidden') || '[]')); } catch {}
+const shown = () => PERIODS.filter(p => !hidden.has(p.key));
+function renderChips() {
+  $('pchips').innerHTML = 'Kolommen: ' + PERIODS.map(p =>
+    `<button type="button" class="${hidden.has(p.key) ? '' : 'on'}" data-key="${p.key}">${esc(p.label)}</button>`).join('');
+}
+const pinfo = k => PERIODS.find(p => p.key === k) || { key: k, start: k + '-01-01', label: k };
+
+const per = (s, p) => {
+  const r = s.result;
+  if (!r || r.error || !r.periods) return null;
+  return r.periods[p] && !r.periods[p].error ? r.periods[p] : null;
+};
+function ago(bars) {
+  if (bars === 0) return 'vandaag';
+  if (bars === 1) return 'gisteren';
+  return bars < 10 ? `${bars} dagen geleden` : bars < 45 ? `${Math.round(bars / 5)} weken geleden` : `${Math.round(bars / 21)} mnd geleden`;
+}
+const toolLink = (s, p, strategy, view) => {
+  const i = pinfo(p);
+  return `/tool?symbol=${encodeURIComponent(s.yahoo)}&source=yahoo&start=${i.start}` + (i.end ? `&end=${i.end}` : '') +
+    (strategy ? `&strategy=${encodeURIComponent(strategy)}` : '') + (view ? `&view=${view}` : '');
+};
+
+function value(s, key) {
+  if (key === 'tv') return s.tv;
+  if (key.startsWith('p:')) { const x = per(s, key.slice(2)); return x ? x.bh_rank : null; }
+  const r = per(s, $('focus').value);
+  if (!r || !r.best) return null;
+  if (key === 'vs_bh') return r.best.vs_bh ?? null;
+  if (key === 'avg_return') return r.avg_return ?? null;
+  if (key === 'change_pct') return r.change_pct ?? null;
+  return null;
+}
+
+function passes(s) {
+  const q = $('search').value.trim().toUpperCase();
+  if (q && !s.tv.toUpperCase().includes(q) && !(s.yahoo || '').toUpperCase().includes(q)) return false;
+  const f = $('filter').value, b = per(s, $('focus').value)?.best;
+  if (!f) return true;
+  if (!b) return false;
+  if (f === 'open') return !!b.signal_open;
+  if (f === 'new') return !!b.signal_open && b.bars_since_buy <= 5;
+  if (f === 'beaten') return b.vs_bh > 0;
+  return true;
+}
+
+function renderHead() {
+  const f = $('focus').value;
+  $('thead').innerHTML = `<tr><th class="left" rowspan="2" data-sort="tv">Symbool</th><th rowspan="2" data-sort="change_pct">Koers</th>` +
+    `<th class="pgroup" colspan="${shown().length}">Plaats van buy &amp; hold tussen alle strategieën en rendement van vasthouden</th>` +
+    `<th rowspan="2" data-sort="avg_return" title="Winst van alle strategieën samen (elk €10.000) gedeeld door het aantal strategieën">Gem. winst / strategie</th>` +
+    `<th class="left" rowspan="2" data-sort="vs_bh">Beste strategie (${esc(pinfo(f).label)})</th></tr><tr>` +
+    shown().map(p => `<th class="pcell ${p.key === f ? 'focus' : ''}" data-sort="p:${p.key}">${esc(p.label)}</th>`).join('') + '</tr>';
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === sortKey);
+    th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
+  });
+}
+
+function pcell(s, p) {
+  const r = per(s, p.key);
+  if (!r) return `<td class="pcell desc">${s.result?.periods?.[p.key]?.error ? 'geen data' : '–'}</td>`;
+  const end = p.end ? Date.parse(p.end) : Date.now();
+  const expected = (Math.min(end, Date.now()) - Date.parse(p.start)) / 864e5;
+  const short = r.history_days != null && r.history_days < expected * 0.8;
+  return `<td class="pcell" title="${r.strategies} strategieën · ${r.period?.start || p.start} t/m ${r.period?.end || ''}">` +
+    `<b class="${r.bh_rank === 1 ? 'rank1' : ''}">#${r.bh_rank}</b> ` +
+    `<span class="${cls(r.buy_and_hold_return)}">${pct(r.buy_and_hold_return, true)}</span>` +
+    `<small>${r.profitable_count}/${r.strategies} winst${short ? ' · <span class="warn">korter</span>' : ''}</small></td>`;
+}
+
+const eurDiff = d => (d > 0 ? '+' : d < 0 ? '−' : '') + '€' + Math.abs(Math.round(STAKE * d)).toLocaleString('nl-BE');
+function avgCell(s, f) {
+  const r = per(s, f);
+  if (!r || r.avg_return == null) return '<td class="desc">–</td>';
+  return `<td class="${cls(r.avg_return)}" title="Totaal ${eurDiff(r.sum_return)} over ${r.strategies} strategieën">${eurDiff(r.avg_return)}` +
+    `<small>totaal ${eurDiff(r.sum_return)}</small></td>`;
+}
+
+function bestCell(s, f) {
+  const r = per(s, f), b = r?.best;
+  if (!b) return '<td class="best desc">–</td>';
+  const open = b.signal_open
+    ? ` <span class="badge ${b.bars_since_buy <= 5 ? 'new' : 'open'}">OPEN</span><small>buy ${b.last_buy_signal} · ${ago(b.bars_since_buy)}</small>`
+    : `<small>geen open buy${b.last_buy_signal ? ' · laatste buy ' + b.last_buy_signal : ''}</small>`;
+  return `<td class="best"><a class="nm" style="color:inherit;text-decoration:none" href="${toolLink(s, f, b.strategy)}" onclick="event.stopPropagation()">${esc(b.strategy)}</a> ` +
+    `<span class="${cls(b.total_return)}">${pct(b.total_return, true)}</span> · ` +
+    `<span class="${cls(b.vs_bh)}" title="Verschil met buy &amp; hold">${pp(b.vs_bh)} t.o.v. B&amp;H</span>` +
+    `<small>€10.000 → <b class="${cls(b.total_return)}">${eur(b.total_return)}</b> · buy &amp; hold ${eur(r.buy_and_hold_return)}</small>${open}</td>`;
+}
+
+function row(s, g) {
+  const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
+  const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.name || s.tv)}</small>`;
+  const cols = shown().length + 4;
+  const any = PERIODS.map(p => per(s, p.key)).find(Boolean);
+  if (!s.result || s.result.error || !any) {
+    const msg = s.result?.error ? `<span class="error">Fout: ${esc(s.result.error.slice(0, 90))}</span>` : s.result ? 'Opnieuw vernieuwen voor alle periodes' : 'Nog niet vernieuwd';
+    return `<tr><td class="left">${sym}</td><td colspan="${cols - 1}" class="left desc">${msg}</td></tr>`;
+  }
+  const key = g.list + '/' + g.name + '/' + s.tv;
+  const last = per(s, PERIODS[0].key) || any;
+  return `<tr class="row" data-key="${esc(key)}"><td class="left">${sym}</td>` +
+    `<td>${nl(last.last_close)}<small class="${cls(last.change_pct)}">${pct(last.change_pct, true)}</small></td>` +
+    shown().map(p => pcell(s, p)).join('') + avgCell(s, $('focus').value) + bestCell(s, $('focus').value) + '</tr>' +
+    (expanded.has(key) ? detail(s, cols) : '');
+}
+
+function detail(s, cols) {
+  const blocks = shown().map(p => {
+    const r = per(s, p.key);
+    if (!r) return `<div><h4>${esc(p.label)}</h4><span class="desc">geen resultaat</span></div>`;
+    const rows = r.profitable.slice(0, 5).map(x => `<tr><td><a href="${toolLink(s, p.key, x.strategy)}">${esc(x.strategy)}</a>` +
+      (x.signal_open ? ' <span class="badge open">OPEN</span>' : '') + `</td><td class="up">${pct(x.total_return, true)}</td>` +
+      `<td class="${cls(x.total_return - r.buy_and_hold_return)}">${pp(x.total_return - r.buy_and_hold_return)}</td></tr>`).join('');
+    return `<div><h4>${esc(p.label)} · buy &amp; hold ${pct(r.buy_and_hold_return, true)} op plaats ${r.bh_rank}</h4>` +
+      (rows ? `<table>${rows}</table>` : '<span class="desc">geen winstgevende strategie</span>') +
+      `<div style="margin-top:6px"><a class="lnk" style="margin:0" href="${toolLink(s, p.key, null, 'rank')}">volledige ranglijst</a>` +
+      `<a class="lnk" href="${toolLink(s, p.key, null, 'auto')}">automatische keuze</a></div></div>`;
+  }).join('');
+  return `<tr class="detail"><td colspan="${cols}"><div class="dgrid">${blocks}</div></td></tr>`;
+}
+
+function render() {
+  if (!data) return;
+  renderHead(); renderChips();
+  const cols = shown().length + 4;
+  const groups = data.groups.filter(g => g.list === $('list').value && (!$('group').value || g.name === $('group').value));
+  $('rows').innerHTML = groups.map(g => {
+    const syms = g.symbols.filter(passes).sort((a, b) => {
+      const va = value(a, sortKey), vb = value(b, sortKey);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      const c = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+      return sortAsc ? c : -c;
+    });
+    const gk = g.list + '/' + g.name, open = !collapsed.has(gk);
+    return `<tr class="group" data-group="${esc(gk)}"><td colspan="${cols}"><span class="caret">${open ? '▾' : '▸'}</span>${esc(g.name)}` +
+      `<span class="count">${syms.length}${syms.length !== g.symbols.length ? ' / ' + g.symbols.length : ''}</span></td></tr>` +
+      (open ? syms.map(s => row(s, g)).join('') : '');
+  }).join('') || `<tr><td colspan="${cols}" class="left desc">Deze lijst is leeg. Neem lijsten over via <a href="/watchlist">Watchlist-details</a>.</td></tr>`;
+}
+
+function renderStatus() {
+  const st = data.scan;
+  $('refresh').disabled = st.running; $('stop').classList.toggle('hidden', !st.running);
+  const lg = data.groups.filter(g => g.list === $('list').value);
+  const total = lg.reduce((n, g) => n + g.symbols.length, 0);
+  const std = PERIODS.filter(p => p.key !== 'eigen');
+  const done = lg.reduce((n, g) => n + g.symbols.filter(s => std.every(p => s.result?.periods?.[p.key])).length, 0);
+  let txt = `${total} tickers · ${done} met resultaten voor alle ${std.length} standaardperiodes`;
+  if (st.running) txt = `Vernieuwen: ${st.done}/${st.total}` + (st.errors ? ` · ${st.errors} fouten` : '') + (st.current ? ` · laatst ${st.current}` : '') + ' — ' + txt;
+  else if (data.finished) txt += ` · laatst vernieuwd ${data.finished.replace('T', ' ')}`;
+  $('status').innerHTML = esc(txt) + (st.running ? `<div class="progress"><div style="width:${st.total ? 100 * st.done / st.total : 0}%"></div></div>` : '');
+}
+
+function fillLists() {
+  const lists = [...new Set(data.groups.map(g => g.list))];
+  let cur = $('list').value;
+  if (!cur) { try { cur = localStorage.getItem('ov-list') || ''; } catch {} }
+  $('list').innerHTML = lists.map(l => `<option>${esc(l)}</option>`).join('');
+  $('list').value = lists.includes(cur) ? cur : (lists.find(l => l.startsWith('TradingView · Watchlist')) || lists[0] || '');
+  const g = $('group').value, names = data.groups.filter(x => x.list === $('list').value).map(x => x.name);
+  $('group').innerHTML = '<option value="">Alle groepen</option>' + names.map(n => `<option>${esc(n)}</option>`).join('');
+  $('group').value = names.includes(g) ? g : '';
+  let f = $('focus').value;
+  if (!f) { try { f = localStorage.getItem('ov-focus') || ''; } catch {} }
+  $('focus').innerHTML = PERIODS.map(p => `<option value="${p.key}">${esc(p.label)}</option>`).join('');
+  $('focus').value = PERIODS.some(p => p.key === f) ? f : (PERIODS.find(p => p.key === '2j') || PERIODS[0]).key;
+}
+
+async function load() {
+  data = await (await fetch('/api/watchlist')).json();
+  data.groups.forEach(g => g.symbols.forEach(s => { s.result = data.results?.[s.yahoo] || null; }));
+  PERIODS = data.periods || [];
+  fillLists(); renderStatus(); render();
+  if (data.scan.running && !poll) poll = setInterval(load, 3000);
+  if (!data.scan.running && poll) { clearInterval(poll); poll = null; }
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail; } catch {} throw new Error(m); }
+  return r.json();
+}
+
+$('refresh').addEventListener('click', async () => {
+  try {
+    await api('/api/watchlist/scan', { method: 'POST', body: JSON.stringify({ lists: [$('list').value],
+      groups: $('group').value ? [$('group').value] : null }) });
+    load();
+  } catch (e) { $('status').textContent = 'Vernieuwen mislukt: ' + e.message; }
+});
+$('stop').addEventListener('click', async () => { await api('/api/watchlist/scan/stop', { method: 'POST' }); load(); });
+$('list').addEventListener('change', () => {
+  try { localStorage.setItem('ov-list', $('list').value); } catch {}
+  $('group').value = ''; fillLists(); renderStatus(); render();
+});
+$('pchips').addEventListener('click', e => {
+  const b = e.target.closest('button[data-key]'); if (!b) return;
+  hidden.has(b.dataset.key) ? hidden.delete(b.dataset.key) : hidden.add(b.dataset.key);
+  try { localStorage.setItem('ov-hidden', JSON.stringify([...hidden])); } catch {}
+  render();
+});
+$('focus').addEventListener('change', () => { try { localStorage.setItem('ov-focus', $('focus').value); } catch {} render(); });
+['search', 'filter', 'group'].forEach(id => $(id).addEventListener('input', render));
+$('thead').addEventListener('click', e => {
+  const th = e.target.closest('th[data-sort]'); if (!th) return;
+  if (sortKey === th.dataset.sort) sortAsc = !sortAsc;
+  else { sortKey = th.dataset.sort; sortAsc = sortKey === 'tv' || sortKey.startsWith('p:'); }
+  render();
+});
+$('rows').addEventListener('click', e => {
+  if (e.target.closest('a')) return;
+  const g = e.target.closest('tr.group');
+  if (g) {
+    collapsed.has(g.dataset.group) ? collapsed.delete(g.dataset.group) : collapsed.add(g.dataset.group);
+    try { localStorage.setItem('ov-collapsed', JSON.stringify([...collapsed])); } catch {}
+    return render();
+  }
+  const tr = e.target.closest('tr.row');
+  if (tr) { expanded.has(tr.dataset.key) ? expanded.delete(tr.dataset.key) : expanded.add(tr.dataset.key); render(); }
+});
+
+// ---------------------------------------------------------------- automatisch vernieuwen
+const DAYS = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo'];
+let sched = null;
+const fmtWhen = t => t ? new Date(t).toLocaleString('nl-BE', { weekday: 'long', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+function renderSchedule() {
+  if (!sched) return;
+  $('auto-toggle').textContent = sched.enabled ? `Automatisch: ${DAYS.filter((_, i) => sched.days.includes(i)).join(' ')} om ${sched.time}` : 'Automatisch: uit';
+  $('a-on').checked = sched.enabled; $('a-time').value = sched.time;
+  $('a-days').innerHTML = DAYS.map((d, i) => `<label><input type="checkbox" value="${i}" ${sched.days.includes(i) ? 'checked' : ''}>${d}</label>`).join('');
+  const lists = data ? [...new Set(data.groups.map(g => g.list))] : [];
+  $('a-lists').innerHTML = lists.map(l => `<label><input type="checkbox" value="${esc(l)}" ${sched.lists.includes(l) ? 'checked' : ''}>${esc(l.replace('TradingView · ', 'TV · '))}</label>`).join('');
+  $('a-info').textContent = (sched.enabled && sched.next_run ? `Volgende keer: ${fmtWhen(sched.next_run)}. ` : '') +
+    (sched.last_run ? `Laatst automatisch: ${fmtWhen(sched.last_run)}.` : '') + ' Tijd = klok van de server.';
+}
+async function loadSchedule() { sched = await api('/api/schedule'); renderSchedule(); }
+$('auto-toggle').addEventListener('click', () => { $('autopanel').classList.toggle('hidden'); renderSchedule(); });
+$('a-save').addEventListener('click', async () => {
+  try {
+    sched = await api('/api/schedule', { method: 'POST', body: JSON.stringify({
+      enabled: $('a-on').checked, time: $('a-time').value || '22:30',
+      days: [...$('a-days').querySelectorAll('input:checked')].map(x => +x.value),
+      lists: [...$('a-lists').querySelectorAll('input:checked')].map(x => x.value) }) });
+    renderSchedule(); $('a-info').textContent = 'Opgeslagen. ' + $('a-info').textContent;
+  } catch (e) { $('a-info').textContent = 'Opslaan mislukt: ' + e.message; }
+});
+
+load().then(loadSchedule).catch(e => $('status').textContent = 'Kon overzicht niet laden: ' + e.message);
+</script>
+</body>
+</html>

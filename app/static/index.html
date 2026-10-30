@@ -1,0 +1,932 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backtest Server</title>
+<script src="/static/lightweight-charts.js"></script>
+<style>
+  :root {
+    --bg: #0d0f13; --panel: #151820; --panel-2: #1b1f29; --text: #e6e8eb; --muted: #8b93a1; --border: #262b36;
+    --accent: #3b82f6; --up: #22c55e; --down: #ef4444; --bench: #9ca3af; --market: #f59e0b; --code: #0a0c10;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f7f8fa; --text: #1b1f24; --muted: #6b7280; --border: #e3e6ea;
+      --accent: #2563eb; --up: #16a34a; --down: #dc2626; --bench: #9ca3af; --market: #d97706; --code: #f1f3f5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; display: flex; align-items: baseline; gap: 16px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; }
+  header a { color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 16px; padding: 16px 20px 40px; max-width: 1600px; margin: 0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); padding: 12px 16px 40px; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  form.panel { padding: 14px; align-self: start; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  input, select { width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px;
+                  background: var(--panel-2); color: var(--text); font: inherit; }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+  .desc { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  button { font: inherit; border-radius: 5px; padding: 8px 12px; cursor: pointer; border: 1px solid var(--border);
+           background: var(--panel-2); color: var(--text); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; width: 100%; margin-top: 14px; font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .error { color: var(--down); margin-top: 10px; white-space: pre-wrap; }
+
+  .result { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; }
+  #out { overflow: hidden; }
+  .empty { color: var(--muted); text-align: center; padding: 80px 20px; }
+  .titlebar { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
+              border-bottom: 1px solid var(--border); gap: 12px; flex-wrap: wrap; }
+  .titlebar b { font-size: 15px; }
+  .titlebar span { color: var(--muted); font-size: 12px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+  #price-chart { height: 380px; }
+  .ind-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); padding: 6px 12px 0; }
+  .ind-legend:empty { display: none; }
+  .ind-legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  .ind-pane { border-top: 1px solid var(--border); position: relative; }
+  .ind-pane .ind-title { position: absolute; top: 4px; left: 10px; z-index: 3; font-size: 11px; color: var(--muted);
+                         pointer-events: none; background: color-mix(in srgb, var(--panel) 80%, transparent); padding: 1px 4px; border-radius: 3px; }
+  .ind-pane .ind-title b { color: var(--text); font-weight: 600; margin-right: 6px; }
+  .ind-pane .ind-chart { height: 150px; }
+  .ind-info { font-size: 12px; color: var(--muted); padding: 4px 12px 8px; line-height: 1.45; }
+  .ind-info b { color: var(--text); font-weight: 600; }
+  #ind-explain { padding: 6px 12px 10px; border-top: 1px solid var(--border); }
+  #ind-explain:empty { display: none; }
+  #ind-explain summary { cursor: pointer; font-size: 12px; color: var(--accent); }
+  #ind-explain p { margin: 6px 0; font-size: 12px; color: var(--muted); }
+  .explain { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .explain p { margin: 4px 0; }
+  .explain b { color: var(--text); font-weight: 600; }
+  .explain details summary { cursor: pointer; color: var(--accent); margin-top: 4px; }
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); padding: 0 10px; overflow-x: auto; }
+  .tab { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 12px; color: var(--muted); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tabpane { padding: 14px; }
+  .tabpane:not(.active) { display: none; }
+  h3 { font-size: 13px; margin: 18px 0 8px; color: var(--muted); font-weight: 600; }
+  h3:first-child { margin-top: 0; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1px;
+          background: var(--border); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .kpi { background: var(--panel); padding: 10px 12px; }
+  .kpi .k { font-size: 11px; color: var(--muted); text-transform: none; }
+  .kpi .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .kpi .s { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  #equity-chart, #pnl-chart { height: 260px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  .scroll { overflow: auto; max-height: 520px; }
+  #trades tr { cursor: pointer; }
+  #trades tr:hover td { background: var(--panel-2); }
+  .heat td { text-align: center; font-size: 12px; }
+  .heat td:first-child { text-align: left; }
+  pre { background: var(--code); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow: auto;
+        font-size: 12px; max-height: 480px; margin: 0; }
+  .hidden { display: none !important; }
+  button.secondary { width: 100%; margin-top: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .rank-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px;
+               border-bottom: 1px solid var(--border); }
+  .rank-head select { width: auto; }
+  .rank-body { padding: 12px 14px; display: grid; gap: 10px; }
+  #rank-table tr { cursor: pointer; }
+  #rank-table tr:hover td { background: var(--panel-2); }
+  #rank-table td.name, #opt-table td.name { text-align: left; }
+  #rank-table td.name small { display: block; color: var(--muted); font-size: 11px; }
+  .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
+  .badge.risk { color: var(--accent); border-color: var(--accent); }
+  .badge.open { color: var(--up); border-color: var(--up); font-weight: 600; }
+  tr.bh td { background: color-mix(in srgb, var(--market) 12%, transparent); }
+  .quick { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .quick button { padding: 3px 8px; font-size: 12px; background: var(--panel-2); color: var(--text); }
+  .quick button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* Ingebed in watchlist-details: geen kop, minder rand. */
+  body.embed header { display: none; }
+  body.embed main { padding: 10px 0 12px; max-width: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Backtest Server</h1>
+  <a href="/">Overzicht</a>
+  <a href="/tool"><b>Backtest</b></a>
+  <a href="/watchlist">Watchlist-details</a>
+  <a href="/aanraders">Aanraders</a>
+  <a href="/docs">API-documentatie</a>
+</header>
+<main>
+  <form class="panel" id="form">
+    <label for="symbol">Symbool</label>
+    <input id="symbol" value="AAPL" required>
+    <label for="source">Databron</label>
+    <select id="source">
+      <option value="yahoo">Yahoo Finance</option>
+      <option value="ibkr">IBKR (TWS / Gateway)</option>
+      <option value="hyperliquid">Hyperliquid</option>
+      <option value="csv">CSV (data-map)</option>
+      <option value="synthetic">Synthetisch (test)</option>
+    </select>
+    <label for="strategy">Strategie</label>
+    <select id="strategy"></select>
+    <details class="explain" id="score-help"><summary>ⓘ Wat betekent de score in de lijst?</summary>
+      <p>De score telt bewijs dat de strategie op dit aandeel werkt, altijd over vaste stukken van de laatste 3 jaar (niet de gekozen periode):
+        <b>houdt stand</b> (verslaat buy &amp; hold in de leerperiode én in het laatste jaar dat ze niet zag) tot 3,
+        <b>beter dan buy &amp; hold</b> over 2 jaar 1,5 · 1 jaar 1 · 6 maanden 0,5,
+        <b>werkt op minstens de helft van de tickers</b> in je lijst 1,5,
+        <b>vers koopsignaal</b> (≤ 3 dagen) 1,5 of (≤ 10 dagen) 0,75,
+        plus tot ±2 voor de voorsprong op buy &amp; hold en het percentage winnende trades.
+        Minpunten: verlies over 2 jaar −2, koers al &gt; 25% boven de instap −1, minder dan 3 trades −0,5.</p>
+      <p>Maximum ongeveer 11. <b>8+</b> sterk op alle punten · <b>5–7</b> goed met een zwak punt · <b>onder 3</b> weinig bewijs.
+        Blauw = het koopsignaal staat nu open. Geen score = ticker nog niet gescand in Watchlist-details.</p>
+    </details>
+    <div class="desc" id="strategy-desc"></div>
+    <div id="params"></div>
+    <div class="row">
+      <div><label for="start">Start</label><input id="start" type="date" value="2015-01-01"></div>
+      <div><label for="end">Einde</label><input id="end" type="date"></div>
+    </div>
+    <div class="quick" id="quick" title="Testperiode tot vandaag">
+      <button type="button" data-q="1m">1M</button><button type="button" data-q="3m">3M</button>
+      <button type="button" data-q="6m">6M</button><button type="button" data-q="1j">1J</button>
+      <button type="button" data-q="2j">2J</button><button type="button" data-q="5j">5J</button>
+      <button type="button" data-q="2020">2020</button><button type="button" data-q="2015">2015</button>
+    </div>
+    <div class="row">
+      <div><label for="capital">Startkapitaal</label><input id="capital" type="number" value="10000" min="1"></div>
+      <div><label for="fee">Kosten (bps)</label><input id="fee" type="number" value="5" min="0" step="0.5"></div>
+    </div>
+    <label for="market">Vergelijk met markt</label>
+    <select id="market">
+      <option value="SPY">S&amp;P 500 (SPY)</option>
+      <option value="QQQ">Nasdaq 100 (QQQ)</option>
+      <option value="">Geen</option>
+    </select>
+    <button class="primary" type="submit" id="run">Backtest draaien</button>
+    <button class="secondary" type="button" id="opt-btn">Instellingen optimaliseren</button>
+    <button class="secondary" type="button" id="rank-btn">Alle strategieën testen</button>
+    <div class="desc">Test alle strategieën op dit symbool met hun standaardinstellingen en rangschik ze.</div>
+    <button class="secondary" type="button" id="auto-btn">Automatische keuze per markttoestand</button>
+    <div class="desc">De server kiest elk kwartaal zelf een strategie op basis van de markttoestand, alleen met wat hij toen kon weten.</div>
+    <div class="error" id="error"></div>
+  </form>
+
+  <div class="result">
+    <div class="panel empty" id="empty">Kies een strategie en klik op <b>Backtest draaien</b>,
+      of klik op <b>Alle strategieën testen</b> voor een ranglijst.</div>
+
+    <section class="panel hidden" id="rank">
+      <div class="rank-head">
+        <div><b id="rank-title">Ranglijst</b> <span class="desc" id="rank-sub"></span></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label for="rank-sort" style="margin:0">Sorteer op</label>
+          <select id="rank-sort">
+            <option value="total_return">Rendement</option>
+            <option value="net_profit">Netto winst</option>
+            <option value="percent_profitable">% rendabele trades</option>
+            <option value="sharpe">Sharpe</option>
+            <option value="profit_factor">Profit factor</option>
+            <option value="max_drawdown">Kleinste drawdown</option>
+            <option value="calmar">Rendement / drawdown</option>
+            <option value="risk">Beter op risico dan buy &amp; hold</option>
+            <option value="recent_buy">Recentste open buy-signaal</option>
+          </select>
+          <button type="button" id="rank-close">Sluiten</button>
+        </div>
+      </div>
+      <div class="rank-body">
+        <div class="chips" id="rank-cats"></div>
+        <div class="scroll"><table id="rank-table"></table></div>
+        <div class="desc">Klik op een strategie om de volledige backtest te zien en de instellingen te finetunen.</div>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="auto">
+      <div class="rank-head">
+        <div><b id="auto-title">Automatische keuze</b> <span class="desc" id="auto-sub"></span></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="auto-train" title="Leerperiode">
+            <option value="2">Leren op 2 jaar</option><option value="3" selected>Leren op 3 jaar</option><option value="5">Leren op 5 jaar</option>
+          </select>
+          <select id="auto-step" title="Hoe vaak opnieuw kiezen">
+            <option value="MS">Elke maand</option><option value="QS" selected>Elk kwartaal</option><option value="YS">Elk jaar</option>
+          </select>
+          <select id="auto-objective">
+            <option value="total_return">Kies op rendement</option><option value="sharpe">Kies op Sharpe</option>
+          </select>
+          <label style="margin:0;display:flex;gap:4px;align-items:center;white-space:nowrap"><input type="checkbox" id="auto-regime" checked style="width:auto"> per markttoestand</label>
+          <button type="button" id="auto-run">Opnieuw</button>
+          <button type="button" id="auto-close">Sluiten</button>
+        </div>
+      </div>
+      <div class="rank-body">
+        <div id="auto-verdict"></div>
+        <div class="kpis" id="auto-kpis"></div>
+        <div id="auto-chart" style="height:240px;margin-top:12px"></div>
+        <h3>Keuzes per beslismoment</h3>
+        <div class="scroll"><table id="auto-table"></table></div>
+        <div class="desc">Op elk beslismoment kijkt de server naar de markttoestand van de dag ervoor (stijgend, zijwaarts of dalend t.o.v. de SMA 200)
+          en kiest hij de strategie die in de leerperiode het best werkte op dagen met diezelfde toestand. Daarna volgt hij die tot het volgende moment.
+          Elk stuk is dus getest op koersen die bij de keuze nog niet bekend waren: dit is wat je echt had kunnen halen.</div>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="opt">
+      <div class="rank-head">
+        <div><b id="opt-title">Optimalisatie</b> <span class="desc" id="opt-sub"></span></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label for="opt-objective" style="margin:0">Doel</label>
+          <select id="opt-objective">
+            <option value="total_return">Hoogste rendement</option>
+            <option value="sharpe">Beste Sharpe</option>
+            <option value="profit_factor">Beste profit factor</option>
+            <option value="percent_profitable">Meeste rendabele trades</option>
+          </select>
+          <button type="button" id="opt-close">Sluiten</button>
+        </div>
+      </div>
+      <div class="rank-body">
+        <div id="opt-verdict"></div>
+        <div class="scroll"><table id="opt-table"></table></div>
+        <div class="desc">Leren = het deel waarop de instellingen gezocht zijn. Controle = de periode daarna, die de optimalisatie niet gezien heeft.
+          Kijk vooral naar de controle-kolommen: een instelling die alleen in de leerperiode uitblinkt, is waarschijnlijk toeval.</div>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="out">
+      <div class="titlebar">
+        <div><b id="title"></b> <span id="period"></span></div>
+        <div class="legend"><span>B = koop · S = verkoop</span><span><i style="background:var(--up)"></i>trade met winst</span><span><i style="background:var(--down)"></i>trade met verlies</span><span><i style="background:var(--accent)"></i>open trade</span></div>
+      </div>
+      <div class="ind-legend" id="ind-legend"></div>
+      <div id="price-chart"></div>
+      <div id="ind-panes"></div>
+      <div id="ind-explain"></div>
+
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-tab="summary">Overzicht</button>
+        <button class="tab" data-tab="returns">Rendementen</button>
+        <button class="tab" data-tab="analysis">Trade-analyse</button>
+        <button class="tab" data-tab="trades">Trades</button>
+        <button class="tab" data-tab="pine">Pine Script</button>
+      </nav>
+
+      <div class="tabpane active" id="tab-summary">
+        <div class="kpis" id="kpis"></div>
+        <h3>Rendement tegenover buy &amp; hold en de markt</h3>
+        <div class="legend" id="equity-legend" style="margin-bottom:6px"></div>
+        <div id="equity-chart"></div>
+        <h3>Vergelijking</h3>
+        <div class="scroll"><table id="compare"></table></div>
+      </div>
+
+      <div class="tabpane" id="tab-returns">
+        <h3>Rendement per maand</h3>
+        <div class="scroll"><table class="heat" id="monthly"></table></div>
+      </div>
+
+      <div class="tabpane" id="tab-analysis">
+        <div class="kpis" id="analysis"></div>
+        <h3>Winst/verlies per trade</h3>
+        <div id="pnl-chart"></div>
+      </div>
+
+      <div class="tabpane" id="tab-trades">
+        <div class="scroll"><table>
+          <thead><tr><th>#</th><th>Instap</th><th>Uitstap</th><th>Kant</th><th>Instapprijs</th><th>Uitstapprijs</th>
+          <th>Winst/verlies</th><th>Rendement</th><th>Dagen</th></tr></thead>
+          <tbody id="trades"></tbody>
+        </table></div>
+        <div class="desc">Klik op een trade om in te zoomen op de grafiek. Winst/verlies is na kosten.</div>
+      </div>
+
+      <div class="tabpane" id="tab-pine">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px">
+          <div class="desc" style="margin:0">Plak in de Pine Editor van TradingView en klik op "Add to chart".</div>
+          <button type="button" id="copy">Kopiëren</button>
+        </div>
+        <pre id="pine"></pre>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const LWC = window.LightweightCharts;
+let strategies = [], last = null, charts = [];
+const nl = (v, d = 2) => v.toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (v, sign) => (sign && v > 0 ? '+' : '') + nl(v * 100, 2) + '%';
+const money = (v, sign) => (sign && v > 0 ? '+' : '') + nl(v, 2);
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const MONTHS = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+
+async function loadStrategies() {
+  strategies = await (await fetch('/strategies')).json();
+  const groups = {};
+  strategies.forEach(s => (groups[s.category_label] ??= []).push(s));
+  $('strategy').innerHTML = Object.entries(groups).map(([label, list]) =>
+    `<optgroup label="${label} (${list.length})">` + list.map(s => `<option value="${s.name}">${s.name}</option>`).join('') + '</optgroup>'
+  ).join('');
+  $('strategy').value = strategies.some(s => s.name === 'sma_crossover') ? 'sma_crossover' : strategies[0].name;
+  renderParams();
+}
+
+// Keuzelijst gerangschikt van beste naar slechtste voor het gekozen symbool en de gekozen periode.
+let orderKey = null;
+const rankKey = r => [r.symbol, r.source, r.start, r.end, r.fee_bps].join('|');
+// Score per strategie (zelfde puntentelling als Aanraders), uit de laatste watchlist-scan van dit symbool.
+const scoreCache = {};
+async function loadScores(symbol) {
+  if (!(symbol in scoreCache)) {
+    try { scoreCache[symbol] = (await (await fetch('/api/scores?symbol=' + encodeURIComponent(symbol))).json()).scores || {}; }
+    catch { scoreCache[symbol] = {}; }
+  }
+  return scoreCache[symbol];
+}
+function orderDropdown(d, key, scores = {}) {
+  orderKey = key;
+  const cur = $('strategy').value, seen = new Set();
+  const rows = d.results.filter(x => strategies.some(s => s.name === x.strategy));
+  const bh = d.buy_and_hold?.total_return;
+  const opts = rows.map((x, i) => {
+    seen.add(x.strategy);
+    const mark = x.strategy === 'buy_and_hold' ? ' ◆' : bh != null && x.total_return > bh ? ' ✓' : '';
+    const sc = scores[x.strategy]?.score;
+    // Open koopsignaal: blauw, zoals de open trade (B) op de grafiek.
+    const style = x.signal_open ? ` style="color:${getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#3b82f6'};font-weight:600"` : '';
+    return `<option value="${x.strategy}"${style}>${i + 1}. ${x.strategy}  ${pct(x.total_return, true)}${mark}` +
+      `${sc != null ? ' · score ' + nl(sc, 1) : ''}${x.signal_open ? ' · OPEN' : ''}</option>`;
+  }).join('');
+  const rest = strategies.filter(s => !seen.has(s.name)).map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+  const per = `${d.results[0]?.period?.start || ''} t/m ${d.results[0]?.period?.end || ''}`;
+  $('strategy').innerHTML = `<optgroup label="Van beste naar slechtste · ${per} · ✓ = beter dan buy & hold · blauw = koopsignaal staat open">${opts}</optgroup>` +
+    (rest ? `<optgroup label="Overige">${rest}</optgroup>` : '');
+  $('strategy').value = cur;
+}
+async function refreshOrder() {
+  const r = request(), key = rankKey(r);
+  if (key === orderKey) return;
+  orderKey = key;  // niet dubbel opvragen terwijl het loopt
+  try {
+    const d = await (await post('/rank', { symbol: r.symbol, source: r.source, start: r.start, end: r.end,
+      initial_capital: r.initial_capital, fee_bps: r.fee_bps })).json();
+    const scores = await loadScores(r.symbol);
+    if (rankKey(request()) === key) orderDropdown(d, key, scores);
+  } catch { orderKey = null; }
+}
+
+// Uitleg bij een strategie: hoe ze werkt, waar ze goed in is, haar zwakke punt en de indicatoren die ze gebruikt.
+function explainHtml(s) {
+  const e = s.explain; if (!e) return '';
+  return `<div class="explain">` + (e.how ? `<p><b>Hoe:</b> ${esc(e.how)}</p>` : '') +
+    (e.suits ? `<p><b>Werkt het best:</b> ${esc(e.suits)}</p>` : '') + (e.weak ? `<p><b>Zwak punt:</b> ${esc(e.weak)}</p>` : '') +
+    (e.indicators.length ? `<details><summary>Gebruikte indicatoren (${e.indicators.map(i => esc(i.name)).join(', ')})</summary>` +
+      e.indicators.map(i => `<p><b>${esc(i.name)}</b>: ${esc(i.text)}</p>`).join('') + '</details>' : '') + '</div>';
+}
+
+function renderParams() {
+  const s = strategies.find(x => x.name === $('strategy').value);
+  $('strategy-desc').innerHTML = esc(s.description) + explainHtml(s);
+  const entries = Object.entries(s.params);
+  $('params').innerHTML = entries.length ? '<div class="row">' + entries.map(([k, v]) =>
+    `<div><label for="p_${k}">${k}</label><input id="p_${k}" data-param="${k}" type="number" step="any" value="${v}"></div>`
+  ).join('') + '</div>' : '';
+}
+
+function request() {
+  const params = {};
+  document.querySelectorAll('[data-param]').forEach(el => params[el.dataset.param] = Number(el.value));
+  return {
+    symbol: $('symbol').value.trim(), strategy: $('strategy').value, params, source: $('source').value,
+    start: $('start').value || null, end: $('end').value || null,
+    initial_capital: Number($('capital').value), fee_bps: Number($('fee').value),
+    market_benchmark: $('market').value || null, include_prices: true,
+  };
+}
+
+async function post(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { const j = await r.json(); msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail); } catch {}
+    throw new Error(msg);
+  }
+  return r;
+}
+
+function baseChart(el, extra = {}) {
+  const c = LWC.createChart(el, {
+    autoSize: true,
+    layout: { background: { type: 'solid', color: css('--panel') }, textColor: css('--muted'), fontSize: 11 },
+    grid: { vertLines: { color: css('--border') }, horzLines: { color: css('--border') } },
+    rightPriceScale: { borderColor: css('--border'), minimumWidth: 72 },
+    timeScale: { borderColor: css('--border'), minBarSpacing: 0.05 },
+    crosshair: { mode: LWC.CrosshairMode.Normal },
+    ...extra,
+  });
+  charts.push(c);
+  return c;
+}
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const num = v => Math.abs(v) >= 1000 ? v.toFixed(0) : String(+v.toFixed(4));
+const tkey = t => !t ? null : typeof t === 'string' ? t : typeof t === 'object'
+  ? `${t.year}-${String(t.month).padStart(2, '0')}-${String(t.day).padStart(2, '0')}` : new Date(t * 1000).toISOString().slice(0, 10);
+const IND_COLORS = ['#f59e0b', '#a855f7', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#14b8a6', '#eab308'];
+
+// Indicatoren van de strategie: lijnen op de koers en eigen panelen (RSI, MACD, ...) met dezelfde tijdas.
+function renderIndicators(pc, d) {
+  const ind = d.indicators || { overlays: [], panes: [] };
+  const legend = [];
+  ind.overlays.forEach((o, i) => {
+    const color = IND_COLORS[i % IND_COLORS.length];
+    pc.addLineSeries({ color, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+      .setData(o.data);
+    legend.push(`<span><i style="background:${color}"></i>${esc(o.label)}</span>`);
+  });
+  $('ind-legend').innerHTML = legend.join('');
+  // Uitleg bij de lijnen op de koersgrafiek (één keer per soort lijn).
+  const seen = new Set(), lines = [];
+  ind.overlays.forEach(o => {
+    const k = o.label.split(' ')[0];
+    if (o.info && !seen.has(k)) { seen.add(k); lines.push(`<p><b>${esc(k)}</b>: ${esc(o.info)}</p>`); }
+  });
+  $('ind-explain').innerHTML = lines.length ? `<details><summary>Wat betekenen de lijnen op de koersgrafiek?</summary>${lines.join('')}</details>` : '';
+  const host = $('ind-panes');
+  host.innerHTML = '';
+  const blank = d.prices.map(p => ({ time: p.date }));   // zelfde bars als de koers, zodat de tijdassen gelijk lopen
+  const all = [pc];
+  pc._crossSeries = pc._candles; pc._crossValues = new Map(d.prices.map(p => [p.date, p.close]));
+  ind.panes.forEach(pane => {
+    const wrap = document.createElement('div');
+    wrap.className = 'ind-pane';
+    const names = pane.series.map((s, i) =>
+      `<span style="color:${IND_COLORS[i % IND_COLORS.length]}">${esc(s.label)}</span>`).join(' · ');
+    const lv = pane.levels.map(l => (l.label ? `${esc(l.label)} ` : '') + num(l.value)).join(', ');
+    wrap.innerHTML = `<div class="ind-title"><b>${esc(pane.title)}</b>${names}${lv ? ' · niveaus ' + lv : ''}</div><div class="ind-chart"></div>` +
+      (pane.info ? `<div class="ind-info"><b>Wat is dit?</b> ${esc(pane.info)}</div>` : '');
+    host.appendChild(wrap);
+    const c = baseChart(wrap.querySelector('.ind-chart'), { timeScale: { borderColor: css('--border'), minBarSpacing: 0.05, visible: false } });
+    c._pane = true;
+    c.addLineSeries({ lineVisible: false, priceLineVisible: false, lastValueVisible: false }).setData(blank);
+    let first = null;
+    pane.series.forEach((s, i) => {
+      const color = IND_COLORS[i % IND_COLORS.length];
+      const series = s.type === 'histogram'
+        ? c.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false })
+        : c.addLineSeries({ color, lineWidth: 1.5, priceLineVisible: false, crosshairMarkerVisible: false });
+      series.setData(s.type === 'histogram'
+        ? s.data.map(p => ({ ...p, color: (p.value >= 0 ? css('--up') : css('--down')) + '99' }))
+        : s.data);
+      if (!first || (first._hist && s.type !== 'histogram')) { first = series; first._hist = s.type === 'histogram';
+        c._crossSeries = series; c._crossValues = new Map(s.data.map(p => [p.time, p.value])); }
+    });
+    pane.levels.forEach(l => first.createPriceLine({ price: l.value, color: css('--muted'), lineWidth: 1,
+      lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: true, title: l.label || '' }));
+    all.push(c);
+  });
+  if (all.length > 1) {
+    pc.applyOptions({ timeScale: { visible: true } });
+    let syncing = false;
+    all.forEach(src => src.timeScale().subscribeVisibleLogicalRangeChange(r => {
+      if (syncing || !r) return;
+      syncing = true;
+      all.forEach(dst => dst !== src && dst.timeScale().setVisibleLogicalRange(r));
+      syncing = false;
+    }));
+    all.forEach(src => src.subscribeCrosshairMove(param => {
+      if (syncing) return;
+      syncing = true;
+      all.forEach(dst => { if (dst !== src) { const t = tkey(param.time), v = t && dst._crossValues.get(t); if (t && v !== undefined) dst.setCrosshairPosition(v, t, dst._crossSeries); else dst.clearCrosshairPosition(); } });
+      syncing = false;
+    }));
+  }
+}
+
+function kpi(label, value, sub, colorVal) {
+  return `<div class="kpi"><div class="k">${label}</div><div class="v ${colorVal === undefined ? '' : cls(colorVal)}">${value}</div>` +
+         (sub ? `<div class="s">${sub}</div>` : '') + '</div>';
+}
+
+function render(d) {
+  last = d;
+  charts.forEach(c => c.remove()); charts = [];
+  $('empty').classList.add('hidden'); $('out').classList.remove('hidden');
+  $('title').textContent = `${d.symbol} · ${d.strategy}`;
+  $('period').textContent = `${d.period.start} t/m ${d.period.end}`;
+  const m = d.metrics, b = d.benchmark_metrics, mk = d.market_metrics;
+
+  // Koersgrafiek met B/S-markers
+  const pc = baseChart($('price-chart'));
+  const candles = pc.addCandlestickSeries({ upColor: css('--up'), downColor: css('--down'), borderVisible: false,
+    wickUpColor: css('--up'), wickDownColor: css('--down') });
+  pc._candles = candles;
+  candles.setData(d.prices.map(p => ({ time: p.date, open: p.open, high: p.high, low: p.low, close: p.close })));
+  const vol = pc.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false });
+  pc.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+  vol.setData(d.prices.map(p => ({ time: p.date, value: p.volume,
+    color: (p.close >= p.open ? css('--up') : css('--down')) + '55' })));
+  // Winst = groen, verlies = rood: de B en S van één trade krijgen dezelfde kleur, met een lijn van instap naar uitstap.
+  const markers = [], win = css('--up'), loss = css('--down'), buy = css('--accent');
+  const dates = d.prices.map(p => p.date), nextDate = t => dates[dates.indexOf(t) + 1];
+  const legs = { win: new Map(), loss: new Map() };
+  d.trades.forEach(t => {
+    const good = t.pnl > 0, col = good ? win : loss, leg = legs[good ? 'win' : 'loss'];
+    markers.push({ time: t.entry_date, position: 'belowBar', color: t.exit_date ? col : buy, shape: 'arrowUp', text: 'B' });
+    if (t.exit_date) markers.push({ time: t.exit_date, position: 'aboveBar', color: col, shape: 'arrowDown',
+      text: 'S ' + pct(t.pnl_pct, true) });
+    const end = t.exit_date || dates[dates.length - 1];
+    leg.set(t.entry_date, { time: t.entry_date, value: t.entry_price });
+    leg.set(end, { time: end, value: t.exit_price });
+    const gap = nextDate(end);
+    if (gap && !leg.has(gap)) leg.set(gap, { time: gap });   // lege plek: lijn hier onderbreken
+  });
+  for (const [k, color] of [['win', win], ['loss', loss]]) {
+    const data = [...legs[k].values()].sort((a, b) => a.time.localeCompare(b.time));
+    if (data.length) pc.addLineSeries({ color, lineWidth: 2, lineStyle: LWC.LineStyle.Dotted, priceLineVisible: false,
+      lastValueVisible: false, crosshairMarkerVisible: false }).setData(data);
+  }
+  candles.setMarkers(markers.sort((a, c) => a.time.localeCompare(c.time)));
+  renderIndicators(pc, d);
+  pc.timeScale().fitContent();
+
+  // Overzicht
+  $('kpis').innerHTML = [
+    kpi('Netto winst', money(m.net_profit, true), pct(m.total_return, true) + ' · eindkapitaal − start', m.net_profit),
+    kpi('Extra t.o.v. buy &amp; hold', money(m.excess_profit, true),
+        `${pct(m.excess_return, true)} · vasthouden gaf ${money(b.net_profit, true)}`, m.excess_profit),
+    kpi('Gerealiseerde winst', money(m.realized_pnl, true), pct(m.realized_return, true) + ' · afgesloten trades', m.realized_pnl),
+    kpi('Open positie', m.open_pnl ? money(m.open_pnl, true) : '–', m.open_pnl ? 'nog niet verkocht' : 'geen', m.open_pnl),
+    kpi('Rendabele trades', pct(m.percent_profitable), `${m.winning_trades} van ${m.closed_trades} afgesloten`),
+    kpi('Aantal trades', m.num_trades, m.num_trades - m.closed_trades ? '1 nog open' : ''),
+    kpi('Profit factor', m.profit_factor == null ? '–' : nl(m.profit_factor), 'winst / verlies'),
+    kpi('Sharpe', nl(m.sharpe), 'B&amp;H ' + nl(b.sharpe)),
+    kpi('Max drawdown', pct(m.max_drawdown), 'B&amp;H ' + pct(b.max_drawdown), m.max_drawdown),
+    kpi('Rendement per jaar', pct(m.cagr, true), 'B&amp;H ' + pct(b.cagr, true), m.cagr),
+    kpi('Eindkapitaal', money(m.final_equity), 'start ' + money(d.equity_curve[0].equity)),
+  ].join('');
+
+  const ec = baseChart($('equity-chart'), { rightPriceScale: { borderColor: css('--border'), mode: LWC.PriceScaleMode.Percentage } });
+  const series = [
+    ['Strategie', 'equity', css('--accent'), 2],
+    ['Buy & hold ' + d.symbol, 'benchmark', css('--bench'), 1],
+  ];
+  if (d.market_benchmark) series.push([d.market_benchmark, 'market', css('--market'), 1]);
+  series.forEach(([name, key, color, w]) => {
+    const s = ec.addLineSeries({ color, lineWidth: w, title: name, priceLineVisible: false });
+    s.setData(d.equity_curve.filter(p => p[key] != null).map(p => ({ time: p.date, value: p[key] })));
+  });
+  ec.timeScale().fitContent();
+  $('equity-legend').innerHTML = series.map(([n, , c]) => `<span><i style="background:${c}"></i>${n}</span>`).join('');
+
+  const cols = [['Strategie', m], ['Buy & hold ' + d.symbol, b]];
+  if (mk) cols.push([d.market_benchmark, mk]);
+  const rows = [['Totaal rendement', 'total_return', v => pct(v, true), true], ['Rendement per jaar', 'cagr', v => pct(v, true), true],
+    ['Sharpe', 'sharpe', nl], ['Sortino', 'sortino', nl], ['Max drawdown', 'max_drawdown', v => pct(v), true],
+    ['Volatiliteit', 'volatility', v => pct(v)], ['Calmar', 'calmar', nl]];
+  $('compare').innerHTML = '<thead><tr><th></th>' + cols.map(c => `<th>${c[0]}</th>`).join('') + '</tr></thead><tbody>' +
+    rows.map(([label, key, f, color]) => `<tr><td>${label}</td>` +
+      cols.map(([, src]) => `<td class="${color ? cls(src[key]) : ''}">${f(src[key])}</td>`).join('') + '</tr>').join('') + '</tbody>';
+
+  // Rendementen per maand
+  const years = {};
+  d.monthly_returns.forEach(r => (years[r.year] ??= {})[r.month] = r.return);
+  const heat = v => {
+    if (v === undefined) return '<td></td>';
+    const a = Math.min(Math.abs(v) / 0.1, 1) * 0.55 + 0.08;
+    const bg = v >= 0 ? `rgba(34,197,94,${a})` : `rgba(239,68,68,${a})`;
+    return `<td style="background:${bg}">${nl(v * 100, 1)}</td>`;
+  };
+  $('monthly').innerHTML = '<thead><tr><th>Jaar</th>' + MONTHS.map(x => `<th>${x}</th>`).join('') + '<th>Jaar</th></tr></thead><tbody>' +
+    Object.keys(years).sort().reverse().map(y => {
+      const total = Object.values(years[y]).reduce((acc, v) => acc * (1 + v), 1) - 1;
+      return `<tr><td>${y}</td>` + MONTHS.map((_, i) => heat(years[y][i + 1])).join('') + heat(total) + '</tr>';
+    }).join('') + '</tbody>';
+
+  // Trade-analyse
+  $('analysis').innerHTML = [
+    kpi('Rendabele trades', pct(m.percent_profitable), `${m.winning_trades} winst · ${m.losing_trades} verlies`),
+    kpi('Brutowinst', money(m.gross_profit), '', m.gross_profit),
+    kpi('Brutoverlies', money(-m.gross_loss), '', -m.gross_loss),
+    kpi('Profit factor', m.profit_factor == null ? '–' : nl(m.profit_factor)),
+    kpi('Gem. winst', money(m.avg_win, true), '', m.avg_win),
+    kpi('Gem. verlies', money(m.avg_loss, true), '', m.avg_loss),
+    kpi('Grootste winst', money(m.largest_win, true), '', m.largest_win),
+    kpi('Grootste verlies', money(m.largest_loss, true), '', m.largest_loss),
+    kpi('Gem. duur', nl(m.avg_bars_in_trade, 0) + ' dagen'),
+    kpi('Tijd in de markt', pct(m.exposure)),
+  ].join('');
+  const pl = baseChart($('pnl-chart'));
+  const hist = pl.addHistogramSeries({ priceLineVisible: false });
+  const byDay = new Map();
+  d.trades.forEach(t => { const k = t.exit_date ?? d.period.end; byDay.set(k, (byDay.get(k) ?? 0) + t.pnl); });
+  hist.setData([...byDay.entries()].sort((a, c) => a[0].localeCompare(c[0]))
+    .map(([time, v]) => ({ time, value: v, color: v >= 0 ? css('--up') : css('--down') })));
+  pl.timeScale().fitContent();
+
+  // Trades
+  $('trades').innerHTML = d.trades.map((t, i) => ({ t, i })).reverse().map(({ t, i }) =>
+    `<tr data-i="${i}"><td>${i + 1}</td><td>${t.entry_date}</td><td>${t.exit_date ?? 'open'}</td><td>${t.side}</td>` +
+    `<td>${nl(t.entry_price)}</td><td>${nl(t.exit_price)}</td>` +
+    `<td class="${cls(t.pnl)}">${money(t.pnl, true)}</td><td class="${cls(t.pnl_pct)}">${pct(t.pnl_pct, true)}</td>` +
+    `<td>${t.bars}</td></tr>`).join('') || '<tr><td colspan="9" class="desc">Geen trades</td></tr>';
+  document.querySelectorAll('#trades tr[data-i]').forEach(tr => tr.addEventListener('click', () => {
+    const t = d.trades[tr.dataset.i];
+    const idx = d.prices.findIndex(p => p.date === t.entry_date);
+    const end = t.exit_date ? d.prices.findIndex(p => p.date === t.exit_date) : d.prices.length - 1;
+    const pad = Math.max(10, Math.round((end - idx) * 0.5));
+    pc.timeScale().setVisibleLogicalRange({ from: idx - pad, to: end + pad });
+    $('price-chart').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }));
+
+  loadPine();
+}
+
+async function loadPine() {
+  try { $('pine').textContent = await (await post('/pine', request())).text(); }
+  catch (err) { $('pine').textContent = 'Kon Pine Script niet maken: ' + err.message; }
+}
+
+$('tabs').addEventListener('click', e => {
+  const tab = e.target.closest('.tab'); if (!tab) return;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+  document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab.dataset.tab));
+  // Grafieken in een verborgen tab hebben nog geen breedte: opnieuw passend maken zodra ze zichtbaar zijn.
+  requestAnimationFrame(() => charts.slice(1).filter(c => !c._pane).forEach(c => c.timeScale().fitContent()));
+});
+
+$('strategy').addEventListener('change', () => { renderParams(); $('form').requestSubmit(); });
+
+let view = 'bt';  // wat laatst getoond is, zodat een snelknop voor de periode dat opnieuw draait
+
+$('form').addEventListener('submit', async e => {
+  e.preventDefault(); view = 'bt';
+  $('error').textContent = ''; $('run').disabled = true; $('run').textContent = 'Bezig...';
+  try { render(await (await post('/backtest', request())).json()); refreshOrder(); }
+  catch (err) { $('error').textContent = err.message; }
+  finally { $('run').disabled = false; $('run').textContent = 'Backtest draaien'; }
+});
+
+// ---------------------------------------------------------------- optimalisatie
+let optData = null;
+
+async function runOptimize() {
+  $('error').textContent = ''; $('opt-btn').disabled = true; $('opt-btn').textContent = 'Bezig met optimaliseren...';
+  const r = request();
+  try {
+    optData = await (await post('/optimize', { symbol: r.symbol, strategy: r.strategy, source: r.source, start: r.start,
+      end: r.end, initial_capital: r.initial_capital, fee_bps: r.fee_bps, objective: $('opt-objective').value })).json();
+    $('empty').classList.add('hidden'); $('opt').classList.remove('hidden');
+    renderOptimize();
+    $('opt').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) { $('error').textContent = err.message; }
+  finally { $('opt-btn').disabled = false; $('opt-btn').textContent = 'Instellingen optimaliseren'; }
+}
+
+const fmtParams = p => Object.entries(p).map(([k, v]) => `${k}=${typeof v === 'number' ? nl(v, Number.isInteger(v) ? 0 : 2) : v}`).join(', ') || '(geen)';
+
+function renderOptimize() {
+  const d = optData, obj = d.objective;
+  const fmt = obj === 'total_return' || obj === 'percent_profitable' ? (v => pct(v, obj === 'total_return')) : (v => v == null ? '–' : nl(v));
+  $('opt-title').textContent = `Optimalisatie ${d.strategy}`;
+  $('opt-sub').textContent = `${d.combos_tested} combinaties · leren ${d.train_period.start} t/m ${d.train_period.end} · controle ${d.test_period.start} t/m ${d.test_period.end}`;
+  const best = d.best, def = d.default;
+  $('opt-verdict').innerHTML = (best.is_default
+    ? `<b>De standaardinstelling is al de beste</b> op de leerperiode.`
+    : d.robust
+      ? `<b class="up">Waarschijnlijk een echte verbetering.</b> De beste instelling (${fmtParams(best.params)}) doet het ook in de controleperiode beter dan de standaard: ${fmt(best.test[obj])} tegenover ${fmt(def.test[obj])}.`
+      : `<b class="down">Let op: waarschijnlijk overfitting.</b> De beste instelling op de leerperiode (${fmtParams(best.params)}) doet het in de controleperiode slechter dan de standaard: ${fmt(best.test[obj])} tegenover ${fmt(def.test[obj])}.`)
+    + ` <span class="desc">Buy &amp; hold in de controleperiode: ${pct(def.test.buy_and_hold_return, true)}.</span>`;
+  const rows = d.results.some(r => r.is_default) ? d.results : [...d.results, def];
+  $('opt-table').innerHTML = '<thead><tr><th>#</th><th style="text-align:left">Instellingen</th>' +
+    '<th>Leren: rendement</th><th>Leren: % rendabel</th><th>Leren: trades</th>' +
+    '<th>Controle: rendement</th><th>Controle: vs B&amp;H</th><th>Controle: % rendabel</th><th>Controle: trades</th><th></th></tr></thead><tbody>' +
+    rows.map((r, i) => `<tr class="${r.is_default ? 'bh' : ''}"><td>${r.is_default && i >= d.results.length ? '–' : i + 1}</td>` +
+      `<td class="name">${fmtParams(r.params)}${r.is_default ? ' <span class="badge">standaard</span>' : ''}</td>` +
+      `<td class="${cls(r.train.total_return)}">${pct(r.train.total_return, true)}</td>` +
+      `<td>${r.train.closed_trades ? pct(r.train.percent_profitable) : '–'}</td><td>${r.train.num_trades}</td>` +
+      `<td class="${cls(r.test.total_return)}">${pct(r.test.total_return, true)}</td>` +
+      `<td class="${cls(r.test.excess_return)}">${pct(r.test.excess_return, true)}</td>` +
+      `<td>${r.test.closed_trades ? pct(r.test.percent_profitable) : '–'}</td><td>${r.test.num_trades}</td>` +
+      `<td><button type="button" data-apply='${JSON.stringify(r.params)}'>Toepassen</button></td></tr>`).join('') + '</tbody>';
+}
+
+$('opt-btn').addEventListener('click', runOptimize);
+$('opt-objective').addEventListener('change', () => optData && runOptimize());
+$('opt-close').addEventListener('click', () => $('opt').classList.add('hidden'));
+$('opt-table').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-apply]'); if (!btn) return;
+  Object.entries(JSON.parse(btn.dataset.apply)).forEach(([k, v]) => { const el = $('p_' + k); if (el) el.value = v; });
+  $('form').requestSubmit();
+  setTimeout(() => $('out').scrollIntoView({ behavior: 'smooth', block: 'start' }), 600);
+});
+
+// ---------------------------------------------------------------- automatische keuze
+async function runAuto() {
+  view = 'auto';
+  $('error').textContent = ''; $('auto-btn').disabled = true; $('auto-btn').textContent = 'Bezig met kiezen...';
+  const r = request();
+  try {
+    const d = await (await post('/adaptive', { symbol: r.symbol, source: r.source, start: r.start || '2020-01-01', end: r.end,
+      initial_capital: r.initial_capital, fee_bps: r.fee_bps, train_years: +$('auto-train').value, step: $('auto-step').value,
+      objective: $('auto-objective').value, by_regime: $('auto-regime').checked })).json();
+    $('empty').classList.add('hidden'); $('auto').classList.remove('hidden');
+    renderAuto(d);
+    $('auto').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) { $('error').textContent = err.message; }
+  finally { $('auto-btn').disabled = false; $('auto-btn').textContent = 'Automatische keuze per markttoestand'; }
+}
+
+let autoChart = null;
+function renderAuto(d) {
+  const m = d.metrics, b = d.buy_and_hold, c = d.current;
+  $('auto-title').textContent = `Automatische keuze ${d.symbol}`;
+  $('auto-sub').textContent = `${d.period.start} t/m ${d.period.end} · ${d.steps.length} beslismomenten · ${m.switches} wissels`;
+  const verdict = d.beats_buy_and_hold
+    ? `<b class="up">Verslaat buy &amp; hold</b> op rendement (${pct(m.total_return, true)} tegen ${pct(b.total_return, true)}).`
+    : d.beats_bh_risk
+    ? `<b>Minder rendement dan buy &amp; hold</b> (${pct(m.total_return, true)} tegen ${pct(b.total_return, true)}), maar <b class="up">beter op risico</b>: hogere Sharpe en kleinere drawdown.`
+    : `<b class="down">Verslaat buy &amp; hold niet</b> (${pct(m.total_return, true)} tegen ${pct(b.total_return, true)}). Bij dit aandeel was gewoon vasthouden de betere keuze.`;
+  $('auto-verdict').innerHTML = `<p>${verdict} Nu: markt <b>${c.regime_label || '–'}</b>${c.high_vol ? ' en beweeglijk' : ''}, ` +
+    `gekozen strategie <b>${c.strategy}</b> (${c.in_position ? 'staat in een positie' : 'staat cash'}).</p>`;
+  $('auto-kpis').innerHTML = [
+    kpi('Rendement', pct(m.total_return, true), 'buy &amp; hold ' + pct(b.total_return, true), m.total_return - b.total_return),
+    kpi('Sharpe', nl(m.sharpe), 'buy &amp; hold ' + nl(b.sharpe), m.sharpe - b.sharpe),
+    kpi('Max drawdown', pct(m.max_drawdown), 'buy &amp; hold ' + pct(b.max_drawdown), m.max_drawdown - b.max_drawdown),
+    kpi('Rendement per jaar', pct(m.cagr, true), 'buy &amp; hold ' + pct(b.cagr, true), m.cagr - b.cagr),
+    kpi('Tijd belegd', pct(m.exposure), 'rest van de tijd cash'),
+    kpi('Markttoestand', `<span style="font-size:13px;font-weight:500">${Object.entries(d.regime_share).map(([k, v]) => `${k} ${pct(v)}`).join('<br>')}</span>`, 'van de dagen in de periode'),
+  ].join('');
+  if (autoChart) { autoChart.remove(); charts = charts.filter(x => x !== autoChart); }
+  autoChart = baseChart($('auto-chart'), { rightPriceScale: { borderColor: css('--border'), mode: LWC.PriceScaleMode.Percentage, minimumWidth: 72 } });
+  autoChart.addLineSeries({ color: css('--accent'), lineWidth: 2, title: 'Automatisch', priceLineVisible: false })
+    .setData(d.equity_curve.map(p => ({ time: p.date, value: p.equity })));
+  autoChart.addLineSeries({ color: css('--bench'), lineWidth: 1, title: 'Buy & hold', priceLineVisible: false })
+    .setData(d.equity_curve.map(p => ({ time: p.date, value: p.benchmark })));
+  autoChart.timeScale().fitContent();
+  $('auto-table').innerHTML = '<thead><tr><th style="text-align:left">Vanaf</th><th style="text-align:left">Markt</th><th style="text-align:left">Gekozen strategie</th>' +
+    '<th>Score in leerperiode</th><th>Resultaat daarna</th><th>Buy &amp; hold daarna</th></tr></thead><tbody>' +
+    d.steps.slice().reverse().map(s => `<tr data-name="${s.strategy}"><td style="text-align:left">${s.date}</td>` +
+      `<td style="text-align:left">${s.regime_label}${s.high_vol ? ' · beweeglijk' : ''}</td>` +
+      `<td class="name" style="text-align:left">${s.strategy} <span class="badge">${s.category_label}</span></td>` +
+      `<td>${d.settings.objective === 'sharpe' ? nl(s.train_score) : pct(s.train_score, true)}</td>` +
+      `<td class="${cls(s.return)}">${pct(s.return, true)}</td><td class="${cls(s.buy_and_hold_return)}">${pct(s.buy_and_hold_return, true)}</td></tr>`).join('') + '</tbody>';
+}
+$('auto-btn').addEventListener('click', runAuto);
+$('auto-run').addEventListener('click', runAuto);
+$('auto-close').addEventListener('click', () => $('auto').classList.add('hidden'));
+$('auto-table').addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-name]'); if (!tr) return;
+  $('strategy').value = tr.dataset.name; renderParams(); $('form').requestSubmit();
+  setTimeout(() => $('out').scrollIntoView({ behavior: 'smooth', block: 'start' }), 600);
+});
+
+// ---------------------------------------------------------------- ranglijst
+let rankData = null, rankCats = new Set();
+
+async function runRank() {
+  view = 'rank';
+  $('error').textContent = ''; $('rank-btn').disabled = true; $('rank-btn').textContent = 'Bezig met testen...';
+  const r = request();
+  try {
+    rankData = await (await post('/rank', { symbol: r.symbol, source: r.source, start: r.start, end: r.end,
+      initial_capital: r.initial_capital, fee_bps: r.fee_bps })).json();
+    rankCats = new Set();
+    orderDropdown(rankData, rankKey(r));
+    loadScores(r.symbol).then(sc => { if (rankKey(request()) === rankKey(r)) orderDropdown(rankData, rankKey(r), sc); });
+    $('empty').classList.add('hidden'); $('rank').classList.remove('hidden');
+    renderRank();
+    $('rank').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) { $('error').textContent = err.message; }
+  finally { $('rank-btn').disabled = false; $('rank-btn').textContent = 'Alle strategieën testen'; }
+}
+
+function renderRank() {
+  const d = rankData, key = $('rank-sort').value;
+  const cats = [...new Map(d.results.filter(x => x.category !== 'benchmark').map(x => [x.category, x.category_label]))];
+  $('rank-cats').innerHTML = `<button type="button" class="chip ${rankCats.size ? '' : 'on'}" data-cat="">Alle (${d.results.length - 1})</button>` +
+    cats.map(([k, label]) => `<button type="button" class="chip ${rankCats.has(k) ? 'on' : ''}" data-cat="${k}">${label} (${d.results.filter(x => x.category === k).length})</button>`).join('');
+  const rows = d.results.filter(x => !rankCats.size || rankCats.has(x.category) || x.category === 'benchmark')
+    .sort(key === 'recent_buy'
+      ? (a, b) => (b.signal_open - a.signal_open) || ((a.bars_since_buy ?? 1e9) - (b.bars_since_buy ?? 1e9))
+      : key === 'risk'
+      ? (a, b) => (!!b.beats_bh_risk - !!a.beats_bh_risk) || (b.sharpe - a.sharpe)
+      : (a, b) => (b[key] ?? -Infinity) - (a[key] ?? -Infinity));
+  const bh = d.buy_and_hold;
+  const beat = d.results.filter(x => x.category !== 'benchmark' && x.beats_buy_and_hold).length;
+  const beatRisk = d.results.filter(x => x.category !== 'benchmark' && x.beats_bh_risk).length;
+  const bhPlace = 1 + d.results.filter(x => x.category !== 'benchmark' && bh && x.total_return > bh.total_return).length;
+  $('rank-title').textContent = `Ranglijst ${d.symbol}`;
+  $('rank-sub').textContent = `${d.results.length - 1} strategieën · ${d.results[0]?.period.start} t/m ${d.results[0]?.period.end} · ` +
+    `buy & hold staat op plaats ${bhPlace} (${bh ? pct(bh.total_return, true) : '–'}) · ${beat} doen meer rendement · ` +
+    `${beatRisk} doen het beter op risico (hogere Sharpe én kleinere drawdown)`;
+  let rank = 0;
+  $('rank-table').innerHTML = '<thead><tr><th>#</th><th style="text-align:left">Strategie</th><th>Rendement</th><th>Laatste buy</th><th>Netto winst</th>' +
+    '<th>% rendabel</th><th>Trades</th><th>Sharpe</th><th>Max DD</th><th title="Jaarrendement gedeeld door de grootste daling">Rend./DD</th><th>Profit factor</th></tr></thead><tbody>' +
+    rows.map(x => {
+      const isBh = x.category === 'benchmark';
+      if (!isBh) rank++;
+      return `<tr data-name="${x.strategy}" class="${isBh ? 'bh' : ''}"><td>${isBh ? '–' : rank}</td>` +
+        `<td class="name">${x.strategy} <span class="badge">${x.category_label}</span>` +
+        (x.beats_bh_risk && !isBh ? ' <span class="badge risk" title="Hogere Sharpe en kleinere drawdown dan buy &amp; hold">beter risico</span>' : '') +
+        `<small>${x.description}${(() => { const e = strategies.find(s => s.name === x.strategy)?.explain;
+          return e && e.weak ? `<br>Werkt het best: ${esc(e.suits)} · Zwak punt: ${esc(e.weak)}` : ''; })()}</small></td>` +
+        `<td class="${cls(x.total_return)}">${pct(x.total_return, true)}</td>` +
+        `<td>${buyCell(x)}</td>` +
+        `<td class="${cls(x.net_profit)}">${money(x.net_profit, true)}</td>` +
+        `<td>${x.closed_trades ? pct(x.percent_profitable) : '–'}<small style="display:block;color:var(--muted)">${x.winning_trades}/${x.closed_trades}</small></td>` +
+        `<td>${x.num_trades}</td><td>${nl(x.sharpe)}</td><td class="down">${pct(x.max_drawdown)}</td><td>${x.calmar == null ? '–' : nl(x.calmar)}</td>` +
+        `<td>${x.profit_factor == null ? '–' : nl(x.profit_factor)}</td></tr>`;
+    }).join('') + '</tbody>';
+}
+
+function ago(bars, days) {
+  if (bars === 0) return 'vandaag';
+  if (bars === 1) return 'gisteren';
+  return days < 14 ? `${bars} handelsdagen geleden` : days < 60 ? `${Math.round(days / 7)} weken geleden` : `${Math.round(days / 30)} maanden geleden`;
+}
+
+function buyCell(x) {
+  if (!x.last_buy_signal) return '<span class="desc">geen</span>';
+  const badge = x.signal_open ? '<span class="badge open">OPEN</span>' : `<span class="badge">verkocht ${x.last_sell_signal}</span>`;
+  return `${badge}<small style="display:block;color:var(--muted)">${x.last_buy_signal} · ${ago(x.bars_since_buy, x.days_since_buy)}</small>`;
+}
+
+$('rank-btn').addEventListener('click', runRank);
+$('rank-sort').addEventListener('change', () => rankData && renderRank());
+$('rank-close').addEventListener('click', () => $('rank').classList.add('hidden'));
+$('rank-cats').addEventListener('click', e => {
+  const chip = e.target.closest('.chip'); if (!chip) return;
+  const c = chip.dataset.cat;
+  if (!c) rankCats.clear(); else rankCats.has(c) ? rankCats.delete(c) : rankCats.add(c);
+  renderRank();
+});
+$('rank-table').addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-name]'); if (!tr) return;
+  $('strategy').value = tr.dataset.name; renderParams();
+  $('form').requestSubmit();
+  setTimeout(() => $('out').scrollIntoView({ behavior: 'smooth', block: 'start' }), 600);
+});
+
+$('copy').addEventListener('click', async () => {
+  await navigator.clipboard.writeText($('pine').textContent);
+  $('copy').textContent = 'Gekopieerd'; setTimeout(() => $('copy').textContent = 'Kopiëren', 1500);
+});
+
+// Link vanaf het overzicht of de watchlist: /tool?symbol=HOOD&strategy=donchian_20_10&source=yahoo&start=2021-01-01
+function applyQuery() {
+  const q = new URLSearchParams(location.search);
+  if (!q.get('symbol')) return;
+  $('symbol').value = q.get('symbol');
+  for (const k of ['source', 'start', 'end']) if (q.get(k)) $(k).value = q.get(k);
+  if (q.get('strategy') && strategies.some(s => s.name === q.get('strategy'))) { $('strategy').value = q.get('strategy'); renderParams(); }
+  if (q.get('view') === 'rank') runRank(); else if (q.get('view') === 'auto') runAuto(); else $('form').requestSubmit();
+}
+
+// Snelknoppen: start = vandaag min de periode, einde leeg (= vandaag), en meteen opnieuw draaien.
+function quickStart(q) {
+  const d = new Date();
+  if (/^\d{4}$/.test(q)) return q + '-01-01';
+  const n = parseInt(q, 10);
+  if (q.endsWith('m')) d.setMonth(d.getMonth() - n); else d.setFullYear(d.getFullYear() - n);
+  return d.toISOString().slice(0, 10);
+}
+function markQuick() {
+  document.querySelectorAll('#quick button').forEach(b =>
+    b.classList.toggle('active', !$('end').value && $('start').value === quickStart(b.dataset.q)));
+}
+$('quick').addEventListener('click', e => {
+  const b = e.target.closest('button[data-q]'); if (!b) return;
+  $('start').value = quickStart(b.dataset.q); $('end').value = ''; markQuick();
+  if (view === 'rank') runRank(); else if (view === 'auto') runAuto(); else $('form').requestSubmit();
+});
+['start', 'end'].forEach(id => $(id).addEventListener('input', markQuick));
+
+// Ingebed (watchlist-details): hoogte doorgeven zodat het kader meegroeit met de inhoud.
+if (new URLSearchParams(location.search).get('embed')) {
+  document.body.classList.add('embed');
+  let last = 0;
+  new ResizeObserver(() => {
+    const h = Math.ceil(document.body.getBoundingClientRect().height);
+    if (Math.abs(h - last) > 2) { last = h; parent.postMessage({ type: 'tool-height', h }, '*'); }
+  }).observe(document.body);
+}
+
+loadStrategies().then(() => { applyQuery(); markQuick(); }).catch(err => $('error').textContent = 'Kon strategieën niet laden: ' + err.message);
+</script>
+</body>
+</html>

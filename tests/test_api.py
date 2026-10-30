@@ -1,0 +1,412 @@
+import numpy as np
+import pandas as pd
+from fastapi.testclient import TestClient
+
+from app.data import synthetic
+from app.engine import run_backtest
+from app.main import app
+from app.pine import to_pine
+from app.strategies import STRATEGIES, get_strategy
+
+client = TestClient(app)
+
+
+def test_buy_and_hold_matches_price_from_first_open():
+    prices = synthetic("X", "2020-01-01", "2021-12-31", seed=1)
+    res = run_backtest(prices, get_strategy("buy_and_hold"), 10_000, fee_bps=0)
+    expected = 10_000 * prices["close"].iloc[-1] / prices["open"].iloc[1]
+    assert np.isclose(res.equity.iloc[-1], expected)
+
+
+def test_no_lookahead():
+    prices = synthetic("X", "2020-01-01", "2020-12-31", seed=2)
+    res = run_backtest(prices, get_strategy("sma_crossover", fast=5, slow=20), fee_bps=0)
+    assert res.position.iloc[0] == 0
+
+
+def test_fees_reduce_return():
+    prices = synthetic("X", seed=3)
+    s = get_strategy("rsi_mean_reversion")
+    assert run_backtest(prices, s, fee_bps=50).equity.iloc[-1] < run_backtest(prices, s, fee_bps=0).equity.iloc[-1]
+
+
+def test_all_strategies_have_pine():
+    for name in STRATEGIES:
+        code = to_pine(get_strategy(name))
+        assert code.startswith("//@version=6") and "strategy(" in code
+
+
+def test_api_backtest_and_compare():
+    r = client.post("/backtest", json={"symbol": "TEST", "strategy": "sma_crossover", "source": "synthetic",
+                                       "params": {"fast": 20, "slow": 50}})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {"sharpe", "max_drawdown", "cagr"} <= body["metrics"].keys()
+    r = client.post("/compare", json={"symbols": ["A", "B"], "source": "synthetic",
+                                      "strategies": [{"name": "buy_and_hold"}, {"name": "momentum"}]})
+    assert r.status_code == 200 and len(r.json()) == 4
+
+
+def test_api_rejects_unknown():
+    r = client.post("/backtest", json={"symbol": "T", "strategy": "nope", "source": "synthetic"})
+    assert r.status_code == 400
+
+
+def test_upload_tradingview_csv(tmp_path, monkeypatch):
+    import app.main as m
+    monkeypatch.setattr(m, "DATA_DIR", tmp_path)
+    df = synthetic("X", "2023-01-01", "2023-06-30", seed=4).reset_index()
+    df["time"] = df["date"].astype("int64") // 10**9
+    csv = df.drop(columns="date")[["time", "open", "high", "low", "close", "volume"]].to_csv(index=False)
+    r = client.post("/data/xyz", files={"file": ("x.csv", csv)})
+    assert r.status_code == 200, r.text
+    assert (tmp_path / "XYZ.csv").exists()
+
+
+def test_hyperliquid_parsing(monkeypatch):
+    import httpx
+
+    from app import data
+
+    candles = [{"t": 1704067200000 + i * 86_400_000, "o": "100", "h": "110", "l": "90", "c": str(100 + i), "v": "5"}
+               for i in range(10)]
+
+    class Resp:
+        def raise_for_status(self): ...
+        def json(self): return candles
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: Resp())
+    df = data.load_hyperliquid("BTC", "2024-01-01", "2024-01-10")
+    assert len(df) == 10 and df["close"].iloc[-1] == 109.0
+
+
+def test_start_page():
+    r = client.get("/")
+    assert r.status_code == 200 and "Backtest Server" in r.text
+
+
+def test_trade_pnl_adds_up_to_net_profit():
+    prices = synthetic("X", "2015-01-01", "2024-12-31", seed=5)
+    res = run_backtest(prices, get_strategy("rsi_mean_reversion"), 10_000, fee_bps=10)
+    total = sum(t["pnl"] for t in res.trades)
+    assert np.isclose(total, res.metrics["net_profit"], rtol=1e-9, atol=1e-6)
+    m = res.metrics
+    assert m["winning_trades"] + m["losing_trades"] == m["closed_trades"]
+    assert np.isclose(m["realized_pnl"] + m["open_pnl"], m["net_profit"])
+
+
+def test_api_includes_prices_market_and_monthly():
+    r = client.post("/backtest", json={"symbol": "TEST", "strategy": "sma_crossover", "source": "synthetic",
+                                       "params": {"fast": 20, "slow": 50}, "include_prices": True,
+                                       "start": "2018-01-01"})
+    body = r.json()
+    assert body["market_benchmark"] == "SPY" and body["market_metrics"]["sharpe"] is not None
+    assert body["equity_curve"][0]["market"] == 10_000
+    assert len(body["prices"]) == len(body["equity_curve"])
+    assert body["monthly_returns"][0]["year"] == 2018
+
+
+def test_warmup_lets_indicators_trade_from_start():
+    from app.data import get_prices
+    prices = get_prices("X", "synthetic", "2018-01-01", "2020-12-31", warmup=True)
+    res = run_backtest(prices, get_strategy("sma_crossover"), start="2018-01-01")
+    assert res.equity.index[0] >= pd.Timestamp("2018-01-01")
+    assert prices.index[0] < pd.Timestamp("2017-01-01")
+
+
+def test_every_strategy_runs_and_has_pine():
+    prices = synthetic("X", "2012-01-01", "2020-12-31", seed=7)
+    for name, cls in STRATEGIES.items():
+        res = run_backtest(prices, get_strategy(name), start="2014-01-01")
+        assert np.isfinite(res.equity.iloc[-1]), name
+        code = to_pine(get_strategy(name))
+        assert "entryCond = " in code and "exitCond = " in code, name
+    assert len(STRATEGIES) >= 100
+
+
+def test_rank_sorts_by_return():
+    r = client.post("/rank", json={"symbol": "TEST", "source": "synthetic", "start": "2016-01-01",
+                                   "categories": ["trend", "breakout"]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    rets = [x["total_return"] for x in body["results"]]
+    assert rets == sorted(rets, reverse=True) and not body["errors"]
+    assert {x["category"] for x in body["results"]} <= {"trend", "breakout", "benchmark"}
+    assert body["buy_and_hold"] is not None and not body["buy_and_hold"]["beats_buy_and_hold"]
+
+
+def test_buy_and_hold_strategy_equals_benchmark():
+    prices = synthetic("X", "2015-01-01", "2020-12-31", seed=8)
+    res = run_backtest(prices, get_strategy("buy_and_hold"), fee_bps=5)
+    assert np.allclose(res.equity, res.benchmark)
+
+
+def test_excess_return_vs_buy_and_hold():
+    prices = synthetic("X", "2015-01-01", "2020-12-31", seed=9)
+    res = run_backtest(prices, get_strategy("sma_crossover", fast=20, slow=50))
+    m = res.metrics
+    assert np.isclose(m["excess_profit"], res.equity.iloc[-1] - res.benchmark.iloc[-1])
+    assert np.isclose(m["excess_return"], m["total_return"] - res.benchmark_metrics["total_return"])
+
+
+def test_optimize_splits_train_and_test():
+    r = client.post("/optimize", json={"symbol": "T", "source": "synthetic", "start": "2014-01-01",
+                                       "strategy": "sma_crossover", "max_combos": 20})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["train_period"]["end"] < d["test_period"]["start"]
+    assert d["default"]["is_default"] and d["combos_tested"] <= 21
+    scores = [x["score"] for x in d["results"] if x["score"] is not None]
+    assert scores == sorted(scores, reverse=True)
+    assert all(x["params"]["fast"] < x["params"]["slow"] for x in d["results"])
+
+
+def test_last_signals():
+    from app.engine import last_signals
+    idx = pd.bdate_range("2024-01-01", periods=10)
+    s = pd.Series([0, 1, 1, 0, 0, 1, 1, 1, 1, 1], index=idx, dtype=float)
+    r = last_signals(s)
+    assert r["last_buy_signal"] == idx[5].date().isoformat() and r["signal_open"] and r["bars_since_buy"] == 4
+    assert r["last_sell_signal"] == idx[3].date().isoformat()
+    r = last_signals(pd.Series([0, 1, 0], index=idx[:3], dtype=float))
+    assert not r["signal_open"] and r["bars_since_buy"] == 1
+
+
+def test_tradingview_symbol_mapping_and_parsing():
+    from app.watchlist import parse_tradingview, tv_to_yahoo
+    assert tv_to_yahoo("NASDAQ:AAPL") == "AAPL" and tv_to_yahoo("NYSE:BRK.B") == "BRK-B"
+    assert tv_to_yahoo("XETR:AIXA") == "AIXA.DE" and tv_to_yahoo("EURONEXT:SOF") == "SOF.BR"
+    assert tv_to_yahoo("BITSTAMP:BTCUSD") == "BTC-USD" and tv_to_yahoo("COINBASE:SOLEUR") == "SOL-EUR"
+    assert tv_to_yahoo("TVC:VIX") is None and tv_to_yahoo("CME_MINI:NQ1!") is None
+    groups = parse_tradingview("###AANDELEN,NASDAQ:MU,NYSE:ANET,###CRYPTO,BITSTAMP:BTCUSD")
+    assert [g["name"] for g in groups] == ["AANDELEN", "CRYPTO"] and len(groups[0]["symbols"]) == 2
+
+
+def test_watchlist_scan_end_to_end(tmp_path, monkeypatch):
+    import time as _t
+    import app.watchlist as wl
+    monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
+    monkeypatch.setattr(wl, "SCAN_FILE", tmp_path / "scan.json")
+    monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(wl, "DEFAULT_FILE", tmp_path / "geen.json")
+    r = client.post("/api/watchlist/import", json={"text": "###TEST,NASDAQ:AAA,NASDAQ:BBB"})
+    assert r.json()["symbols"] == 2
+    r = client.post("/api/watchlist/scan", json={"periods": {"2015": "2015-01-01", "2020": "2020-01-01"},
+                                                 "source": "synthetic"})
+    assert r.status_code == 200, r.text
+    for _ in range(120):
+        if not client.get("/api/watchlist/scan").json()["running"]:
+            break
+        _t.sleep(0.5)
+    view = client.get("/api/watchlist").json()
+    res = [view["results"].get(s["yahoo"]) for g in view["groups"] for s in g["symbols"]]
+    assert all(x and "error" not in x for x in res), res
+    first = res[0]
+    assert set(first["periods"]) == {"2015", "2020"}
+    p15 = first["periods"]["2015"]
+    assert 0 <= p15["beat_count"] <= p15["strategies"] and p15["best"]["times_bh"] > 0 and len(p15["profitable"]) <= 5
+    p = first["periods"]["2020"]
+    assert p["start"] == "2020-01-01" and 1 <= p["bh_rank"] <= p["strategies"] + 1
+    assert p["profitable_count"] >= len(p["profitable"]) and all(x["total_return"] > 0 for x in p["profitable"])
+    assert view["groups"][0]["list"] == "TradingView · Geplakt"
+    assert [p["key"] for p in view["periods"]][:3] == ["2015", "2020", "2024"]
+
+
+def test_scan_one_closed_period_and_hidden_symbols(tmp_path, monkeypatch):
+    import app.watchlist as wl
+    r = wl.scan_one("AAA", {"2019": {"start": "2019-01-01", "end": "2019-12-31"}, "2018": "2018-01-01"}, 5, "synthetic")
+    y = r["periods"]["2019"]
+    assert y["end"] == "2019-12-31" and y["last_date"] <= "2019-12-31" and y["best"]["vs_bh"] is not None
+    assert "signal_open" in y["best"]
+    assert abs(y["avg_return"] * y["strategies"] - y["sum_return"]) < 1e-9
+    monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
+    monkeypatch.setattr(wl, "SCAN_FILE", tmp_path / "scan.json")
+    monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
+    wl.save_watchlist([{"name": "G", "symbols": [{"tv": "TVC:VIX", "yahoo": None}, {"tv": "NASDAQ:MU", "yahoo": "MU"}]},
+                       {"name": "LEEG", "symbols": [{"tv": "CME_MINI:ES1!", "yahoo": None}]}])
+    groups = wl.watchlist_view()["groups"]
+    assert [g["name"] for g in groups] == ["G"] and [s["tv"] for s in groups[0]["symbols"]] == ["NASDAQ:MU"]
+
+
+def test_import_tradingview_lists(tmp_path, monkeypatch):
+    import app.watchlist as wl
+    monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
+    monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
+    wl.save_watchlist([{"name": "GEZIN", "list": wl.PORTFOLIO_LIST, "symbols": [{"tv": "POET", "yahoo": "POET"}]}])
+    data = {"lijsten": [
+        {"naam": "Watchlist", "actief": True, "symbolen": ["###GENERAL", "TVC:VIX", "###AANDELEN", "NASDAQ:MU", "NYSE:ANET"]},
+        {"naam": "", "kleur": "red", "symbolen": ["NASDAQ:POET"]},
+        {"naam": "OverNight", "symbolen": ["ECONOMICS:BEHPI"]}]}
+    r = client.post("/api/watchlist/import-tradingview", json={"data": data})
+    assert r.status_code == 200, r.text
+    assert [x["name"] for x in r.json()["lists"]] == ["TradingView · Watchlist", "TradingView · Vlag rood"]
+    groups = client.get("/api/watchlist").json()["groups"]
+    assert [(g["list"], g["name"]) for g in groups] == [
+        ("Portfolio server", "GEZIN"), ("TradingView · Watchlist", "AANDELEN"), ("TradingView · Vlag rood", "VLAG ROOD")]
+    # opnieuw importeren vervangt alleen de TradingView-lijsten
+    client.post("/api/watchlist/import-tradingview", json={"data": {"lijsten": [{"naam": "M", "symbolen": ["NASDAQ:AAPL"]}]}})
+    assert [g["list"] for g in client.get("/api/watchlist").json()["groups"]] == ["Portfolio server", "TradingView · M"]
+    assert len(wl.import_from_tradingview(path=wl.TV_SNAPSHOT_FILE)) > 5  # meegeleverde momentopname
+
+
+def test_import_from_portfolio(monkeypatch, tmp_path):
+    import httpx
+    import app.watchlist as wl
+    tv = tmp_path / "tv.json"
+    tv.write_text('{"lijsten":[{"naam":"Watchlist","symbolen":["EURONEXT:IWDA","NASDAQ:POET","XETR:AIXA"]}]}')
+    monkeypatch.setattr(wl, "TV_WATCHLIST_FILE", tv)
+    responses = {
+        "/api/data": {"portfolios": {
+            "kristof": {"holdings": [{"ticker": "POET", "waarde": 100, "currency": "USD"}, {"ticker": "X", "waarde": 0}]},
+            "freya": {"holdings": [{"ticker": "IWDA", "waarde": 50, "currency": "EUR"}, {"ticker": "POET", "waarde": 5}]},
+            "cezanne": {"holdings": [{"ticker": "ASML", "waarde": 10, "currency": "EUR"}]}}},
+        "/api/wlpaneel": {"lijsten": [{"naam": "Watchlist", "tickers": ["AIXA", "POET", "SHOP"]}, {"naam": "M", "tickers": ["BBAI"]}]},
+    }
+
+    class R:
+        def __init__(self, d): self.d = d
+        def json(self): return self.d
+
+    monkeypatch.setattr(httpx, "get", lambda url, **k: R(next(v for p, v in responses.items() if url.endswith(p))))
+    groups = {g["name"]: g["symbols"] for g in wl.import_from_portfolio("http://pf")}
+    assert list(groups) == ["GEZIN", "KRISTOF", "FREYA", "CÉZANNE", "WATCHLIST"]
+    assert len(groups["GEZIN"]) == 3 and len(groups["KRISTOF"]) == 1
+    assert {s["yahoo"] for s in groups["FREYA"]} == {"IWDA.AS", "POET"}
+    assert groups["CÉZANNE"][0]["yahoo"] == "ASML.AS"
+    assert [s["yahoo"] for s in groups["WATCHLIST"]] == ["AIXA.DE", "SHOP"]
+
+
+def test_backtest_returns_strategy_indicators():
+    r = client.post("/backtest", json={"symbol": "POET", "strategy": "rsi_7_20_80", "source": "synthetic",
+                                       "start": "2021-01-01", "include_prices": True}).json()
+    pane = r["indicators"]["panes"][0]
+    assert pane["title"] == "RSI" and [l["value"] for l in pane["levels"]] == [20, 80]
+    assert pane["series"][0]["data"][0]["time"] == r["prices"][0]["date"]  # opgewarmd: waarde vanaf dag 1
+    r = client.post("/backtest", json={"symbol": "POET", "strategy": "bollinger_20_20_to_upper", "source": "synthetic",
+                                       "include_prices": True}).json()
+    assert [o["label"] for o in r["indicators"]["overlays"]] == ["BB onder 20 2", "BB boven 20 2"]
+    r = client.post("/backtest", json={"symbol": "POET", "strategy": "macd_zero_line", "source": "synthetic",
+                                       "include_prices": True}).json()
+    assert [s["label"] for s in r["indicators"]["panes"][0]["series"]] == ["MACD", "Signaal", "Histogram"]
+
+
+def test_adaptive_walk_forward():
+    r = client.post("/adaptive", json={"symbol": "AMZN", "source": "synthetic", "start": "2020-01-01", "step": "YS"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["period"]["start"].startswith("2020") and len(d["steps"]) >= 4
+    assert all(s["regime"] in ("up", "side", "down") and s["strategy"] for s in d["steps"])
+    assert abs(sum(d["regime_share"].values()) - 1) < 1e-6 and d["equity_curve"][0]["equity"] > 0
+
+
+def test_rank_has_risk_comparison():
+    d = client.post("/rank", json={"symbol": "AAPL", "source": "synthetic", "start": "2020-01-01"}).json()
+    assert all("beats_bh_risk" in x and "calmar" in x for x in d["results"])
+    assert any(x["category"] == "trend_hold" for x in d["results"])
+
+
+def test_new_classic_and_combo_strategies():
+    from app.strategies import STRATEGIES
+    for name in ("connors_r3", "ttm_squeeze", "elder_impulse", "vote_trend_8", "regime_switch", "turn_of_month"):
+        assert name in STRATEGIES
+    r = client.post("/backtest", json={"symbol": "AAPL", "strategy": "vote_trend_8", "source": "synthetic",
+                                       "include_prices": True}).json()
+    pane = r["indicators"]["panes"][0]
+    assert pane["title"] == "Stemmen" and [l["value"] for l in pane["levels"]] == [3, 6]
+    assert max(p["value"] for p in pane["series"][0]["data"]) <= 8
+    from app.strategies.dsl import Aroon
+    import numpy as np
+    idx = pd.bdate_range("2024-01-01", periods=30)
+    high = pd.Series(np.r_[np.arange(20), np.arange(10)[::-1]], index=idx, dtype=float)
+    df = pd.DataFrame({"open": high, "high": high, "low": high, "close": high, "volume": 1.0})
+    assert Aroon(25, "up").calc(df).iloc[-1] == 100 * (25 - 10) / 25  # top 10 bars geleden
+
+
+def test_schedule_settings_and_due(tmp_path, monkeypatch):
+    from datetime import datetime
+    import app.schedule as sc
+    monkeypatch.setattr(sc, "SCHEDULE_FILE", tmp_path / "schedule.json")
+    r = client.post("/api/schedule", json={"enabled": True, "time": "22:30", "days": [0, 1, 2, 3, 4], "lists": []}).json()
+    assert r["enabled"] and r["next_run"]
+    cfg = sc.load_schedule()
+    fri = datetime(2026, 10, 23, 22, 31)
+    assert sc.due(cfg, fri) and not sc.due(cfg, fri.replace(hour=22, minute=29))
+    assert not sc.due(cfg, datetime(2026, 10, 24, 23, 0))  # zaterdag
+    assert not sc.due(cfg | {"last_run": "2026-10-23T22:30:05"}, fri)
+    assert sc.next_run(cfg, datetime(2026, 10, 24, 12, 0)).startswith("2026-10-26T22:30")
+    assert client.post("/api/schedule", json={"time": "25u"}).status_code == 422
+
+
+def test_out_of_sample_monthly_and_cross_ticker(tmp_path, monkeypatch):
+    import json
+    import app.watchlist as wl
+    periods = {"2022": "2022-01-01", "2024": "2024-01-01"}
+    res = {s: wl.scan_one(s, periods, 5, "synthetic") for s in ("AAA", "BBB")}
+    r = res["AAA"]
+    o = r["oos"]
+    assert o["train"]["end"] < o["test"]["start"] and 1 <= o["test_rank"] <= o["of"]
+    assert o["verdict"] in ("good", "mixed", "bad") and len(o["top5"]) == 5
+    assert len(r["monthly"]) == 24 and all(m["best_return"] >= m["top3"][-1]["return"] for m in r["monthly"])
+    assert set(r["returns"]) == set(periods) and "buy_and_hold" not in r["returns"]["2024"]
+
+    monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
+    monkeypatch.setattr(wl, "SCAN_FILE", tmp_path / "scan.json")
+    monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
+    wl.save_watchlist([{"name": "G", "list": "L", "symbols": [{"tv": "AAA", "yahoo": "AAA"}, {"tv": "BBB", "yahoo": "BBB"}]}])
+    (tmp_path / "scan.json").write_text(json.dumps({"results": res}))
+    view = client.get("/api/watchlist").json()["results"]["AAA"]
+    assert "returns" not in view and "monthly" not in view and view["oos"]["strategy"] == o["strategy"]
+    d = client.get("/api/watchlist/detail", params={"symbol": "AAA"}).json()
+    assert len(d["monthly"]) == 24 and d["oos"]["top5"]
+    rob = client.get("/api/robust", params={"period": "2024", "list": "L"}).json()
+    assert rob["tickers"] == 2 and rob["oos_tickers"] == 2
+    top = rob["rows"][0]
+    assert top["tickers"] == 2 and 0 <= top["beats"] <= 2 and top["oos_n"] == 2
+
+
+def test_picks(tmp_path, monkeypatch):
+    import json
+    import app.watchlist as wl
+    periods = {"2j": "2023-01-01", "1j": "2024-01-01", "6m": "2024-07-01"}
+    res = {s: wl.scan_one(s, periods, 5, "synthetic") for s in ("AAA", "BBB", "CCC")}
+    assert all(isinstance(r["open_now"], dict) for r in res.values())
+    monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
+    monkeypatch.setattr(wl, "SCAN_FILE", tmp_path / "scan.json")
+    monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
+    wl.save_watchlist([{"name": "G", "list": "L", "symbols": [{"tv": s, "yahoo": s} for s in res]},
+                       {"name": "H", "list": "L", "symbols": [{"tv": "AAA", "yahoo": "AAA"}]}])
+    (tmp_path / "scan.json").write_text(json.dumps({"results": res}))
+    d = client.get("/api/picks", params={"list": "L"}).json()
+    assert d["tickers"] == 3 and d["missing"] == 0
+    scores = [r["score"] for r in d["rows"]]
+    assert scores == sorted(scores, reverse=True)
+    for r in d["rows"]:
+        sig = r["best"]["signal"]
+        assert r["yahoo"] in res and sig["entry"] > 0 and sig["bars"] >= 0 and r["open_count"] >= 1
+        assert r["best"]["strategy"] in res[r["yahoo"]]["open_now"]
+    assert client.get("/aanraders").status_code == 200
+
+
+def test_explanations():
+    strats = {s["name"]: s for s in client.get("/strategies").json()}
+    e = strats["cci_reversion"]["explain"]
+    assert e["how"] and e["suits"] and e["weak"] and [i["name"] for i in e["indicators"]] == ["CCI"]
+    assert all(s["explain"]["how"] for s in strats.values())
+    d = client.post("/backtest", json={"symbol": "AAA", "source": "synthetic", "strategy": "cci_reversion",
+                                       "start": "2022-01-01", "include_prices": True}).json()
+    assert "CCI" in d["indicators"]["panes"][0]["info"]
+
+
+def test_strategy_scores(tmp_path, monkeypatch):
+    import json
+    import app.watchlist as wl
+    res = {"AAA": wl.scan_one("AAA", {"2j": "2023-01-01", "1j": "2024-01-01"}, 5, "synthetic")}
+    monkeypatch.setattr(wl, "WATCHLIST_FILE", tmp_path / "watchlist.json")
+    monkeypatch.setattr(wl, "SCAN_FILE", tmp_path / "scan.json")
+    monkeypatch.setattr(wl, "DATA_DIR", tmp_path)
+    wl.save_watchlist([{"name": "G", "list": "L", "symbols": [{"tv": "AAA", "yahoo": "AAA"}]}])
+    (tmp_path / "scan.json").write_text(json.dumps({"results": res}))
+    d = client.get("/api/scores", params={"symbol": "AAA"}).json()
+    assert d["scanned"] and len(d["scores"]) >= 150
+    assert {n for n, v in d["scores"].items() if v["open"]} == set(res["AAA"]["open_now"])
+    assert client.get("/api/scores", params={"symbol": "ZZZ"}).json()["scores"] == {}
