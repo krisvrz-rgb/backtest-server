@@ -1,0 +1,2 @@
+tools/*.cmd text eol=crlf
+tools/*.ps1 text eol=crlf
