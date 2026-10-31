@@ -164,18 +164,38 @@
   dialog input { font: 13px var(--mono); padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
   dialog p { font-size: 12px; color: var(--muted); }
 
+  /* donker neon-thema (standaard) */
+  body.dark { --bg: #04050b; --panel: #0a0d19; --panel-2: #111528; --text: #e6ebf8; --muted: #7581a3; --border: #1b2140; --accent: #5b8cff; }
+  body.dark .panel { box-shadow: 0 0 0 1px rgba(91,140,255,.06), 0 10px 40px -20px rgba(91,140,255,.35); }
+  body.dark .ph h2 { color: #fff; text-shadow: 0 0 10px rgba(91,140,255,.6); }
+  body.dark .ph h2::before { color: var(--accent); }
+  body.dark .seg button.on { background: var(--accent); color: #fff; box-shadow: 0 0 12px rgba(91,140,255,.6); }
+  body.dark .brand .logo { background: #fff; box-shadow: 0 0 14px rgba(255,255,255,.5); } body.dark .brand .logo i { background: #04050b; }
+  body.dark .wire .lbl { background: #fff; color: #04050b; }
+  body.dark .ring .bar { background: rgba(10,13,25,.85); }
+  body.dark .foot { background: #000; border-top: 1px solid var(--border); }
+  body.dark .agent { background: linear-gradient(180deg, #0d1122, #0a0d19); }
+  body.dark .agent.work { box-shadow: 0 0 22px -6px var(--c); }
+  body.dark .blob { box-shadow: 0 0 12px var(--c); }
+  body.dark .pnlbig { text-shadow: 0 0 18px currentColor; }
+  body.dark .clock { text-shadow: 0 0 12px rgba(230,235,248,.4); }
+  body.dark .trace .who, body.dark .allfeed .who { box-shadow: 0 0 8px -1px currentColor; }
+  body.dark dialog, body.dark dialog input, body.dark select { background: var(--panel); color: var(--text); border-color: var(--border); }
+  button.btn { color: var(--text); }
+  body.dark .badge.paper { box-shadow: 0 0 10px rgba(91,140,255,.4); }
+
   @media (max-width: 1250px) {
     .reactor { grid-template-columns: 1fr; } .bank { grid-template-columns: repeat(3, 1fr); }
     .row2, .row3, .tape { grid-template-columns: 1fr; } .agents { grid-template-columns: repeat(3, 1fr); }
   }
-  .pfm{display:flex;height:8px;border-radius:4px;overflow:hidden;background:#eef1f6;margin:8px 0 2px}
+  .pfm{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--panel-2);margin:8px 0 2px}
   .pfm i{display:block;height:100%}
   .pfo{font:11px var(--mono);margin:4px 0 6px}
   .pfo div{display:grid;grid-template-columns:70px 64px 1fr 70px 70px;gap:6px;align-items:center;padding:2px 0}
-  .pfo .bar{height:6px;border-radius:3px;background:#eef1f6;overflow:hidden}.pfo .bar i{display:block;height:100%}
+  .pfo .bar{height:6px;border-radius:3px;background:var(--panel-2);overflow:hidden}.pfo .bar i{display:block;height:100%}
 </style>
 </head>
-<body>
+<body class="dark">
 <div class="top">
   <div class="brand"><div class="logo"><i></i><i></i></div>
     <div><b>SWARM DESK</b><small>zes agents · één boek · <span id="coinLbl">BTC</span> <span id="winLbl">1u</span> · hyperliquid</small></div></div>
@@ -193,6 +213,7 @@
   <button class="btn" id="autoBtn" style="display:none" title="Zet de zwerm op de server aan of uit (echt geld)">Zwerm live</button>
   <span class="seg" id="coinAuto" style="display:none" title="Op welke coins handelt de zwerm (echt geld)?"></span>
   <button class="btn" id="confBtn" style="display:none" title="Moet elke echte order eerst door jou goedgekeurd worden?">Bevestigen</button>
+  <button class="btn" id="themeBtn" title="Donker of licht thema">☾</button>
   <button class="btn" id="setBtn">Instellingen</button>
   <button class="btn danger" id="killBtn" title="Sluit alle posities en zet de desk op pauze">Kill switch</button>
 </div>
@@ -398,6 +419,18 @@ function canvasCtx(c) {
   const x = c.getContext('2d'); x.setTransform(r, 0, 0, r, 0, 0); x.clearRect(0, 0, w, h); return [x, w, h];
 }
 
+// ---------- thema ----------
+let TH = {};
+function applyTheme(dark) {
+  document.body.classList.toggle('dark', dark); localStorage.setItem('desk.theme', dark ? 'dark' : 'light');
+  const cs = getComputedStyle(document.body), g = k => cs.getPropertyValue(k).trim();
+  TH = { dark, text: g('--text'), muted: g('--muted'), border: g('--border'), panel: g('--panel'), panel2: g('--panel-2') };
+  $('themeBtn').textContent = dark ? '☀' : '☾';
+  try { chart.applyOptions({ layout: { textColor: TH.muted }, grid: { vertLines: { color: dark ? '#10142a' : '#f0f2f6' }, horzLines: { color: dark ? '#10142a' : '#f0f2f6' } } }); } catch (e) {}  // grafiek bestaat nog niet bij de eerste aanroep
+}
+applyTheme(localStorage.getItem('desk.theme') !== 'light');
+$('themeBtn').onclick = () => { applyTheme(!TH.dark); drawSpec(); drawBalance(); };
+
 // ---------- opbouw DOM ----------
 $('agents').innerHTML = AGENTS.map(a => `<div class="agent" id="ag-${a.k}" style="--c:${a.c}">
   <div class="blob"><i></i><i></i></div><div><span class="role">${a.role}</span><b>${a.n}</b></div>
@@ -408,8 +441,8 @@ $('conf').innerHTML = AGENTS.map(a => `<div class="conf"><span>${a.n}</span><div
 
 // ---------- grafiek ----------
 const chart = LightweightCharts.createChart($('chart'), {
-  layout: { background: { color: 'transparent' }, textColor: '#8a92a3', fontFamily: 'ui-monospace, monospace' },
-  grid: { vertLines: { color: '#f0f2f6' }, horzLines: { color: '#f0f2f6' } },
+  layout: { background: { color: 'transparent' }, textColor: TH.muted, fontFamily: 'ui-monospace, monospace' },
+  grid: { vertLines: { color: TH.dark ? '#10142a' : '#f0f2f6' }, horzLines: { color: TH.dark ? '#10142a' : '#f0f2f6' } },
   rightPriceScale: { borderVisible: false }, timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
   crosshair: { mode: 0 },
 });
@@ -674,7 +707,7 @@ function spark(id, data, color, opts = {}) {
   let lo = Math.min(...data), hi = Math.max(...data); if (opts.zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
   if (hi - lo < 1e-12) { hi += 1; lo -= 1; }
   const X = i => i / (data.length - 1) * w, Y = v => h - 3 - (v - lo) / (hi - lo) * (h - 6);
-  if (opts.zero) { x.strokeStyle = '#e6e9f0'; x.beginPath(); x.moveTo(0, Y(0)); x.lineTo(w, Y(0)); x.stroke(); }
+  if (opts.zero) { x.strokeStyle = TH.border; x.beginPath(); x.moveTo(0, Y(0)); x.lineTo(w, Y(0)); x.stroke(); }
   x.beginPath(); data.forEach((v, i) => i ? x.lineTo(X(i), Y(v)) : x.moveTo(X(i), Y(v)));
   x.strokeStyle = color; x.lineWidth = 1.4; x.stroke();
   x.lineTo(w, h); x.lineTo(0, h); x.closePath(); x.globalAlpha = .08; x.fillStyle = color; x.fill(); x.globalAlpha = 1;
@@ -687,7 +720,7 @@ function drawRing(time) {
   const c = $('ring'), [x, w, h] = canvasCtx(c), cx = w / 2, cy = h / 2 + 62, R = Math.min(w * .42, h * .5), ry = Math.min(R * .62, h / 2 - 90);
   const tm = time / 1000, energy = .4 + Math.min(1.5, Math.abs(st.feat.score || 0) * 3);
   // draden
-  x.lineWidth = .7;
+  x.lineWidth = TH.dark ? 1 : .7; if (TH.dark) x.globalCompositeOperation = 'lighter';  // neon: kleuren tellen op tot een gloed
   for (const s of strands) {
     x.beginPath();
     for (let k = 0; k <= 64; k++) {
@@ -695,17 +728,18 @@ function drawRing(time) {
       const px = cx + (R + wob) * Math.cos(a + tm * .05), py = cy + (ry + wob * .7) * Math.sin(a + tm * .05);
       k ? x.lineTo(px, py) : x.moveTo(px, py);
     }
-    x.strokeStyle = hue(s.ph * 3); x.globalAlpha = .28; x.stroke();
+    x.strokeStyle = hue(s.ph * 3); x.globalAlpha = TH.dark ? .22 * energy : .28; x.stroke();
   }
-  x.globalAlpha = 1;
+  x.globalAlpha = 1; x.globalCompositeOperation = 'source-over';
   // agents op de ring
   AGENTS.forEach((a, i) => {
     const ang = -Math.PI / 2 + i * Math.PI / 3 + tm * .05, px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang);
     const active = Date.now() - (st.work[a.k] || 0) < 1500, r = active ? 26 + Math.sin(tm * 8) * 2 : 22;
     if (active) { x.beginPath(); x.arc(px, py, r + 10, 0, 7); x.strokeStyle = a.c; x.lineWidth = 3; x.globalAlpha = .35; x.stroke(); x.globalAlpha = 1; }
-    x.beginPath(); x.arc(px, py, r, 0, 7); x.fillStyle = a.c; x.fill();
+    if (TH.dark) { x.shadowColor = a.c; x.shadowBlur = active ? 40 : 22; }
+    x.beginPath(); x.arc(px, py, r, 0, 7); x.fillStyle = a.c; x.fill(); x.shadowBlur = 0;
     x.fillStyle = '#fff'; x.fillRect(px - 7, py - 7, 4, 13); x.fillRect(px + 3, py - 7, 4, 13);
-    x.font = '700 10px ui-monospace, monospace'; x.fillStyle = '#15171c'; x.textAlign = 'center';
+    x.font = '700 10px ui-monospace, monospace'; x.fillStyle = TH.text; x.textAlign = 'center';
     x.fillText(a.n, px, py + r + 14);
   });
   // ticket dat over de ring rijdt
@@ -718,15 +752,16 @@ function drawRing(time) {
     x.globalAlpha = rt.state === 'entering' ? .45 : 1;
     x.beginPath(); x.arc(px, py, r + 3, 0, 7); x.fillStyle = tColor(rt.coin); x.fill();
     x.beginPath(); x.arc(px, py, r, 0, 7); x.fillStyle = col; x.fill(); x.globalAlpha = 1;
-    x.font = '700 10px ui-monospace, monospace'; x.textAlign = 'center'; x.fillStyle = '#15171c';
+    x.font = '700 10px ui-monospace, monospace'; x.textAlign = 'center'; x.fillStyle = TH.text;
     x.fillText(`${short(rt.coin)} ${rt.side === 'long' ? '▲' : '▼'}${rt.state === 'entering' ? ' limiet' : ' ' + sgn(rt.upnl, 2)}`, px, py - r - 7);
   });
   // kern
   const pr = 48 + (st.feat.score ? Math.abs(st.feat.score) * 14 : 0) + Math.sin(tm * 2) * 2;
   const g = x.createRadialGradient(cx, cy, pr * .3, cx, cy, pr * 1.8); g.addColorStop(0, 'rgba(36,99,235,.18)'); g.addColorStop(1, 'rgba(36,99,235,0)');
   x.fillStyle = g; x.beginPath(); x.arc(cx, cy, pr * 1.8, 0, 7); x.fill();
-  x.beginPath(); x.arc(cx, cy, pr, 0, 7); x.fillStyle = '#15171c'; x.fill();
-  x.fillStyle = '#fff'; x.beginPath(); x.roundRect(cx - 15, cy - 18, 9, 34, 5); x.roundRect(cx + 6, cy - 18, 9, 34, 5); x.fill();
+  if (TH.dark) { x.shadowColor = 'rgba(200,220,255,.9)'; x.shadowBlur = 50; }
+  x.beginPath(); x.arc(cx, cy, pr, 0, 7); x.fillStyle = TH.dark ? '#f4f7ff' : '#15171c'; x.fill(); x.shadowBlur = 0;
+  x.fillStyle = TH.dark ? '#04050b' : '#fff'; x.beginPath(); x.roundRect(cx - 15, cy - 18, 9, 34, 5); x.roundRect(cx + 6, cy - 18, 9, 34, 5); x.fill();
   if ($('tabAll').style.display !== 'none') drawAllRing(tm);
   requestAnimationFrame(drawRing);
 }
@@ -739,22 +774,23 @@ function drawAllRing(tm) {
   const coins = Object.keys(a.coins).filter(k => a.coins[k]), open = {};
   for (const t of (a.portfolio && a.portfolio.open) || []) open[t.coin] = t;
   const cx = w / 2, cy = h / 2, R = Math.min(w * .42, 520), ry = h / 2 - 60;
-  x.lineWidth = 1; x.strokeStyle = '#e6e9f0'; x.beginPath(); x.ellipse(cx, cy, R, ry, 0, 0, 7); x.stroke();
+  x.lineWidth = 1; x.strokeStyle = TH.border; x.beginPath(); x.ellipse(cx, cy, R, ry, 0, 0, 7); x.stroke();
   const pf = a.portfolio || {};
-  x.textAlign = 'center'; x.fillStyle = '#15171c'; x.font = '700 26px ui-monospace, monospace';
+  x.textAlign = 'center'; x.fillStyle = TH.text; x.font = '700 26px ui-monospace, monospace';
   x.fillText(pf.equity != null ? '$' + fmt(pf.equity, 2) : '–', cx, cy - 4);
-  x.font = '11px ui-monospace, monospace'; x.fillStyle = '#8a92a3';
+  x.font = '11px ui-monospace, monospace'; x.fillStyle = TH.muted;
   x.fillText(`${(pf.open || []).length} trade(s) open · ${coins.length} tickers gevolgd · ${pf.mode === 'live' ? 'LIVE' : 'papier'}`, cx, cy + 18);
   x.fillText(`venster ${winLbl()} · drempel ${sgn(a.min_edge || 0, 0, '¢')}`, cx, cy + 34);
   coins.forEach((coin, i) => {
     const ang = -Math.PI / 2 + i / coins.length * Math.PI * 2, px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang);
     const t = open[coin], m = a.markets[coin] || {}, col = tColor(coin), r = t ? 26 + Math.sin(tm * 4) * 2 : 20;
+    if (TH.dark) { x.shadowColor = col; x.shadowBlur = t ? 30 : 10; }
     if (t) { x.beginPath(); x.arc(px, py, r + 9, 0, 7); x.strokeStyle = col; x.lineWidth = 3; x.globalAlpha = .35; x.stroke(); x.globalAlpha = 1; }
     x.beginPath(); x.arc(px, py, r, 0, 7);
-    x.fillStyle = t ? (t.side === 'long' ? '#16b364' : '#ef3a5d') : '#ffffff'; x.globalAlpha = t && t.state === 'entering' ? .5 : 1; x.fill(); x.globalAlpha = 1;
-    x.lineWidth = 3; x.strokeStyle = col; x.stroke();
+    x.fillStyle = t ? (t.side === 'long' ? '#16b364' : '#ef3a5d') : TH.panel; x.globalAlpha = t && t.state === 'entering' ? .5 : 1; x.fill(); x.globalAlpha = 1;
+    x.lineWidth = 3; x.strokeStyle = col; x.stroke(); x.shadowBlur = 0;
     x.fillStyle = t ? '#fff' : col; x.font = '700 11px ui-monospace, monospace'; x.fillText(short(coin).slice(0, 6), px, py + 4);
-    x.fillStyle = '#15171c'; x.font = '10px ui-monospace, monospace';
+    x.fillStyle = TH.text; x.font = '10px ui-monospace, monospace';
     const lbl = t ? `${t.side === 'long' ? '▲' : '▼'} ${t.lev}x ${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}` : `edge ${m.model && m.model.edge != null ? sgn(m.model.edge, 1, '¢') : '–'}`;
     x.fillText(lbl, px, py + r + 15);
     allSpots.push({ coin, px, py, r });
@@ -775,7 +811,7 @@ function pfData() {  // gedeelde portefeuille van de server: papier, of het Hype
 }
 function drawBalance() {
   const D = pfData(), c = $('balChart'), [x, w, h] = canvasCtx(c), d = D ? D.curve : [];
-  if (d.length < 2) { x.fillStyle = '#8a92a3'; x.font = '12px system-ui'; x.fillText('Verloop verschijnt na het eerste afgerekende ticket', 8, h / 2); }
+  if (d.length < 2) { x.fillStyle = TH.muted; x.font = '12px system-ui'; x.fillText('Verloop verschijnt na het eerste afgerekende ticket', 8, h / 2); }
   else spark('balChart', d, D.live ? '#ef3a5d' : '#2463eb');
   const pb = $('pnlBars'), [y, w2, h2] = canvasCtx(pb), hs = D ? D.hs.slice(-120) : [];
   const mx = Math.max(1e-9, ...hs.map(t => Math.abs(t.pnl))), bw = w2 / Math.max(hs.length, 60);
@@ -790,15 +826,15 @@ function drawDist(m) {
   const lo = Math.exp(mu - 3.2 * sd), hi = Math.exp(mu + 3.2 * sd), N = 60, bins = [];
   for (let i = 0; i < N; i++) { const p = lo + (hi - lo) * (i + .5) / N, z = (Math.log(p) - mu) / sd; bins.push([p, Math.exp(-z * z / 2)]); }
   const bw = w / N, top = 18;
-  bins.forEach(([p, d], i) => { const bh = d * (h - top - 16); x.fillStyle = p >= st.px ? '#2463eb' : '#c9d6f7'; x.fillRect(i * bw + 1, h - 16 - bh, bw - 2, bh); });
+  bins.forEach(([p, d], i) => { const bh = d * (h - top - 16); x.fillStyle = p >= st.px ? (TH.dark ? '#f5a524' : '#2463eb') : (TH.dark ? '#2a3360' : '#c9d6f7'); x.fillRect(i * bw + 1, h - 16 - bh, bw - 2, bh); });
   // cdf
   x.beginPath(); bins.forEach(([p], i) => { const v = Phi((Math.log(p) - mu) / sd); const yy = h - 16 - v * (h - top - 16); i ? x.lineTo(i * bw + bw / 2, yy) : x.moveTo(bw / 2, yy); });
   x.strokeStyle = '#2fbf4a'; x.lineWidth = 1.5; x.stroke();
   const X = p => (p - lo) / (hi - lo) * w;
   x.strokeStyle = '#f08c00'; x.setLineDash([4, 3]); x.beginPath(); x.moveTo(X(st.px), top); x.lineTo(X(st.px), h - 16); x.stroke(); x.setLineDash([]);
-  x.fillStyle = '#15171c'; x.font = '700 11px ui-monospace, monospace'; x.textAlign = 'left';
+  x.fillStyle = TH.text; x.font = '700 11px ui-monospace, monospace'; x.textAlign = 'left';
   x.fillText(`nu ${fmt(st.px, pxD())}`, Math.min(w - 110, X(st.px) + 4), 12);
-  x.fillStyle = '#8a92a3'; x.font = '10px ui-monospace, monospace';
+  x.fillStyle = TH.muted; x.font = '10px ui-monospace, monospace';
   x.fillText(fmt(lo, pxD()), 2, h - 3); x.textAlign = 'right'; x.fillText(fmt(hi, pxD()), w - 2, h - 3);
 }
 
@@ -810,8 +846,8 @@ function drawSpec() {
   const x0 = w - cols.length * cw;  // nieuwste kolom rechts
   cols.forEach((cv, i) => cv.forEach((v, j) => { x.fillStyle = col(v); x.fillRect(x0 + i * cw, j * ch, Math.ceil(cw), Math.ceil(ch) - 1); }));
   x.font = '600 10px ui-monospace, monospace'; x.textBaseline = 'middle'; x.textAlign = 'left';
-  FEATS.forEach((n, j) => { x.fillStyle = j % 2 ? '#f3f5f9' : '#ffffff'; x.fillRect(0, j * ch, LW - 4, Math.ceil(ch) - 1);
-    x.fillStyle = '#15171c'; x.fillText(n, 4, j * ch + ch / 2); });
+  FEATS.forEach((n, j) => { x.fillStyle = j % 2 ? TH.panel2 : TH.panel; x.fillRect(0, j * ch, LW - 4, Math.ceil(ch) - 1);
+    x.fillStyle = TH.text; x.fillText(n, 4, j * ch + ch / 2); });
   const last = cols[cols.length - 1] || [];
   $('feat').innerHTML = FEATS.map((f, j) => `<div title="${FEAT_INFO[j]}"><span>${f}</span><i style="width:${Math.abs(last[j] || 0) * 100}%;background:${(last[j] || 0) >= 0 ? '#16b364' : '#ef3a5d'}"></i></div>`).join('');
 }
