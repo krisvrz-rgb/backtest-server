@@ -418,11 +418,11 @@ let candles = [];
 new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, height: 400 })).observe($('chart'));
 
 // ---------- trace / wire ----------
-function trace(from, to, act, text, val = '', at = Date.now()) {
+function trace(from, to, act, text, val = '', at = Date.now(), coin = st.coin) {
   st.traceN++; st.hand.push(Date.now());
   const a = AG[from], el = document.createElement('div'); el.className = 't';
   el.innerHTML = `<span class="dot" style="background:${a.c}"></span><span class="muted">${hhmmss(at)}</span>
-    <span class="who" style="background:${a.c}">${act}</span><span>${text}</span>
+    <span class="who" style="background:${a.c}">${act}</span><span><b style="color:${tColor(coin)}">${coin ? short(coin) : 'ZWERM'}</b> ${text}</span>
     <span class="hand">${to ? a.n + '→' + AG[to].n : val}</span>`;
   const t = $('trace'); t.prepend(el); while (t.children.length > 120) t.lastChild.remove();
   $('traceCount').textContent = st.traceN + ' stappen';
@@ -491,7 +491,7 @@ function startSim() {
     st.bookL = [bids, asks.map(([p, s]) => [p, Math.max(.05, s)])];
   }, 250);
 }
-function stopSim() { if (!st.sim) return; st.sim = false; clearInterval(simTimer); $('feedBadge').style.display = 'none'; }
+function stopSim() { if (!st.sim) return; st.sim = false; st.winStart = 0; st.lastPx = 0; clearInterval(simTimer); $('feedBadge').style.display = 'none'; }
 
 async function loadHistory() {
   candles = [];
@@ -599,7 +599,7 @@ async function pollAuto() {
     for (const t of a.trace) {
       const ag = AG[t.agent] ? t.agent : 'prior';
       const txt = t.coin ? t.text.replace(t.coin + ' · ', '') : t.text;
-      if (!t.coin || t.coin === st.coin) trace(ag, null, t.act, /^(papier|LIVE) /.test(txt) ? txt.replace(/^LIVE /, tag + ' ') : `${tag} ${txt}`, t.val, t.t);
+      if (!t.coin || t.coin === st.coin) trace(ag, null, t.act, /^(papier|LIVE) /.test(txt) ? txt.replace(/^LIVE /, tag + ' ') : `${tag} ${txt}`, t.val, t.t, t.coin);
       if (['TAKE', 'AFREK', 'STOP', 'AAN', 'UIT', 'VENSTER', 'RESET'].includes(t.act)) wire(ag, (a.live ? 'live: ' : 'papier: ') + t.text, t.val || null);
       if (t.coin === st.coin && t.act === 'PASS') st.passes[Math.floor(t.t / W)] = t.t;
       if (t.coin === st.coin && t.act === 'EDGE') delete st.passes[Math.floor(t.t / W)];
@@ -784,7 +784,7 @@ function tick() {
   if (!st.px) return;
   newWindow(now);
   // σ bijwerken met 1s-rendementen (EWMA)
-  if (st.lastPx) { const r = Math.log(st.px / st.lastPx); st.var1 = .985 * st.var1 + .015 * r * r; }
+  if (st.lastPx) { const r = Math.log(st.px / st.lastPx); if (Math.abs(r) < .02) st.var1 = .985 * st.var1 + .015 * r * r; }
   st.lastPx = st.px;
   const f = features(now), m = model(f, now); st.feat = f;
   const sm = srvMarket(), srvT = sm && sm.ticket;
