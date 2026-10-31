@@ -1503,6 +1503,8 @@ function explain(t, sm) {
       ${w.capped ? `afgetopt op ${w.max_margin_pct}% marge` : 'binnen de grens'} → ${usd(w.margin, 2)} marge, ${usd(w.usd, 2)} positie.</p>
     ${w.bt ? `<p>Dag-backtests: ${w.bt.open} van de ${w.bt.prof} winstgevende strategieën hebben nu een open koopsignaal (${w.bt.trend}), beste is ${w.bt.best || '–'}.
       ${w.bt_against ? 'De trade ging daartegenin, dus vroeg de zwerm 1¢ extra edge.' : 'Geen tegenwind van de dagtrend.'}</p>` : ''}
+    ${w.strat ? `<p>Strategieën op dit venster: ${w.strat.long.length ? w.strat.long.join(', ') + (w.strat.n > w.strat.long.length ? ' en' : '') : 'geen van de'} ${w.strat.n} bewezen strategieën ${w.strat.long.length ? 'zitten nu long' : 'zit nu long'}, stem ${sgn(w.strat.v, 2)}.
+      ${w.strat.against ? 'De trade ging daartegenin, dus vroeg de zwerm 1¢ extra edge.' : 'Geen tegenwind van de strategieën.'}</p>` : ''}
     ${w.wall ? `<p>Ruimte: de eerste ${t.side === 'long' ? 'weerstand' : 'steun'} lag op ${fmt(w.wall, pxD())} (${w.wall_name || w.wall_n + 'x geraakt'}), ${fmt(w.room, 2)}σ verder. Genoeg ruimte om in te stappen (minstens 0,3σ).</p>` : ''}
     ${t.sl || t.tp ? `<p>Uitstap: stop ${t.sl ? fmt(t.sl, pxD()) : 'uit'}${t.plan ? ` (${t.plan.sl})` : ''}, take-profit ${t.tp ? fmt(t.tp, pxD()) : 'uit'}${t.plan ? ` (${t.plan.tp})` : ''}${t.plan && t.plan.rr ? `, winst/risico ${fmt(t.plan.rr, 2)}` : ''}.
       Draait het model tijdens de trade om (de andere kant krijgt edge), dan sluit hij meteen.

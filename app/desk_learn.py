@@ -15,8 +15,8 @@ import numpy as np
 
 from .data import DATA_DIR
 
-FEATS = ("flow30", "flow10", "book", "bookDeep", "mom", "rsi", "macd")
-NAMES = ("koopdruk 3 min", "koopdruk 30 s", "orderboek top 5", "orderboek top 20", "momentum", "RSI 14 (5m)", "MACD 12/26/9 (5m)")
+FEATS = ("flow30", "flow10", "book", "bookDeep", "mom", "rsi", "macd", "strat")
+NAMES = ("koopdruk 3 min", "koopdruk 30 s", "orderboek top 5", "orderboek top 20", "momentum", "RSI 14 (5m)", "MACD 12/26/9 (5m)", "stem strategieën")
 LEARN_FILE = DATA_DIR / "desk-learn.jsonl"
 TRADES_FILE = DATA_DIR / "desk-trades.jsonl"
 STATE_FILE = DATA_DIR / "desk-learn-state.json"
@@ -32,7 +32,7 @@ def group(coin: str) -> str:
 
 def fvec(f: dict) -> list[float]:
     return [f.get("flow30", 0.0), f.get("flow10", 0.0), f.get("book", 0.0), f.get("bookDeep", 0.0),
-            max(-1.0, min(1.0, f.get("mom", 0.0) / 2)), f.get("rsi", 0.0), f.get("macd", 0.0)]
+            max(-1.0, min(1.0, f.get("mom", 0.0) / 2)), f.get("rsi", 0.0), f.get("macd", 0.0), f.get("strat", 0.0)]
 
 
 def _append(path, row: dict) -> None:
@@ -97,7 +97,7 @@ def _design(rows: list[dict]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def train(window: int) -> dict:
     """Train per groep op de vensters van deze lengte. Oudste 70% om te leren, nieuwste 30% om te toetsen."""
     rows = [r for r in _read(LEARN_FILE) if r.get("window") == window and r.get("y") and r.get("f") and r.get("p") is not None
-            and len(r["f"]) == len(FEATS)]  # vensters van vóór RSI/MACD hebben minder kenmerken
+            and len(r["f"]) == len(FEATS)]  # vensters van vóór RSI/MACD/strategieën hebben minder kenmerken
     rows.sort(key=lambda r: r["t"])
     res = {"window": window, "n": len(rows), "at": int(time.time() * 1000), "groups": {}}
     for g in ("crypto", "stock"):

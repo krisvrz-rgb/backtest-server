@@ -18,7 +18,7 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 
-from . import desk, desk_learn
+from . import desk, desk_learn, desk_strats
 from .data import DATA_DIR
 
 APPROVE_SECONDS = 30
@@ -508,6 +508,13 @@ class Swarm:
         against_bt = bool(bt) and ((mo["side"] == "long" and bt["trend"] == "zwak") or (mo["side"] == "short" and bt["trend"] == "stijgend"))
         if against_bt:
             min_edge += 1.0
+        st = desk_strats.get(m.coin, self.window) or {}
+        sv = st.get("vote")  # de bewezen strategieën op dit venster: tegen hun stem in ook 1¢ extra
+        against_st = bool(sv) and ((mo["side"] == "long" and sv["v"] <= -.3) or (mo["side"] == "short" and sv["v"] >= .3))
+        if against_st:
+            min_edge += 1.0
+            self.log("edge", "TEGEN", f"{mo['side']} tegen {st['window'] // 60}m-strategieën in (stem {sv['v']:+.2f}, "
+                     f"{len(sv['long'])}/{sv['n']} long): 1¢ extra edge nodig", coin=m.coin)
         if mo["edge"] < min_edge:
             if against_bt and mo["edge"] >= min_edge - 1:
                 self.log("edge", "PASS", f"{mo['side']} tegen de dag-backtests in ({bt['open']}/{bt['prof']} winstgevende strategieën "
@@ -558,7 +565,8 @@ class Swarm:
                "beta": round(mo["prior"]["beta"], 3), "n": mo["prior"]["n"], "hit": mo["prior"]["hit"],
                "cost": costs(cfg)["round"], "src": mo.get("src"), **self.kelly_info,
                "room": round(room, 2) if room is not None else None, "wall": round(wall["px"], 8) if wall else None,
-               "wall_n": wall["n"] if wall else None, "wall_name": wall.get("name") if wall else None, "bt": bt, "bt_against": against_bt}
+               "wall_n": wall["n"] if wall else None, "wall_name": wall.get("name") if wall else None, "bt": bt, "bt_against": against_bt,
+               "strat": {"v": sv["v"], "long": sv["long"][:5], "n": sv["n"], "against": against_st} if sv else None}
         bid, ask = m.best()
         limit = bid if mo["side"] == "long" else ask
         order = {"id": int(now * 1000), "coin": m.coin, "side": mo["side"], "usd": usd, "lev": lev, "edge": mo["edge"],
@@ -1081,6 +1089,8 @@ class Swarm:
                 m.last_px = m.px
                 self.new_window(m, now, cfg)
                 m.feat = m.features(now)
+                sv = (desk_strats.get(m.coin, self.window) or {}).get("vote")
+                m.feat["strat"] = sv["v"] if sv else 0.0
                 m.model = m.compute(m.feat, now, cfg, self.window)
                 self.manage(m, now, cfg)
                 if m.coin in self.drop and not m.ticket:  # uit de top 25 en de trade is afgerekend: nu uit
@@ -1100,6 +1110,7 @@ class Swarm:
             threading.Thread(target=self.level_refresher, daemon=True, name="desk-levels").start()
             threading.Thread(target=self.trainer, daemon=True, name="desk-learn").start()
             threading.Thread(target=self.backtest_sync, daemon=True, name="desk-backtest").start()
+            threading.Thread(target=self.strat_sync, daemon=True, name="desk-strats").start()
 
     def backtest_sync(self) -> None:
         """Elke ticker waar de zwerm op staat komt in de watchlist "Zwerm" van de backtestserver. Nieuwe tickers
@@ -1128,6 +1139,29 @@ class Swarm:
             except Exception as e:
                 self.log("prior", "FOUT", f"backtestlijst bijwerken mislukt: {e}")
             time.sleep(600)
+
+    def strat_sync(self) -> None:
+        """De strategieën van de backtestserver op de candles van het venster: per markt elke 12 uur opnieuw kiezen,
+        de stem van de gekozen strategieën bij elke nieuwe candle bijwerken."""
+        time.sleep(120)
+        last_vote = 0.0
+        while True:
+            try:
+                W = self.window
+                with self.lock:
+                    coins = [c for c, v in self.coins.items() if v]
+                stale = [c for c in coins if time.time() - (desk_strats.get(c, W) or {}).get("at", 0) > 12 * 3600]
+                for c in stale[:2]:
+                    r = desk_strats.select(c, W)
+                    self.log("prior", "STRATEGIE", f"{r['passed']} van {r['tested']} strategieën winstgevend op {W // 60}m, "
+                             f"ook op de laatste 30%; top: {', '.join(x['name'] for x in r['picked'][:3]) or 'geen'}", coin=c)
+                    time.sleep(5)
+                if time.time() - last_vote > W / 3:
+                    desk_strats.refresh_votes(coins, W)
+                    last_vote = time.time()
+            except Exception as e:
+                self.log("prior", "FOUT", f"strategieën op het venster mislukt: {e}")
+            time.sleep(30)
 
     def trainer(self) -> None:
         """Elk uur de gewichten opnieuw leren uit de LEER-vensters van het huidige venster."""
@@ -1409,6 +1443,13 @@ class Swarm:
         dn = sorted((l for l in lv if l["px"] < m.px), key=lambda l: -l["px"])[:4]
         return dn[::-1] + up
 
+    def strat_info(self, coin: str) -> dict | None:
+        r = desk_strats.get(coin, self.window)
+        if not r:
+            return None
+        return {"passed": r["passed"], "tested": r["tested"], "top": [x["name"] for x in r["picked"][:3]],
+                "v": (r.get("vote") or {}).get("v"), "at": r["at"]}
+
     def snapshot(self, since: int = 0) -> dict:
         st = desk.status()
         cfg = desk.config()
@@ -1417,7 +1458,8 @@ class Swarm:
                            "model": {k: v for k, v in m.model.items() if k != "prior"},
                            "prior": m.model.get("prior", {}), "score": m.feat.get("score"),
                            "levels": self.shown_levels(m), "trends": m.trends,
-                           "mas": [{"name": a["name"], "px": a["px"]} for a in m.mas()], "bt": bt_bias(c)}
+                           "mas": [{"name": a["name"], "px": a["px"]} for a in m.mas()], "bt": bt_bias(c),
+                           "strat": self.strat_info(c)}
                        for c, m in self.markets.items()}
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
