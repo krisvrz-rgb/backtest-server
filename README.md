@@ -95,6 +95,86 @@ Beschikbare bouwstenen staan in `app/strategies/dsl.py`: SMA, EMA, WMA, HMA, VWM
 CCI, CMO, TSI, ROC, MOM, Williams %R, MFI, OBV, ATR, DMI/ADX, Supertrend, Parabolic SAR, Bollinger,
 Keltner, Donchian, `crosses_above`/`crosses_below`, `expr[n]` (n bars terug) en `&`, `|`, `~`.
 
+## Swarm Desk (`/desk`)
+
+Een live dashboard waarop zes agents (Spotter, Prior, Edge, Kelly, Taker, Closer) per venster (15 min, 1 u of 4 u, standaard 1 u)
+beslissen of ze BTC, ETH of SOL long of short gaan op Hyperliquid. Koersen, trades en orderboek komen rechtstreeks
+van de openbare Hyperliquid-websocket; zonder verbinding valt de pagina terug op een gesimuleerde koers.
+
+- **Spotter** combineert koopdruk (trades), orderboek en momentum tot een score tussen -1 en 1.
+- **Prior** leert uit elk afgesloten venster hoeveel die score echt voorspelt (β, met krimp naar 0,25).
+- **Edge** vergelijkt de winkans met de break-even na kosten (maker-instap 1,5 bp + uitstap gemiddeld 3 bp).
+- **Kelly** bepaalt grootte en hefboom, **Taker** stapt in met een maker-limietorder, **Closer** stapt uit.
+
+**Vensters en maker-orders.** Kies bovenaan 15m, 1u of 4u. De zwerm beslist tussen 15% en 67% van het venster.
+Hij stapt in met een post-only limiet op de beste bied- of laatprijs (maker, 1,5 bp). Wordt die niet binnen 10% van
+het venster (max 5 min) gevuld, dan vervalt hij: geen trade. In de laatste 10% van het venster probeert de Closer
+als maker uit te stappen; lukt dat niet voor het einde, dan sluit hij met een marktorder (taker). Prior leert per
+venstergrootte apart (`data/desk-prior-<coin>-<min>m.json`).
+
+**Eén portefeuille.** Alle tickers betalen uit één pot: op papier een gedeeld saldo op de server (`DESK_PAPER_START`,
+standaard $1000, terug te zetten via Instellingen → Papier resetten), live het Hyperliquid-account. Kelly neemt per
+trade `DESK_ORDER_USD` marge, maar nooit meer dan een kwart van de vrije marge, en hooguit `DESK_MAX_OPEN` (5)
+posities tegelijk. Het Swarm PnL-paneel toont waarde, vrije en gebruikte marge en elke open positie in de kleur
+van zijn ticker.
+
+**Server-zwerm op papier.** De zwerm op de server draait altijd en volgt elke markt die je aanzet (knoppen
+bovenaan of "Zwerm" in de scanner). Zolang live niet aan staat, handelt hij op papier: zo leert Prior 24/7, ook
+als de pagina dicht is. Het tabblad **Alle tickers** toont per markt score, edge, Prior en pnl, en een
+gecombineerde trace waarin elke ticker zijn eigen kleur heeft.
+
+**Hefboom.** De Kelly-agent kiest per trade zelf de hefboom: zo dat een tegenvaller van 2σ tot het einde van het
+venster hooguit `DESK_RISK_PCT` (10%) van de marge kost, begrensd door `DESK_MAX_LEV` (3) en de max van de
+markt. Live zet hij die hefboom op Hyperliquid (isolated margin) vóór de order. Positie = `DESK_ORDER_USD` × hefboom,
+nooit boven `DESK_MAX_USD`.
+
+**Scanner.** Onderaan `/desk` staat een scanner over alle Hyperliquid-perps, ook de HIP-3-beurzen met tokenized
+aandelen (coinnamen als `xyz:TSLA`). Voorselectie: minstens $2M dagvolume en spread onder 8 bp; van de 60 grootste
+markten meet hij de 5-minutenbeweging (σ) van de laatste 12 uur en sorteert op **ratio** = σ ÷ kosten per ronde.
+Onder 1 eten de fees de beweging op. "+ Volg" zet een markt bij de coins bovenaan, "Zwerm" laat de server-zwerm
+erop handelen. "Zwerm: top 25 aan" en "Zwerm: alles uit" zetten alles in één keer; met
+**Auto** scant de server elke 5 minuten opnieuw en volgt de zwerm precies de top 25, top 50 of alle liquide markten
+waar de beweging de kosten dekt (ratio ≥ 1, keuze naast de knop) (wie eruit valt krijgt
+geen nieuwe trades, een open trade loopt af). Een markt uitzetten sluit geen open trade; de kill switch wel. Let op: HIP-3-markten kunnen hogere fees hebben dan de 4,5 bp waarmee de desk standaard rekent.
+
+Standaard is alles papier (de gedeelde papierportefeuille op de server). Echt geld loopt via de **zwerm op de server**
+(`app/desk_auto.py`): die handelt door als de pagina dicht is.
+
+1. `pip install -r requirements.txt` in de venv (hyperliquid-python-sdk en websockets).
+2. Stort USDC op Hyperliquid en maak via More → API een API-wallet aan (kan handelen, niet opnemen).
+3. Zet in `data/desk.env`:
+
+   ```
+   HL_SECRET_KEY=0x...          private key van de API-wallet
+   HL_ACCOUNT_ADDRESS=0x...     je hoofdaccount
+   HL_SUBACCOUNT=0x...          optioneel: handel op een apart sub-account
+   DESK_TOKEN=iets-geheims
+   DESK_LIVE=1
+   DESK_AUTO=1
+   DESK_MAX_USD=25              maximum per order
+   DESK_ORDER_USD=20            marge per order (positie = marge × hefboom)
+   DESK_MAX_LEV=3               hoogste hefboom die Kelly mag kiezen
+   DESK_RISK_PCT=10
+   DESK_DAILY_LOSS=10           stopt voor de rest van de UTC-dag na zoveel verlies
+   DESK_FEE_BPS=4.5             taker
+   DESK_MAKER_BPS=1.5
+   DESK_MIN_EDGE=2
+   DESK_WINDOW_MIN=60           startvenster: 15, 60 of 240
+   DESK_MAX_OPEN=5
+   DESK_PAPER_START=1000
+   ```
+4. Herstart de server, vul op `/desk` → Instellingen het token in en zet met **Zwerm live** de zwerm aan.
+
+Met de coinknoppen naast **Zwerm live** kies je op welke coins (BTC, ETH, SOL) de zwerm tegelijk handelt; de limieten gelden voor alle coins samen.
+Met **Bevestigen: AAN** wacht elke nieuwe positie 30 seconden op jouw klik; met **UIT** handelt de zwerm zelf.
+Posities gaan altijd dicht aan het einde van het venster (reduce-only, maker waar het kan). Na 3 mislukte orders op rij of bij het
+raken van de daglimiet stopt hij. De kill switch zet de zwerm uit en sluit BTC, ETH en SOL.
+
+**Privacy.** Hyperliquid vraagt geen KYC, maar alles staat openbaar on-chain onder je adres. Wil je de
+zwerm los van jezelf: gebruik een nieuwe wallet die je nergens anders voor gebruikt, of minstens een sub-account.
+Wie stort vanaf een exchange met KYC is via die storting te herleiden. Winst blijft gewoon aangifteplichtig.
+Alle live orders komen in `data/desk-orders.jsonl`.
+
 ## Tests
 
 ```bash

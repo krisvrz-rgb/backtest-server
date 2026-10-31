@@ -410,3 +410,11 @@ def test_strategy_scores(tmp_path, monkeypatch):
     assert d["scanned"] and len(d["scores"]) >= 150
     assert {n for n, v in d["scores"].items() if v["open"]} == set(res["AAA"]["open_now"])
     assert client.get("/api/scores", params={"symbol": "ZZZ"}).json()["scores"] == {}
+
+
+def test_desk_page_and_status_paper_by_default():
+    assert client.get("/desk").status_code == 200
+    st = client.get("/api/desk/status").json()
+    assert st["live"] is False and st["reasons"]
+    r = client.post("/api/desk/open", json={"coin": "BTC", "side": "long", "usd": 10, "token": "x"})
+    assert r.status_code == 403

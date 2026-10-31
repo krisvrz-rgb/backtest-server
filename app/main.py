@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from io import StringIO
 from typing import Any, Literal
 
@@ -23,6 +24,8 @@ from .watchlist import (PORTFOLIO_LIST, default_periods, PORTFOLIO_URL, SCANNER,
                         list_name, load_watchlist, parse_tradingview, replace_lists, save_watchlist, tv_to_yahoo,
                         scan_cached, ticker_detail, watchlist_view)
 from .robust import cross_ticker
+from . import desk, desk_coach
+from .desk_auto import swarm
 from .picks import picks, strategy_scores
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
 from .strategies.plot import indicators
@@ -151,6 +154,209 @@ def watchlist_page():
 @app.get("/aanraders", include_in_schema=False)
 def picks_page():
     return FileResponse(STATIC_DIR / "picks.html")
+
+
+@app.get("/desk", include_in_schema=False)
+def desk_page():
+    return FileResponse(STATIC_DIR / "desk.html")
+
+
+class DeskOrder(BaseModel):
+    coin: str
+    side: Literal["long", "short"] | None = None
+    usd: float = 0
+    token: str | None = None
+
+
+@app.get("/api/desk/status")
+def desk_status():
+    return desk.status()
+
+
+@app.get("/api/desk/candles")
+def desk_candles(coin: str = "BTC", interval: str = "1m", minutes: int = Query(180, ge=10, le=5000)):
+    try:
+        return desk.candles(coin, interval, minutes)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Hyperliquid niet bereikbaar: {e}")
+
+
+@app.get("/api/desk/scan")
+def desk_scan():
+    """Voorselectie van Hyperliquid-perps (ook tokenized aandelen) die het meest bewegen tegenover de kosten."""
+    try:
+        return desk.scan_cached(top=swarm.scan_n)
+    except Exception as e:
+        raise HTTPException(502, f"Hyperliquid niet bereikbaar: {e}")
+
+
+@app.get("/api/desk/account")
+def desk_account():
+    try:
+        return desk.account()
+    except Exception as e:
+        raise HTTPException(502, f"Hyperliquid niet bereikbaar: {e}")
+
+
+@app.post("/api/desk/open")
+def desk_open(req: DeskOrder):
+    if req.side is None:
+        raise HTTPException(400, "side ontbreekt")
+    try:
+        return desk.open_position(req.coin, req.side, req.usd, req.token)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/desk/close")
+def desk_close(req: DeskOrder):
+    try:
+        return desk.close_position(req.coin, req.token)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class DeskAuto(BaseModel):
+    token: str | None = None
+    on: bool | None = None
+    confirm: bool | None = None
+    coins: dict[str, bool] | None = None
+    window_min: int | None = None
+    reset_paper: float | None = None
+    min_edge: float | None = None
+    model: dict | None = None
+    max_lev: float | None = None
+    auto_scan: bool | None = None
+    scan_n: int | None = None
+    kelly_frac: float | None = None
+    max_margin_pct: float | None = None
+    sl_sigma: float | None = None
+    tp_sigma: float | None = None
+    hold_max: int | None = None
+    learn: bool | None = None
+    risk_pct: float | None = None
+
+
+class DeskApproval(BaseModel):
+    token: str | None = None
+    id: int
+    yes: bool
+
+
+@app.get("/api/desk/auto")
+def desk_auto_state(since: int = 0):
+    return swarm.snapshot(since)
+
+
+@app.post("/api/desk/auto")
+def desk_auto_set(req: DeskAuto):
+    try:
+        if desk.status()["live"]:  # zodra echt geld mogelijk is, vraagt elke wijziging het token
+            desk.check_token(req.token)
+        elif req.on is not None or req.confirm is not None:
+            raise PermissionError("Live handel staat uit; alleen markten volgen op papier kan")
+        swarm.set(on=req.on, confirm=req.confirm, coins=req.coins,
+                  window_min=req.window_min, reset_paper=req.reset_paper, min_edge=req.min_edge, model=req.model,
+                  max_lev=req.max_lev, risk_pct=req.risk_pct, auto_scan=req.auto_scan, scan_n=req.scan_n,
+                  kelly_frac=req.kelly_frac, max_margin_pct=req.max_margin_pct,
+                  sl_sigma=req.sl_sigma, tp_sigma=req.tp_sigma, hold_max=req.hold_max, learn=req.learn)
+        return swarm.snapshot(swarm.seq)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class DeskLevel(BaseModel):
+    token: str | None = None
+    coin: str
+    kind: str
+    price: float | None = None
+
+
+@app.post("/api/desk/auto/level")
+def desk_auto_level(req: DeskLevel):
+    try:
+        if desk.status()["live"]:
+            desk.check_token(req.token)
+        return swarm.set_level(req.coin, req.kind, req.price)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class DeskCoach(BaseModel):
+    token: str = ""
+    url: str | None = None
+    model: str | None = None
+    hour: int | None = Field(None, ge=0, le=23)
+    enabled: bool | None = None
+    detect: bool = False
+
+
+@app.get("/api/desk/pnl")
+def desk_pnl():
+    """Alle afgesloten trades, compact, voor de PnL-grafieken per uur/dag/week/maand/jaar."""
+    from . import desk_learn
+    seen, rows = set(), []
+    for h in list(desk_learn.trades()) + list(swarm.history):
+        k = (h.get("t"), h.get("coin"))
+        if k in seen or h.get("pnl") is None:
+            continue
+        seen.add(k)
+        rows.append([h["t"], round(h["pnl"], 4), bool(h.get("paper", True)), h.get("coin"), h.get("side"),
+                     h.get("reason") or "venster"])
+    rows.sort()
+    return {"trades": rows, "paper_start": swarm.paper.get("start")}
+
+
+@app.get("/api/desk/coach")
+def desk_coach_get():
+    """Je lokale taalmodel als dagelijkse coach: instellingen, of hij bezig is, en de laatste rapporten."""
+    return {"config": desk_coach.config(), "status": desk_coach.STATUS, "reports": desk_coach.reports()[-7:]}
+
+
+@app.post("/api/desk/coach/config")
+def desk_coach_config(req: DeskCoach):
+    try:
+        if desk.status()["live"]:
+            desk.check_token(req.token)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    if req.detect:
+        found = desk_coach.detect()
+        if not found:
+            raise HTTPException(404, "Geen lokaal taalmodel gevonden op " + ", ".join(desk_coach.CANDIDATES))
+        return {"config": desk_coach.save_config(url=found["url"], model=found["model"]), "models": found["models"]}
+    if req.url and not req.url.startswith(("http://127.0.0.1", "http://localhost", "http://192.168.")):
+        raise HTTPException(400, "Alleen een taalmodel op deze machine of in je thuisnetwerk")
+    return {"config": desk_coach.save_config(url=req.url, model=req.model, hour=req.hour, enabled=req.enabled)}
+
+
+@app.post("/api/desk/coach/run")
+def desk_coach_run():
+    if desk_coach.STATUS["running"]:
+        raise HTTPException(409, "De coach is al bezig")
+    desk_coach.start_background_run()
+    return {"ok": True}
+
+
+@app.post("/api/desk/auto/approve")
+def desk_auto_approve(req: DeskApproval):
+    try:
+        desk.check_token(req.token)
+        return swarm.approve(req.id, req.yes)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/health")
@@ -479,6 +685,8 @@ def stop_scan():
 @app.on_event("startup")
 def _start_scheduler():
     start_scheduler()
+    swarm.start()  # op papier tot live aan staat; volgt alle aangezette markten en leert 24/7
+    threading.Thread(target=desk_coach.scheduler, daemon=True, name="desk-coach").start()
 
 
 class ScheduleSettings(BaseModel):

@@ -1,0 +1,1920 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm Desk · Backtest Server</title>
+<script src="/static/lightweight-charts.js"></script>
+<style>
+  :root {
+    --bg: #f6f7fb; --panel: #ffffff; --panel-2: #f3f5f9; --text: #15171c; --muted: #8a92a3; --border: #e6e9f0;
+    --up: #16b364; --down: #ef3a5d; --accent: #2463eb; --warn: #f08c00;
+    --taker: #f08c00; --spotter: #e5383b; --kelly: #2fbf4a; --edge: #13b5a6; --closer: #12b5e5; --prior: #2463eb;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--muted); }
+  .mono, .num { font-family: var(--mono); }
+  .num { font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); }
+  .cap { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+  /* bovenbalk */
+  .top { display: flex; align-items: center; gap: 22px; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .logo { width: 34px; height: 34px; border-radius: 50%; background: #15171c; display: grid; place-items: center; }
+  .brand .logo i { display: inline-block; width: 4px; height: 12px; background: #fff; border-radius: 2px; margin: 0 2px; }
+  .brand b { font-size: 20px; letter-spacing: .02em; }
+  .brand small { display: block; font-size: 9px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; }
+  .nav { display: flex; gap: 14px; font-size: 12px; }
+  .stat { display: grid; line-height: 1.1; }
+  .stat b { font: 600 17px var(--mono); }
+  .stat span { font-size: 9px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+  .clock { font: 600 26px var(--mono); }
+  .grow { flex: 1; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; background: var(--panel); padding: 5px 10px; font: 600 12px var(--mono); cursor: pointer; color: var(--muted); }
+  .seg button.on { background: var(--text); color: #fff; }
+  .badge { font: 700 11px var(--mono); padding: 4px 9px; border-radius: 6px; border: 1.5px solid; letter-spacing: .06em; }
+  .badge.paper { color: var(--accent); border-color: var(--accent); }
+  .badge.live { color: #fff; background: var(--down); border-color: var(--down); animation: blink 1.4s infinite; }
+  .badge.sim { color: var(--warn); border-color: var(--warn); }
+  @keyframes blink { 50% { opacity: .55; } }
+  button.btn { font: 600 12px inherit; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  button.btn.danger { color: var(--down); border-color: var(--down); }
+  button.btn.go { color: #fff; background: var(--up); border-color: var(--up); }
+
+  .ctlbar { display: flex; align-items: center; gap: 8px; padding: 6px 18px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .ctlbar .cap { margin-left: 6px; }
+  .ctlbar.zw { flex-wrap: nowrap; } .ctlbar.zw .seg { overflow-x: auto; max-width: calc(100vw - 140px); flex: none; }
+  .ctlbar.zw .seg button { white-space: nowrap; }
+  .top .clock { margin-left: 8px; }
+  .mpct { display: flex; align-items: center; gap: 5px; font: 600 12px var(--mono); }
+  .mpct input { width: 54px; font: 600 13px var(--mono); padding: 4px 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+  .mpct b { color: var(--muted); font-size: 11px; }
+  .reactor.withpf { grid-template-columns: 170px minmax(0, 1fr) 420px 300px; }
+  .pfslot:empty { display: none; } .pfslot > .panel { border: 0; box-shadow: none; padding: 0; }
+  .pfslot #balChart { height: 110px; }
+  .row2.solo { grid-template-columns: 1fr; }
+  .alltop { display: grid; grid-template-columns: minmax(0, 1fr) 440px; gap: 12px; align-items: start; }
+  .alltop #pfSlot > .panel { border: 0; box-shadow: none; padding: 0; }
+  @media (max-width: 1250px) { .alltop { grid-template-columns: 1fr; } }
+  /* statusregel + live wire */
+  .strip { display: flex; gap: 26px; padding: 7px 18px; background: var(--panel); border-bottom: 1px solid var(--border); font: 600 11px var(--mono); flex-wrap: wrap; }
+  .strip .pill { color: var(--down); }
+  .wire { display: flex; align-items: center; background: var(--panel); border-bottom: 1px solid var(--border); overflow: hidden; height: 28px; }
+  .wire .lbl { background: #15171c; color: #fff; font: 700 10px var(--mono); padding: 0 12px; height: 100%; display: grid; place-items: center; letter-spacing: .1em; flex: none; }
+  .wire .run { white-space: nowrap; font: 11px var(--mono); color: var(--muted); display: flex; gap: 26px; padding-left: 14px; }
+  .wire .run span b { color: var(--text); }
+  .wire .chip { color: #fff; border-radius: 9px; padding: 1px 7px; font-weight: 700; }
+
+  /* agents */
+  .agents { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; padding: 10px 18px; }
+  .agent { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; display: flex; align-items: center; gap: 10px; border-bottom: 3px solid var(--border); transition: border-color .3s; }
+  .agent.work { border-bottom-color: var(--c); box-shadow: 0 4px 14px -8px var(--c); }
+  .blob { width: 30px; height: 30px; border-radius: 50%; background: var(--c); display: grid; place-items: center; flex: none; }
+  .blob i { display: inline-block; width: 3px; height: 10px; background: #fff; border-radius: 2px; margin: 0 1.5px; }
+  .agent b { font-size: 15px; letter-spacing: .02em; display: block; }
+  .agent .role { font-size: 9px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+  .agent .st { margin-left: auto; text-align: right; font: 600 10px var(--mono); color: var(--muted); text-transform: uppercase; }
+  .agent.work .st { color: var(--c); }
+
+  /* panelen */
+  main { padding: 0 18px 30px; display: grid; gap: 10px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+  .ph { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; flex-wrap: wrap; }
+  .ph h2 { margin: 0; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+  .ph h2::before { content: "◆ "; }
+  .ph .sub { font-size: 10px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+  .ph .right { margin-left: auto; font: 600 11px var(--mono); color: var(--muted); }
+
+  .reactor { display: grid; grid-template-columns: 170px minmax(0, 1fr) 300px; gap: 12px; align-items: start; }
+  .bank { display: grid; gap: 5px; align-content: start; }
+  .spark { border: 1px solid var(--border); border-radius: 8px; padding: 3px 7px; position: relative; }
+  .spark .hd { display: flex; font: 700 10px var(--mono); letter-spacing: .06em; }
+  .spark .hd span { margin-left: auto; color: var(--accent); }
+  .spark canvas { width: 100%; height: 24px; display: block; }
+  .ring { position: relative; height: 430px; }
+  .ring canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .ring .hud { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: flex-start; pointer-events: none; }
+  .ring .big { font: 700 30px var(--mono); }
+  .ring .mid { text-align: center; flex: 1; font: 600 10px var(--mono); color: var(--muted); letter-spacing: .06em; }
+  .ring .mid b { color: var(--text); display: block; font-size: 11px; }
+  .ring .bar { position: absolute; left: 4%; right: 4%; top: 96px; display: grid; grid-template-columns: repeat(6, 1fr); border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,.85); font: 600 12px var(--mono); }
+  .ring .bar div { padding: 6px 10px; border-right: 1px solid var(--border); }
+  .ring .bar div:last-child { border: 0; }
+  .ctrl { display: grid; gap: 8px; align-content: start; }
+  .box { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  .box h3 { margin: 0 0 6px; font: 700 10px var(--mono); letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+  .kv { display: flex; font: 12px var(--mono); padding: 1px 0; }
+  .kv span:last-child { margin-left: auto; font-weight: 600; }
+  .conf { display: grid; grid-template-columns: 60px 1fr 34px; gap: 6px; align-items: center; font: 600 10px var(--mono); margin: 3px 0; }
+  .conf .track { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+  .conf .track div { height: 100%; border-radius: 3px; transition: width .5s; }
+  .exhaust { font: 11px var(--mono); max-height: 110px; overflow: auto; }
+  .exhaust div { display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px dashed var(--border); }
+  .exhaust div span:last-child { margin-left: auto; }
+  .approve { border: 2px solid var(--down); border-radius: 8px; padding: 8px 10px; display: none; }
+  .approve.on { display: block; animation: blink 1.2s infinite; }
+  .approve .row { display: flex; gap: 6px; margin-top: 6px; }
+
+  .row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 10px; }
+  .row3 { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.2fr); gap: 10px; }
+  .pnlbig { font: 700 44px var(--mono); color: var(--down); }
+  .pnlbig.pos { color: var(--up); }
+  .pnlbig sup { font-size: 22px; }
+  .stats4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
+  .stats4 b { font: 700 17px var(--mono); display: block; }
+  .stats4 span { font-size: 9px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+  canvas.fill { width: 100%; display: block; }
+  /* vaste CSS-hoogte, anders schaalt een canvas mee met de breedte en wordt hij op brede schermen metershoog */
+  #balChart { height: 150px; } #pnlBars { height: 50px; } #dist { height: 190px; } #spec { height: 230px; } #plasma { height: 50px; }
+  .spark canvas { height: 24px; }
+  .tape { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 10px; }
+  #chart { height: 400px; }
+  .book { font: 11px var(--mono); }
+  .book div { display: grid; grid-template-columns: 1fr 1fr; position: relative; padding: 1px 4px; }
+  .book div i { position: absolute; right: 0; top: 1px; bottom: 1px; opacity: .22; border-radius: 2px; }
+  .book div span:last-child { text-align: right; }
+  .book .spread { text-align: center; display: block; color: var(--muted); padding: 3px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 2px 0; }
+  .trace { font: 11px var(--mono); max-height: 270px; overflow: auto; }
+  .trace .t { display: grid; grid-template-columns: 14px 62px 70px 1fr auto; gap: 8px; align-items: center; padding: 3px 0; border-bottom: 1px dashed var(--border); }
+  .trace .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .trace .who { font-weight: 700; padding: 1px 5px; border-radius: 4px; color: #fff; text-align: center; font-size: 10px; }
+  .trace .hand { font-weight: 700; }
+  .prc4 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 6px; }
+  .prc4 div { border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font: 700 13px var(--mono); }
+  .prc4 div span { display: block; font: 9px system-ui; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .spec { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 8px; }
+  .feat { font: 10px var(--mono); }
+  .feat { display: grid; grid-template-rows: repeat(12, 1fr); height: 230px; }
+  .feat div { display: grid; grid-template-columns: 60px 1fr; gap: 5px; align-items: center; }
+  .feat i { height: 5px; border-radius: 2px; display: block; }
+
+  table.scan { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.scan th { text-align: left; font: 600 10px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  table.scan td { padding: 4px 8px; border-bottom: 1px dashed var(--border); white-space: nowrap; }
+  table.scan .btn { padding: 3px 8px; font-size: 11px; }
+  .tabs { display: flex; gap: 4px; padding: 8px 18px 0; }
+  .tabs button { border: 1px solid var(--border); border-bottom: 0; background: var(--panel-2); padding: 7px 16px; border-radius: 8px 8px 0 0; font: 600 12px inherit; cursor: pointer; color: var(--muted); }
+  .tabs button.on { background: var(--panel); color: var(--text); }
+  .trades2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; }
+  .trwrap { max-height: 320px; overflow: auto; }
+  table.tr td { font: 11px var(--mono); } table.tr tr[data-c] { cursor: pointer; } table.tr tr[data-c]:hover td { background: var(--panel-2); }
+  @media (max-width: 1250px) { .trades2 { grid-template-columns: 1fr; } }
+  .allview { padding: 0 18px 30px; display: grid; gap: 10px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .chips button { border: 1.5px solid var(--c); color: var(--c); background: var(--panel); border-radius: 14px; padding: 3px 10px; font: 700 11px var(--mono); cursor: pointer; }
+  .chips button.on { background: var(--c); color: #fff; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+  .card { border: 1px solid var(--border); border-left: 4px solid var(--c); border-radius: 8px; padding: 7px 10px; font: 11px var(--mono); }
+  .card b.t { color: var(--c); font-size: 13px; }
+  .allfeed { font: 11px var(--mono); max-height: 70vh; overflow: auto; }
+  .allfeed .r { display: grid; grid-template-columns: 62px 86px 74px 1fr auto; gap: 8px; align-items: center; padding: 3px 6px; border-left: 4px solid var(--c); border-bottom: 1px dashed var(--border); }
+  .allfeed .r:nth-child(odd) { background: var(--panel-2); }
+  .allfeed .tk { color: var(--c); font-weight: 700; }
+  .allfeed .who { font-weight: 700; padding: 1px 5px; border-radius: 4px; color: #fff; text-align: center; font-size: 10px; }
+  .foot { position: sticky; bottom: 0; background: #15171c; color: #cfd3db; font: 11px var(--mono); padding: 6px 18px; display: flex; gap: 26px; flex-wrap: wrap; }
+  .foot b { color: #fff; }
+
+  dialog { border: 1px solid var(--border); border-radius: 12px; padding: 18px; max-width: 520px; }
+  dialog label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); margin: 8px 0; }
+  dialog input { font: 13px var(--mono); padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+  dialog p { font-size: 12px; color: var(--muted); }
+
+  /* donker neon-thema (standaard) */
+  body.dark { --bg: #04050b; --panel: #0a0d19; --panel-2: #111528; --text: #e6ebf8; --muted: #7581a3; --border: #1b2140; --accent: #5b8cff; }
+  body.dark .panel { box-shadow: 0 0 0 1px rgba(91,140,255,.06), 0 10px 40px -20px rgba(91,140,255,.35); }
+  body.dark .ph h2 { color: #fff; text-shadow: 0 0 10px rgba(91,140,255,.6); }
+  body.dark .ph h2::before { color: var(--accent); }
+  body.dark .seg button.on { background: var(--accent); color: #fff; box-shadow: 0 0 12px rgba(91,140,255,.6); }
+  body.dark .brand .logo { background: #fff; box-shadow: 0 0 14px rgba(255,255,255,.5); } body.dark .brand .logo i { background: #04050b; }
+  body.dark .wire .lbl { background: #fff; color: #04050b; }
+  body.dark .ring .bar { background: rgba(10,13,25,.85); }
+  body.dark .foot { background: #000; border-top: 1px solid var(--border); }
+  body.dark .agent { background: linear-gradient(180deg, #0d1122, #0a0d19); }
+  body.dark .agent.work { box-shadow: 0 0 22px -6px var(--c); }
+  body.dark .blob { box-shadow: 0 0 12px var(--c); }
+  body.dark .pnlbig { text-shadow: 0 0 18px currentColor; }
+  body.dark .clock { text-shadow: 0 0 12px rgba(230,235,248,.4); }
+  body.dark .trace .who, body.dark .allfeed .who { box-shadow: 0 0 8px -1px currentColor; }
+  body.dark dialog, body.dark dialog input, body.dark select { background: var(--panel); color: var(--text); border-color: var(--border); }
+  button.btn { color: var(--text); }
+  body.dark .badge.paper { box-shadow: 0 0 10px rgba(91,140,255,.4); }
+
+  @media (max-width: 1250px) {
+    .reactor { grid-template-columns: 1fr; } .bank { grid-template-columns: repeat(3, 1fr); }
+    .row2, .row3, .tape { grid-template-columns: 1fr; } .agents { grid-template-columns: repeat(3, 1fr); }
+  }
+  .why { font: 11.5px/1.5 system-ui, sans-serif; } .why p { margin: 0 0 5px; } .why b { font-weight: 700; }
+  .why .bar { display: grid; grid-template-columns: 96px 1fr 44px; gap: 6px; align-items: center; font: 10px var(--mono); margin: 1px 0; }
+  .why .bar i { display: block; height: 5px; border-radius: 3px; }
+  .pfm{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--panel-2);margin:8px 0 2px}
+  .pfm i{display:block;height:100%}
+  .pfo{font:11px var(--mono);margin:4px 0 6px}
+  .pfo div{display:grid;grid-template-columns:70px 64px 1fr 60px 64px 64px;gap:6px;align-items:center;padding:2px 0}
+  .pfo div[data-c], .exhaust div[data-c] { cursor: pointer; } .pfo div[data-c]:hover, .exhaust div[data-c]:hover { background: var(--panel-2); }
+  .layers { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; font: 600 10px var(--mono); }
+  .layers button { border: 1px solid var(--border); background: var(--panel); color: var(--muted); border-radius: 10px; padding: 2px 8px; cursor: pointer; font: inherit; }
+  .layers button.on { color: #04050b; background: var(--c); border-color: var(--c); box-shadow: 0 0 8px -2px var(--c); }
+  .tape.nobook { grid-template-columns: 1fr; } .tape.nobook #book { display: none; }
+  .depth { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 2; }
+  .minis { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px; margin-top: 10px; }
+  .minis:empty { display: none; }
+  .mc { border: 1px solid var(--border); border-radius: 8px; padding: 6px 6px 2px; background: var(--panel-2); cursor: pointer; min-width: 0; }
+  .mc.sel { border-color: var(--accent); }
+  .mc .mh { display: flex; gap: 8px; align-items: baseline; font: 600 12px var(--mono); margin-bottom: 4px; white-space: nowrap; overflow: hidden; }
+  .mc .mh .r { margin-left: auto; }
+  .mc .mw { position: relative; height: 190px; } .mc .mw > div { position: absolute; inset: 0; z-index: 1; } .mc .mw > canvas { z-index: 2; }
+  .chartwrap { position: relative; } .chartwrap #heat { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 0; } .chartwrap #chart { position: relative; z-index: 1; }
+  .pfo .bar{height:6px;border-radius:3px;background:var(--panel-2);overflow:hidden}.pfo .bar i{display:block;height:100%}
+</style>
+</head>
+<body class="dark">
+<div class="top">
+  <div class="brand"><div class="logo"><i></i><i></i></div>
+    <div><b>SWARM DESK</b><small>zes agents · één boek · <span id="coinLbl">BTC</span> <span id="winLbl">1u</span> · hyperliquid</small></div></div>
+  <div class="nav"><a href="/">Overzicht</a><a href="/tool">Backtest</a><a href="/watchlist">Watchlist</a><a href="/aanraders">Aanraders</a></div>
+  <div class="stat"><b class="num" id="hdSpot">–</b><span>spot · hyperliquid</span></div>
+  <div class="stat"><b class="num" id="hdPnl">–</b><span>portefeuille pnl</span></div>
+  <div class="stat"><b class="num" id="hdTickets">0</b><span>tickets</span></div>
+  <div class="grow"></div>
+  <span class="badge paper" id="modeBadge">PAPER</span>
+  <span class="badge sim" id="feedBadge" style="display:none">SIMULATIE</span>
+  <label class="mpct" title="Marge per trade in % van de huidige portefeuillewaarde (na winst of verlies telkens herrekend). Kelly neemt minder als de edge klein is."><span class="cap">marge/trade</span>
+    <input id="hdMarg" type="number" step="0.5" min="0.5" max="25">%<b class="num" id="hdMargUsd">–</b></label>
+  <div class="clock num" id="clock">--:--:--</div><span class="cap">lokaal</span>
+  <button class="btn danger" id="killBtn" title="Sluit alle posities en zet de desk op pauze">Kill switch</button>
+</div>
+<div class="ctlbar">
+  <span class="cap">markt</span><div class="seg" id="coinSeg"></div>
+  <span class="cap">venster</span><div class="seg" id="winSeg" title="Lengte van een venster: zo lang houdt de zwerm een positie maximaal vast"></div>
+  <span class="cap">drempel</span><div class="seg" id="edgeSeg" title="Hoeveel edge (¢ boven break-even na kosten) de zwerm wil zien voor hij instapt. Los (0¢) = instappen zodra het model break-even of beter ziet: meer trades."></div>
+  <div class="grow"></div>
+  <button class="btn" id="autoBtn" style="display:none" title="Zet de zwerm op de server aan of uit (echt geld)">Zwerm live</button>
+  <button class="btn" id="confBtn" style="display:none" title="Moet elke echte order eerst door jou goedgekeurd worden?">Bevestigen</button>
+  <button class="btn" id="themeBtn" title="Donker of licht thema">☾</button>
+  <button class="btn" id="setBtn">Instellingen</button>
+</div>
+<div class="ctlbar zw"><span class="cap">zwerm volgt</span><span class="seg" id="coinAuto" style="display:none" title="Klik om een markt aan of uit te zetten voor de zwerm"></span></div>
+<div class="strip">
+  <span class="pill">● ZES AGENTS LIVE</span>
+  <span>HOLDER <b id="sHolder">–</b></span>
+  <span>HANDOFFS/MIN <b id="sHand">0</b></span>
+  <span>MODEL <b id="sFair">–</b> VS BREAK-EVEN <b id="sBe">–</b></span>
+  <span>EDGE <b id="sEdge">–</b></span>
+  <span>OPEN <b id="sOpen">0</b> TICKETS</span>
+  <span>MENSELIJKE GOEDKEURING <b id="sAppr">ALLEEN LIVE</b></span>
+</div>
+<div class="wire"><div class="lbl">LIVE WIRE</div><div class="run" id="wire"></div></div>
+
+<div class="agents" id="agents"></div>
+
+<div class="tabs"><button class="on" data-tab="desk">Desk</button><button data-tab="all">Overzicht · alle tickers</button><button data-tab="pnl">PnL · uur tot jaar</button></div>
+<section id="tabPnl" style="display:none">
+  <div class="panel">
+    <div class="ph"><h2>PnL</h2><span class="sub">afgesloten trades, na fees · balkje = winst of verlies in die periode · lijn = totaal</span>
+      <span class="right"><span class="seg" id="pnlSeg"><button data-b="h">uur</button><button data-b="d" class="on">dag</button><button data-b="w">week</button><button data-b="m">maand</button><button data-b="y">jaar</button><button data-b="a">alles</button></span>
+        <span class="seg" id="pnlMode" style="margin-left:8px"><button data-m="paper" class="on">papier</button><button data-m="live">live</button></span></span></div>
+    <div id="pnlSum" class="kv" style="display:flex;gap:26px;flex-wrap:wrap;margin:4px 0 10px;font:600 13px var(--mono)"></div>
+    <div id="pnlChart" style="height:380px"></div>
+    <div style="overflow:auto;margin-top:10px"><table class="scan" id="pnlTable"></table></div>
+  </div>
+</section>
+<section id="tabAll" class="allview" style="display:none">
+  <div class="panel">
+    <div class="ph"><h2>Alle tickers</h2><span class="sub">de zwerm op de server · elke markt in zijn eigen kleur · klik een ticker om te filteren</span>
+      <span class="right" id="allMode">–</span></div>
+    <div class="alltop"><canvas id="allRing" class="fill" style="height:460px;cursor:pointer" title="Klik een ticker om hem op de Desk te openen"></canvas>
+      <div id="pfSlot"></div></div>
+    <div class="chips" id="allChips"></div>
+    <div style="display:flex;gap:10px;align-items:center;margin:-2px 0 8px"><span class="cap">sorteren op</span>
+      <span class="seg" id="sortSeg"><button data-by="edge">edge</button><button data-by="score">score</button></span>
+      <span class="cap">ring, ranglijst en kaartjes elke 10 s opnieuw · groen = edge boven 0 (kans verslaat de kosten), rood = eronder</span></div>
+    <div style="overflow:auto;max-height:420px;margin-bottom:10px"><table class="scan" id="edgeList"></table></div>
+    <div class="cards" id="allCards"></div>
+  </div>
+  <div class="panel">
+    <div class="ph"><h2>Trades</h2><span class="sub">open en afgesloten · alle tickers · klik een rij om de grafiek te openen</span><span class="right" id="trSum">–</span></div>
+    <div class="trades2">
+      <div><div class="cap">open</div><div class="trwrap"><table class="scan tr" id="trOpen"></table></div></div>
+      <div><div class="cap">afgesloten (nieuwste boven)</div><div class="trwrap"><table class="scan tr" id="trDone"></table></div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="ph"><h2>Gecombineerde trace</h2><span class="sub">nieuwste boven</span><span class="right" id="allCount">0 regels</span></div>
+    <div class="allfeed" id="allFeed"></div>
+  </div>
+</section>
+<main id="tabDesk">
+  <section class="panel">
+    <div class="ph"><h2>The Reactor</h2><span class="sub">zes spoelen houden de ring · één ticket rijdt mee · het model in de kern</span>
+      <span class="right" id="stage">VENSTER –</span></div>
+    <div class="reactor">
+      <div class="bank" id="bank"></div>
+      <div class="ring">
+        <canvas id="ring"></canvas>
+        <div class="hud">
+          <div><div class="cap" id="ringCoin">BTC · hyperliquid perp</div><div class="big num" id="ringSpot">–</div>
+            <div class="cap">open venster <span class="num" id="ringOpen">–</span></div></div>
+          <div class="mid"><b id="ringWin">VENSTER –</b><span id="ringLeft">sluit over –</span></div>
+          <div style="text-align:right"><div class="cap">P(stijgt) tot sluiting</div><div class="big num" id="ringFair">–</div>
+            <div class="cap">break-even <span class="num" id="ringBe">–</span></div></div>
+        </div>
+        <div class="bar">
+          <div id="barCoin">BTC UP</div><div class="num" id="barSpot">–</div><div class="num" id="barMove">–</div>
+          <div class="num" id="barVol">–</div><div class="num" id="barP">–</div><div class="num" id="barEdge">–</div>
+        </div>
+      </div>
+      <div id="pfSlotDesk" class="pfslot"></div>
+      <div class="ctrl">
+        <div class="approve" id="approve">
+          <h3 style="color:var(--down)">Goedkeuring nodig · echte order</h3>
+          <div class="kv"><span id="apText">–</span></div>
+          <div class="row"><button class="btn go" id="apYes">Uitvoeren</button><button class="btn" id="apNo">Weigeren</button>
+            <span class="num muted" id="apTimer" style="margin-left:auto"></span></div>
+        </div>
+        <div class="box"><h3>Live ticket</h3><div id="ticket" class="mono muted">Geen open ticket</div></div>
+        <div class="box"><h3>Waarom · wat denkt de zwerm</h3><div id="why" class="why" style="max-height:330px;overflow:auto">–</div></div>
+        <div class="box"><h3>Vertrouwen per agent</h3><div id="conf"></div></div>
+        <div class="box"><h3>Plasma flow · koopdruk</h3><canvas id="plasma" class="fill" height="50"></canvas></div>
+        <div class="box"><h3>Exhaust log · afgerekend</h3><div class="exhaust" id="exhaust"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="row2">
+    <section class="panel" id="pnlPanel">
+      <div class="ph"><h2>Swarm PnL</h2><span class="sub">één portefeuille · alle tickers</span><span class="right" id="pnlMode">PAPER</span></div>
+      <div class="cap" id="pnlWho">papierportefeuille</div>
+      <div class="pnlbig num" id="balance">–</div>
+      <div class="num muted" id="lastSettle">nog niets afgerekend</div>
+      <div id="pfMargin" class="pfm"></div>
+      <div id="pfOpen" class="pfo"></div>
+      <div class="stats4">
+        <div><b id="stTickets">0</b><span>tickets</span></div>
+        <div><b id="stWin">–</b><span>win rate</span></div>
+        <div><b id="stAvg">–</b><span>gem. pnl</span></div>
+        <div><b id="stDd">–</b><span>max dd</span></div>
+      </div>
+      <canvas id="balChart" class="fill" height="150"></canvas>
+      <canvas id="pnlBars" class="fill" height="50"></canvas>
+      <div id="split" style="margin-top:8px"></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>The Tape</h2><span class="sub"><span id="tapeCoin">BTC</span> 1m · vwap · live orderboek</span>
+        <span class="right" id="tapeStats">–</span></div>
+      <div class="tape nobook">
+        <div><div class="big num" id="tapePx" style="font:700 26px var(--mono)">–</div>
+          <div class="layers" id="layers" title="Lagen op de grafiek aan of uit"></div>
+          <div class="chartwrap"><canvas id="heat"></canvas><div id="chart"></div><canvas id="featc" class="depth"></canvas><canvas id="depth" class="depth"></canvas></div>
+          <div class="minis" id="minis" title="Eén grafiek per open trade · klik om groot te openen"></div></div>
+        <div class="book" id="book"></div>
+      </div>
+    </section>
+  </div>
+
+  <section class="panel">
+    <div class="ph"><h2>Leren &amp; coach</h2><span class="sub">gewichten leren uit eigen data (klein ML-model, geen taalmodel) · dagelijks rapport van je eigen taalmodel op CrushMini</span>
+      <span class="right"><button class="btn" id="learnBtn" title="Geleerde gewichten gebruiken zodra ze op nieuwe data beter voorspellen dan de vaste">Geleerd: –</button></span></div>
+    <div class="row2" style="grid-template-columns:1fr 1.4fr;gap:14px">
+      <div id="learnBox" class="why"><span class="muted">laden…</span></div>
+      <div><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          <span class="muted" id="coachCfg">–</span><span style="flex:1"></span>
+          <button class="btn" id="coachDetect" title="Zoek een lokaal taalmodel (Ollama, LM Studio, llama.cpp) en kies het grootste">Zoek mijn model</button>
+          <button class="btn" id="coachRun">Coach nu</button></div>
+        <div id="coachBox" class="why" style="white-space:pre-wrap;max-height:340px;overflow:auto"><span class="muted">nog geen rapport</span></div></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><h2>The Scanner</h2><span class="sub">alle Hyperliquid-perps · ook tokenized aandelen · gesorteerd op beweging tegenover kosten</span>
+      <span class="right"><span id="scanInfo">nog niet gescand</span>
+      <select id="scanFilter" style="margin-left:8px"><option value="all">alles</option><option value="crypto">crypto</option><option value="stock">aandelen e.d. (HIP-3)</option></select>
+      <button class="btn" id="scanBtn">Scannen</button>
+      <button class="btn" id="scanAllOn" title="De zwerm volgt alle markten uit deze scan">Zwerm: deze lijst aan</button>
+      <button class="btn" id="scanAllOff" title="De zwerm volgt geen enkele markt meer; open trades lopen af (kill switch sluit meteen)">Zwerm: alles uit</button>
+      <select id="scanN" title="Hoeveel markten de scanner kiest"><option value="25">top 25</option><option value="50">top 50</option><option value="0">alle liquide (ratio ≥ 1)</option></select>
+      <button class="btn" id="scanAuto" title="Elke 5 minuten scant de server opnieuw en volgt de zwerm precies de top 25; wie eruit valt krijgt geen nieuwe trades, open trades lopen af">Auto: UIT</button></span></div>
+    <div style="overflow:auto"><table class="scan"><thead><tr><th>#</th><th>markt</th><th>prijs</th><th>24u</th><th>volume 24u</th><th>spread</th><th>σ 5m</th>
+      <th title="σ 5m gedeeld door de kosten per ronde. Onder 1 eten de fees de beweging op; boven 1,5 is er ruimte.">ratio</th><th>funding/u</th><th></th></tr></thead>
+      <tbody id="scanBody"></tbody></table></div>
+    <p class="muted" style="font-size:11px;margin:6px 0 0">Voorselectie: minstens $2M volume per dag en spread onder 8 bp; van de 60 grootste markten wordt de 5-minutenbeweging van de laatste 12 uur gemeten. <b>ratio</b> = σ 5m ÷ kosten per ronde: hoe hoger, hoe minder de fees de edge opeten. "+ Volg" zet de markt bovenaan bij de coins, "Zwerm" laat de server-zwerm erop handelen.</p>
+  </section>
+
+  <div class="row3">
+    <section class="panel">
+      <div class="ph"><h2>The Trace</h2><span class="sub">elke stap die de desk zet</span><span class="right" id="traceCount">0 stappen</span></div>
+      <div class="trace" id="trace"></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>The Pricer</h2><span class="sub">spot · vol · tijd · p(stijgt)</span></div>
+      <canvas id="dist" class="fill" height="190"></canvas>
+      <div class="prc4">
+        <div><span>spot</span><b id="pSpot">–</b></div>
+        <div><span>σ venster</span><b id="pVol">–</b></div>
+        <div><span>tijd</span><b id="pLeft">–</b></div>
+        <div><span>p(stijgt)</span><b id="pP">–</b></div>
+        <div><span>edge</span><b id="pEdge">–</b></div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>Signal Spectrogram</h2><span class="sub">12 kenmerken · sterkte door de tijd</span><span class="right">rechts: nu, -1 tot +1</span></div>
+      <div class="spec"><canvas id="spec" class="fill" height="230"></canvas><div class="feat" id="feat"></div></div>
+    </section>
+  </div>
+</main>
+<div class="foot">
+  <span><b>SWARM DESK</b> · <span id="fFeed">verbinden…</span></span>
+  <span>SALDO <b id="fBal">–</b></span>
+  <span>MAX DD <b id="fDd">–</b></span>
+  <span>KOSTEN/RONDE <b id="fCost">–</b></span>
+  <span>PRIOR β <b id="fBeta">–</b> (<span id="fN">0</span> vensters)</span>
+  <span id="fLive">LIVE UIT</span>
+</div>
+
+<dialog id="dlg">
+  <h3 style="margin-top:0">Instellingen</h3>
+  <p>Deze instellingen gelden voor het papierboek in deze browser. Echt geld loopt via de zwerm op de server: grootte, daglimiet en kosten staan in data/desk.env. Met het desk-token hieronder kan deze browser de zwerm aan/uit zetten en orders goedkeuren.</p>
+  <label>Startsaldo papierportefeuille ($, geldt bij "Papier resetten")<input id="cfBal" type="number" step="100"></label>
+  <p class="muted" style="font-size:11px">Hefboom, grootte, minimale edge en kosten stelt de server zelf in (Kelly, DESK_MIN_EDGE, DESK_MAKER_BPS en DESK_FEE_BPS in data/desk.env).</p>
+  <fieldset style="border:1px solid var(--border);border-radius:8px;margin:10px 0;padding:6px 10px">
+    <legend class="cap">Hefboom (Kelly)</legend>
+    <p class="muted" style="font-size:11px;margin:2px 0 6px">Kelly kiest per trade: hefboom = risico ÷ (2 × σ van het venster), afgerond naar beneden en begrensd door de max hieronder en de max van de markt. Een tegenvaller van 2σ kost dan hooguit "risico" % van de marge. Live geldt bovendien DESK_MAX_LEV uit desk.env als plafond (<span id="lvLive">–</span>).</p>
+    <p class="muted" style="font-size:11px;margin:2px 0 6px">Grootte: Kelly rekent hoeveel positie de edge waard is (μ ÷ σ² × portefeuille) en neemt daar een fractie van. De marge is nooit meer dan "max marge" % van de portefeuille.</p>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;align-items:end">
+      <label>max hefboom (x)<input id="lvMax" type="number" step="1" min="1" max="20"></label>
+      <label>risico bij 2σ (% marge)<input id="lvRisk" type="number" step="1" min="1" max="50"></label>
+      <label>Kelly-fractie<input id="lvKelly" type="number" step="0.05" min="0.05" max="1"></label>
+      <label>max marge (% pf)<input id="lvMarg" type="number" step="0.5" min="0.5" max="25"></label>
+      <span class="muted" style="align-self:center;max-width:320px">Stop-loss, take-profit en hefboom kiest de zwerm per trade: stop net voorbij steun, weerstand of trendlijn (anders 1σ), take-profit net ervoor (anders 1,5σ), hefboom uit de afstand tot de stop × het vertrouwen. Je kunt ze op de grafiek nog verslepen.</span>
+      <label title="Op het einde van het venster kijkt de zwerm of hij nu opnieuw in dezelfde richting zou instappen. Zo ja, dan loopt de trade door (scheelt fees). 0 = altijd sluiten">doorlopen (max vensters)<input id="lvHold" type="number" step="1" min="0" max="12"></label>
+      <button class="btn" id="lvSave">Toepassen</button>
+    </div>
+  </fieldset>
+  <fieldset style="border:1px solid var(--border);border-radius:8px;margin:10px 0;padding:6px 10px">
+    <legend class="cap">Prijsmodel (Spotter + Prior) · geldt voor de server-zwerm</legend>
+    <p class="muted" style="font-size:11px;margin:2px 0 6px">Score = som van gewicht × kenmerk. Prior begint bij start-β en vertrouwt de gemeten β meer naarmate er meer vensters zijn: na "krimp" vensters weegt de data even zwaar als de start-β. Hoger β = de score voorspelt meer = grotere kansen.</p>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+      <label>start-β<input id="mdBeta" type="number" step="0.05" min="0" max="2"></label>
+      <label>krimp (vensters)<input id="mdK" type="number" step="5" min="1" max="1000"></label>
+      <label>flow 30s<input id="mdW_flow30" type="number" step="0.05" min="0" max="1"></label>
+      <label>flow 10s<input id="mdW_flow10" type="number" step="0.05" min="0" max="1"></label>
+      <label>boek top 5<input id="mdW_book" type="number" step="0.05" min="0" max="1"></label>
+      <label>boek top 20<input id="mdW_bookDeep" type="number" step="0.05" min="0" max="1"></label>
+      <label>momentum<input id="mdW_mom" type="number" step="0.05" min="0" max="1"></label>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:4px"><button class="btn" id="mdSave">Model toepassen</button><button class="btn" id="mdReset">Standaard herstellen</button><span class="muted" id="mdInfo" style="font-size:11px;align-self:center"></span></div>
+  </fieldset>
+  <label>Desk-token (DESK_TOKEN uit data/desk.env)<input id="cfToken" type="password" autocomplete="off"></label>
+  <p id="liveInfo" class="mono"></p>
+  <div style="display:flex;gap:8px;justify-content:flex-end">
+    <button class="btn danger" id="cfReset">Papier resetten</button>
+    <button class="btn" id="cfClose">Sluiten</button><button class="btn go" id="cfSave">Opslaan</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+// ---------- constanten ----------
+const AGENTS = [
+  { k: 'taker',   n: 'TAKER',   role: '01 · uitvoering', c: '#f08c00' },
+  { k: 'spotter', n: 'SPOTTER', role: '02 · tape',       c: '#e5383b' },
+  { k: 'kelly',   n: 'KELLY',   role: '03 · grootte',    c: '#2fbf4a' },
+  { k: 'edge',    n: 'EDGE',    role: '04 · edge',       c: '#13b5a6' },
+  { k: 'closer',  n: 'CLOSER',  role: '05 · afrekening', c: '#12b5e5' },
+  { k: 'prior',   n: 'PRIOR',   role: '06 · prijsmodel', c: '#2463eb' },
+];
+const AG = Object.fromEntries(AGENTS.map(a => [a.k, a]));
+// vensterlengte komt van de server (15 min, 1 u of 4 u); de zwerm beslist tussen 15% en 67% van het venster
+const WIN = () => ((st.auto && st.auto.window_min) || 60) * 60;
+const DECIDE_FROM = () => .15 * WIN(), DECIDE_UNTIL = () => .67 * WIN();
+const winLbl = (m = WIN() / 60) => m >= 60 ? m / 60 + 'u' : m + 'm';
+const FEAT_INFO = ['koopdruk minus verkoopdruk, laatste 10 s', 'koopdruk minus verkoopdruk, laatste 30 s', 'meer bieden dan laten in de top 5 van het boek',
+  'idem over de top 20', 'koersbeweging sinds de opening van het venster, in σ', 'verwachte beweging over 5 min (hoger = geler)', 'aantal trades per seconde',
+  'gemiddelde grootte per trade', 'spread (smaller = geler)', 'beweegt de andere grote coin mee', 'afstand tot de VWAP van vandaag', 'eindscore van de Spotter'];
+const FEATS = ['flow 10s', 'flow 30s', 'boek', 'boek diep', 'momentum', 'vol', 'trades/s', 'grootte', 'spread', 'markt mee', 'vwap afst', 'score'];
+
+// ---------- instellingen en opslag ----------
+const DEF = { bal: 1000, fee: 4.5, token: '' };
+const S = Object.assign({}, DEF, JSON.parse(localStorage.getItem('desk.cfg') || '{}'));
+const saveCfg = () => localStorage.setItem('desk.cfg', JSON.stringify(S));
+
+// ---------- toestand ----------
+const st = {
+  coin: localStorage.getItem('desk.coin') || 'BTC', px: 0, eth: 0, ethOpen: 0, trades: [], bookL: null, sim: false,
+  books: {}, priors: {}, winStart: 0, open0: 0, var1: 0, lastPx: 0, series: {}, specCols: [], feat: {},
+  decided: false, sample: null, ticket: null, pending: null, traceN: 0, hand: [], wire: [], paused: false,
+  vwapPV: 0, vwapV: 0, conf: Object.fromEntries(AGENTS.map(a => [a.k, 0])), work: {}, server: null, account: null,
+};
+
+// ---------- hulpfuncties ----------
+const $ = id => document.getElementById(id);
+const fmt = (v, d = 2) => v == null || !isFinite(v) ? '–' : v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const usd = (v, d = 0) => (v < 0 ? '-$' : '$') + fmt(Math.abs(v), d);
+const sgn = (v, d = 2, suf = '') => (v >= 0 ? '+' : '') + fmt(v, d) + suf;
+const cents = p => (p * 100).toFixed(1) + '¢';
+const pxD = () => st.px >= 10000 ? 0 : st.px >= 100 ? 2 : st.px >= 1 ? 3 : 5;
+const SIM_PX = new Proxy({ BTC: 81500, ETH: 3900, SOL: 97 }, { get: (o, k) => o[k] || 100 });
+const BASE = ['BTC', 'ETH', 'SOL'];
+const watch = () => JSON.parse(localStorage.getItem('desk.watch') || '[]');
+const short = c => c.includes(':') ? c.split(':')[1] : c;
+const chainCoin = () => st.coin === 'ETH' ? 'BTC' : 'ETH';  // CHAIN: beweegt de rest van de markt mee?
+const hhmmss = t => new Date(t).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });  // lokale tijd
+// grafieken in lokale tijd (lightweight-charts rekent in UTC)
+const LOCAL_TIME = { localization: { timeFormatter: t => new Date(t * 1000).toLocaleString('nl-BE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) },
+  timeScale: { tickMarkFormatter: (t, k) => { const d = new Date(t * 1000);
+    return k === 0 ? String(d.getFullYear()) : k === 1 ? d.toLocaleDateString('nl-BE', { month: 'short' }) : k === 2 ? String(d.getDate())
+      : d.toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit', hour12: false }); } } };
+function erf(x) { const t = 1 / (1 + .3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - .284496736) * t + .254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; }
+const Phi = z => .5 * (1 + erf(z / Math.SQRT2));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function push(name, v, n = 240) { const a = st.series[name] || (st.series[name] = []); a.push(v); if (a.length > n) a.shift(); }
+function canvasCtx(c) {
+  const r = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight || +c.getAttribute('height');
+  if (c.width !== Math.round(w * r) || c.height !== Math.round(h * r)) { c.width = Math.round(w * r); c.height = Math.round(h * r); }
+  const x = c.getContext('2d'); x.setTransform(r, 0, 0, r, 0, 0); x.clearRect(0, 0, w, h); return [x, w, h];
+}
+
+// ---------- thema ----------
+let TH = {};
+function applyTheme(dark) {
+  document.body.classList.toggle('dark', dark); localStorage.setItem('desk.theme', dark ? 'dark' : 'light');
+  const cs = getComputedStyle(document.body), g = k => cs.getPropertyValue(k).trim();
+  TH = { dark, text: g('--text'), muted: g('--muted'), border: g('--border'), panel: g('--panel'), panel2: g('--panel-2') };
+  $('themeBtn').textContent = dark ? '☀' : '☾';
+  try { chart.applyOptions({ layout: { textColor: TH.muted }, grid: { vertLines: { color: dark ? '#10142a' : '#f0f2f6' }, horzLines: { color: dark ? '#10142a' : '#f0f2f6' } } }); } catch (e) {}  // grafiek bestaat nog niet bij de eerste aanroep
+}
+applyTheme(localStorage.getItem('desk.theme') !== 'light');
+$('themeBtn').onclick = () => { applyTheme(!TH.dark); drawSpec(); drawBalance(); };
+
+// ---------- opbouw DOM ----------
+$('agents').innerHTML = AGENTS.map(a => `<div class="agent" id="ag-${a.k}" style="--c:${a.c}">
+  <div class="blob"><i></i><i></i></div><div><span class="role">${a.role}</span><b>${a.n}</b></div>
+  <div class="st" id="as-${a.k}">idle</div></div>`).join('');
+const BANK = [['TAPE', 'tps'], ['BOOK', 'bookImb'], ['ORACLE', 'fair'], ['FLOW', 'flow'], ['VOL', 'vol'], ['CHAIN', 'chain']];
+$('bank').innerHTML = BANK.map(([n, k]) => `<div class="spark"><div class="hd">${n}<span id="bv-${k}">–</span></div><canvas id="bc-${k}" height="40"></canvas></div>`).join('');
+$('conf').innerHTML = AGENTS.map(a => `<div class="conf"><span>${a.n}</span><div class="track"><div id="cf-${a.k}" style="background:${a.c};width:0"></div></div><span class="num" id="cv-${a.k}">0</span></div>`).join('');
+
+// ---------- grafiek ----------
+const chart = LightweightCharts.createChart($('chart'), {
+  layout: { background: { color: 'transparent' }, textColor: TH.muted, fontFamily: 'ui-monospace, monospace' },
+  grid: { vertLines: { color: TH.dark ? '#10142a' : '#f0f2f6' }, horzLines: { color: TH.dark ? '#10142a' : '#f0f2f6' } },
+  rightPriceScale: { borderVisible: false }, timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+  crosshair: { mode: 0 },
+});
+chart.applyOptions(LOCAL_TIME);
+const cs = chart.addCandlestickSeries({ upColor: '#16b364', downColor: '#ef3a5d', borderVisible: false, wickUpColor: '#16b364', wickDownColor: '#ef3a5d',
+  autoscaleInfoProvider: orig => {  // stop-loss en take-profit altijd in beeld houden
+    const r = orig(); if (!r || !r.priceRange) return r;
+    const sm = srvMarket(), t = sm && sm.ticket;
+    for (const v of [t && t.sl, t && t.tp, st.drag && st.drag.price]) if (v) { r.priceRange.minValue = Math.min(r.priceRange.minValue, v); r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v); }
+    return r;
+  } });
+const vwapS = chart.addLineSeries({ color: '#2463eb', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'VWAP' });
+const openLine = cs.createPriceLine({ price: 0, color: '#f08c00', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'open venster' });
+let candles = [];
+// SL/TP-lijn verslepen: muis binnen 6 px van de lijn, slepen, loslaten = naar de server
+$('chart').addEventListener('mousedown', e => {
+  const sm = srvMarket(), t = sm && sm.ticket; if (!t || !t.entry) return;
+  const y = e.clientY - $('chart').getBoundingClientRect().top;
+  for (const k of ['sl', 'tp']) {
+    const ly = t[k] && cs.priceToCoordinate(t[k]);
+    if (ly != null && Math.abs(ly - y) < 6) {
+      st.drag = { k, coin: t.coin, price: t[k] }; chart.applyOptions({ handleScroll: false, handleScale: false });
+      e.preventDefault(); e.stopPropagation(); return;
+    }
+  }
+}, true);
+addEventListener('mousemove', e => {
+  if (!st.drag) {  // cursor tonen boven een lijn
+    const sm = srvMarket(), t = sm && sm.ticket, b = $('chart').getBoundingClientRect(), y = e.clientY - b.top;
+    const near = t && t.entry && e.clientX >= b.left && e.clientX <= b.right && ['sl', 'tp'].some(k => t[k] && Math.abs(cs.priceToCoordinate(t[k]) - y) < 6);
+    $('chart').style.cursor = near ? 'ns-resize' : ''; return;
+  }
+  const p = cs.coordinateToPrice(e.clientY - $('chart').getBoundingClientRect().top); if (p) st.drag.price = p;
+  drawLevels();
+});
+addEventListener('mouseup', async () => {
+  if (!st.drag) return; const d = st.drag;
+  chart.applyOptions({ handleScroll: true, handleScale: true });
+  try { await (await fetch('/api/desk/auto/level', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: S.token, coin: d.coin, kind: d.k, price: d.price }) })).json().then(j => { if (j.detail) alert(j.detail); }); }
+  catch (err) { alert(err.message); }
+  await pollAuto(); st.drag = null;
+});
+chart.timeScale().subscribeVisibleLogicalRangeChange(() => { drawHeat(); drawDepthMain(); drawFeats(); });
+new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, height: 400 })).observe($('chart'));
+
+// ---------- lagen op de grafiek: 12 kenmerken + liquiditeitsheatmap (zoals Bookmap) ----------
+// Kenmerken komen per minuut uit de pagina zelf (alleen sinds de pagina open is), onderaan de grafiek op een eigen schaal -1..1.
+const FCOL = ['#ff4d6d', '#ff8c42', '#ffd166', '#06d6a0', '#4cc9f0', '#4361ee', '#b5179e', '#f72585', '#90be6d', '#43aa8b', '#c77dff', '#ffffff'];
+const layerOn = new Set(JSON.parse(localStorage.getItem('desk.layers') || '["heat","score","sr","trend","ma"]'));
+if (!localStorage.getItem('desk.layers.ma')) { layerOn.add('ma'); localStorage.setItem('desk.layers.ma', '1'); }
+if (!localStorage.getItem('desk.layers.osc')) { layerOn.add('rsi'); layerOn.add('macd'); localStorage.setItem('desk.layers.osc', '1'); }
+if (!localStorage.getItem('desk.layers.sr')) { layerOn.add('sr'); layerOn.add('trend'); localStorage.setItem('desk.layers.sr', '1'); }
+const featSeries = {}; st.featMin = {};
+function renderLayers() {
+  $('layers').innerHTML = `<button data-l="sr" style="--c:#c77dff" class="${layerOn.has('sr') ? 'on' : ''}" title="Steun en weerstand: prijzen waar de koers de afgelopen 2 dagen meermaals keerde (dikker = vaker geraakt). De zwerm gebruikt ze ook voor stop-loss, take-profit en om niet tegen een muur in te stappen">steun/weerstand</button>`
+    + `<button data-l="ma" style="--c:#f72585" class="${layerOn.has('ma') ? 'on' : ''}" title="Voortschrijdende gemiddelden EMA 20, 50 en 200 op 5 minuten. De zwerm telt ze mee als steun of weerstand: niet instappen vlak voor een EMA, en stop-loss en take-profit erop afstemmen">EMA 20/50/200</button>`
+    + `<button data-l="rsi" style="--c:#b5e48c" class="${layerOn.has('rsi') ? 'on' : ''}" title="RSI 14 op 5 minuten, onderaan (30 en 70 gestippeld). Telt mee in het leermodel: alleen als het bewijsbaar iets voorspelt">RSI</button>`
+    + `<button data-l="macd" style="--c:#48cae4" class="${layerOn.has('macd') ? 'on' : ''}" title="MACD 12/26/9 op 5 minuten, onderaan: lijn, signaal en histogram. Telt mee in het leermodel: alleen als het bewijsbaar iets voorspelt">MACD</button>`
+    + `<button data-l="trend" style="--c:#4cc9f0" class="${layerOn.has('trend') ? 'on' : ''}" title="Trendlijnen door de laatste twee toppen en de laatste twee bodems op 15 minuten">trendlijnen</button>`
+    + `<button data-l="heat" style="--c:#f5a524" class="${layerOn.has('heat') ? 'on' : ''}" title="Waar staan veel kopers en verkopers in het orderboek, door de tijd: hoe feller, hoe meer volume">heatmap boek</button>`
+    + FEATS.map((f, j) => `<button data-l="${f}" style="--c:${FCOL[j]}" class="${layerOn.has(f) ? 'on' : ''}" title="${FEAT_INFO[j]}">${f}</button>`).join('');
+}
+// de kenmerken als lijnen onderin de grafiek, elke 2 s een punt (-1 onderaan, +1 bovenaan de strook)
+st.featPts = [];
+function syncFeatSeries() { drawFeats(); }
+function drawFeats() {
+  const c = $('featc'), el = $('chart'); c.style.width = el.clientWidth + 'px'; c.style.height = el.clientHeight + 'px';
+  const [x, w, h] = canvasCtx(c), on = FEATS.map((f, j) => layerOn.has(f) ? j : -1).filter(j => j >= 0);
+  if (!on.length) return;
+  const ts = chart.timeScale(), bs = ts.options().barSpacing, right = w - (chart.priceScale('right').width() || 0);
+  const top = h * .68, bot = h - 30, mid = (top + bot) / 2, yOf = v => mid - clamp(v, -1, 1) * (bot - top) / 2;
+  x.fillStyle = TH.dark ? 'rgba(10,14,30,.55)' : 'rgba(255,255,255,.6)'; x.fillRect(0, top - 4, right, bot - top + 8);
+  x.strokeStyle = TH.dark ? '#262c48' : '#d8dce6'; x.setLineDash([3, 3]); x.beginPath(); x.moveTo(0, mid); x.lineTo(right, mid); x.stroke(); x.setLineDash([]);
+  const xs = st.featPts.map(([t]) => { const m = Math.floor(t / 60) * 60, cx = ts.timeToCoordinate(m); return cx == null ? null : cx - bs / 2 + (t - m) / 60 * bs; });
+  on.forEach((j, k) => {
+    x.strokeStyle = FCOL[j]; x.lineWidth = 1.5; x.beginPath(); let started = false, lastX = 0, lastY = 0;
+    st.featPts.forEach(([, v], i) => { const px = xs[i]; if (px == null || px < 0 || px > right) return;
+      const py = yOf(v[j]); started ? x.lineTo(px, py) : x.moveTo(px, py); started = true; lastX = px; lastY = py; });
+    x.stroke();
+    if (started) { x.fillStyle = FCOL[j]; x.font = '600 10px ui-monospace, monospace'; x.fillText(FEATS[j], Math.min(lastX + 4, right - 60), lastY - 3 + (k % 2) * 10); }
+  });
+  if (!st.featPts.length) { x.fillStyle = TH.muted; x.font = '11px ui-monospace, monospace'; x.fillText('kenmerken verzamelen… (vanaf het openen van de pagina, elke 2 s)', 8, mid - 6); }
+}
+$('layers').onclick = e => { const l = e.target.dataset.l; if (!l) return;
+  layerOn.has(l) ? layerOn.delete(l) : layerOn.add(l); localStorage.setItem('desk.layers', JSON.stringify([...layerOn])); renderLayers(); syncFeatSeries(); drawHeat(); drawSR(); drawTrend(); drawMA(); drawOsc(); };
+function pushFeatures(vals, now) {
+  st.featPts.push([now / 1000, vals]); if (st.featPts.length > 3600) st.featPts.shift();
+  drawFeats();
+}
+
+// heatmap: per minuut het grootste volume per prijsbucket in het (gegroepeerde) orderboek
+st.heat = {}; st.heatStep = 0;
+function sigFigs(px) { for (let n = 5; n >= 2; n--) { if (Math.pow(10, Math.floor(Math.log10(px)) - n + 1) / px >= 4e-4) return n; } return 2; }
+async function pollHeat() {
+  if (!st.px) return;
+  let levels = null;
+  if (!st.sim) {
+    try {
+      const r = await fetch('https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'l2Book', coin: st.coin, nSigFigs: sigFigs(st.px) }) });
+      const j = await r.json(); if (j && j.levels) levels = j.levels.map(side => side.map(l => [+l.px, +l.sz]));
+    } catch (e) {}
+  }
+  if (!levels && st.bookL) levels = st.bookL;   // simulatie of geen verbinding: het fijne boek
+  if (!levels) return;
+  st.depth = levels; drawDepthMain();
+  if (!layerOn.has('heat')) return;
+  const all = levels[0].concat(levels[1]); if (all.length < 2) return;
+  const ps = all.map(l => l[0]).sort((a, b) => a - b); let step = Infinity;
+  for (let i = 1; i < ps.length; i++) if (ps[i] - ps[i - 1] > 1e-12) step = Math.min(step, ps[i] - ps[i - 1]);
+  if (!isFinite(step)) return; st.heatStep = Math.max(st.heatStep * .9, step);
+  const m = Math.floor(Date.now() / 60000) * 60, col = st.heat[m] || (st.heat[m] = {});
+  for (const [p, sz] of all) { const k = (Math.round(p / step) * step).toPrecision(8); col[k] = Math.max(col[k] || 0, sz * p); }
+  const keys = Object.keys(st.heat); if (keys.length > 300) delete st.heat[keys[0]];
+  drawHeat();
+}
+function heatColor(v) {  // 0..1: donkerblauw → cyaan → geel → oranje → rood, zoals Bookmap
+  const stops = [[0, [10, 20, 80]], [.35, [0, 170, 255]], [.6, [255, 230, 60]], [.8, [255, 140, 0]], [1, [255, 30, 30]]];
+  let i = 0; while (i < stops.length - 2 && v > stops[i + 1][0]) i++;
+  const [a, ca] = stops[i], [b, cb] = stops[i + 1], t = clamp((v - a) / (b - a), 0, 1);
+  return ca.map((c, k) => Math.round(c + (cb[k] - c) * t));
+}
+function drawHeat() {
+  const c = $('heat'), el = $('chart'); c.style.width = el.clientWidth + 'px'; c.style.height = el.clientHeight + 'px';
+  const [x, w, h] = canvasCtx(c); if (!layerOn.has('heat')) return;
+  const ts = chart.timeScale(), bs = ts.options().barSpacing, cols = Object.entries(st.heat); if (!cols.length) return;
+  const vals = []; for (const [, col] of cols) for (const v of Object.values(col)) vals.push(v);
+  vals.sort((a, b) => a - b); const hi = vals[Math.floor(vals.length * .97)] || vals[vals.length - 1] || 1;
+  const paneW = w - (chart.priceScale('right').width() || 0);
+  for (const [m, col] of cols) {
+    const cx = ts.timeToCoordinate(+m); if (cx == null || cx < -bs || cx > paneW) continue;
+    for (const [k, v] of Object.entries(col)) {
+      const p = +k, y1 = cs.priceToCoordinate(p + st.heatStep / 2), y2 = cs.priceToCoordinate(p - st.heatStep / 2);
+      if (y1 == null || y2 == null || y2 < 0 || y1 > h) continue;
+      const t = clamp(Math.sqrt(v / hi), 0, 1); if (t < .12) continue;
+      const [r, g, b] = heatColor(t); x.fillStyle = `rgba(${r},${g},${b},${(.1 + .6 * t).toFixed(2)})`;
+      x.fillRect(cx - bs / 2, Math.min(y1, y2), Math.max(1, bs), Math.max(1.5, Math.abs(y2 - y1)));
+    }
+  }
+}
+
+// orderboek als balkjes aan de linkerkant van de grafiek: hoe langer de balk, hoe meer volume op dat prijsniveau (rood = verkopers, groen = kopers)
+function drawDepth(c, el, ch, ser, levels) {
+  c.style.width = el.clientWidth + 'px'; c.style.height = el.clientHeight + 'px';
+  const [x, w, h] = canvasCtx(c); if (!levels) return;
+  const right = w - (ch.priceScale('right').width() || 0), maxW = Math.min(110, right * .22);
+  const rows = []; for (const [i, side] of levels.entries()) for (const [p, sz] of side.slice(0, 20)) rows.push([p, sz * p, i]);
+  if (!rows.length) return;
+  const ps = rows.map(r => r[0]).sort((a, b) => a - b); let step = Infinity;
+  for (let i = 1; i < ps.length; i++) if (ps[i] - ps[i - 1] > 1e-12) step = Math.min(step, ps[i] - ps[i - 1]);
+  const mx = Math.max(...rows.map(r => r[1]));
+  for (const [p, v, i] of rows) {
+    const y = ser.priceToCoordinate(p); if (y == null || y < 0 || y > h) continue;
+    const dy = isFinite(step) ? Math.abs(ser.priceToCoordinate(p - step / 2) - ser.priceToCoordinate(p + step / 2)) : 3;
+    const bh = clamp(dy - 1, 1.5, 14), bw = Math.max(2, Math.sqrt(v / mx) * maxW);
+    x.fillStyle = i ? 'rgba(239,58,93,.45)' : 'rgba(22,179,100,.45)';
+    x.fillRect(0, y - bh / 2, bw, bh);
+  }
+}
+function drawDepthMain() { drawDepth($('depth'), $('chart'), chart, cs, st.depth || st.bookL); }
+
+// ---------- kleine grafieken: één per open trade ----------
+const minis = {};
+const pxPrec = p => p >= 1000 ? 1 : p >= 10 ? 2 : p >= 1 ? 4 : p >= .01 ? 5 : 7;
+function miniFor(t) {
+  let m = minis[t.coin]; if (m) return m;
+  const box = document.createElement('div'); box.className = 'mc'; box.dataset.c = t.coin;
+  box.innerHTML = `<div class="mh"></div><div class="mw"><div></div><canvas class="depth"></canvas></div>`;
+  $('minis').appendChild(box);
+  const host = box.querySelector('.mw > div');
+  const ch = LightweightCharts.createChart(host, { autoSize: true,
+    layout: { background: { color: 'transparent' }, textColor: TH.muted, fontFamily: 'ui-monospace, monospace', fontSize: 10 },
+    grid: { vertLines: { visible: false }, horzLines: { color: TH.dark ? '#10142a' : '#eef0f4' } },
+    rightPriceScale: { borderVisible: false }, timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+    handleScroll: false, handleScale: false, crosshair: { mode: 0 } });
+  ch.applyOptions(LOCAL_TIME);
+  m = minis[t.coin] = { box, host, ch, lines: {}, candles: [], loaded: 0, book: null, bookAt: 0, t };
+  m.ser = ch.addCandlestickSeries({ upColor: '#16b364', downColor: '#ef3a5d', borderVisible: false, wickUpColor: '#16b364', wickDownColor: '#ef3a5d',
+    autoscaleInfoProvider: orig => { const r = orig(); if (!r || !r.priceRange) return r;
+      for (const v of [m.t.sl, m.t.tp, m.t.entry || m.t.limit]) if (v) { r.priceRange.minValue = Math.min(r.priceRange.minValue, v); r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v); }
+      return r; } });
+  box.onclick = () => { if (t.coin !== st.coin) setCoin(t.coin); $('chart').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+  return m;
+}
+async function miniLoad(m) {
+  m.loaded = Date.now();
+  try {
+    const r = await fetch(`/api/desk/candles?coin=${encodeURIComponent(m.t.coin)}&minutes=90`); if (!r.ok) { m.err = await r.text(); return; }
+    m.candles = (await r.json()).map(c => ({ time: c.t / 1000, open: c.o, high: c.h, low: c.l, close: c.c }));
+    const lc = m.candles.length ? m.candles[m.candles.length - 1].close : m.t.px || 1, pr = pxPrec(lc);
+    m.ser.applyOptions({ priceFormat: { type: 'price', precision: pr, minMove: Math.pow(10, -pr) } });
+    m.ser.setData(m.candles); m.ch.timeScale().fitContent(); m.hist = m.candles.length > 0;
+  } catch (e) {}
+}
+async function miniBook(m) {
+  m.bookAt = Date.now();
+  try {
+    const px = m.t.px || m.t.entry; if (!px) return;
+    const r = await fetch('https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'l2Book', coin: m.t.coin, nSigFigs: sigFigs(px) }) });
+    const j = await r.json(); if (j && j.levels) m.book = j.levels.map(side => side.map(l => [+l.px, +l.sz]));
+  } catch (e) {}
+}
+function miniLine(m, k, opt) {
+  if (opt && opt.price) { if (m.lines[k]) m.lines[k].applyOptions(opt); else m.lines[k] = m.ser.createPriceLine(opt); }
+  else if (m.lines[k]) { m.ser.removePriceLine(m.lines[k]); delete m.lines[k]; }
+}
+function renderMinis() {
+  const open = (st.auto && st.auto.portfolio && st.auto.portfolio.open) || [], now = Date.now(), seen = new Set();
+  open.forEach((t, i) => {
+    seen.add(t.coin); const m = miniFor(t); m.t = t; m.box.style.order = i; m.box.classList.toggle('sel', t.coin === st.coin);
+    if (now - m.loaded > (m.hist ? 60000 : 8000)) miniLoad(m);
+    if (now - m.bookAt > 5000 + i * 300) miniBook(m);
+    const px = t.px, last = m.candles[m.candles.length - 1];
+    if (px && !last) { const c0 = { time: Math.floor(now / 60000) * 60, open: px, high: px, low: px, close: px }; m.candles.push(c0); m.ser.update(c0); }  // nog geen historiek: toch al de lijnen tonen
+    if (px && last) {  // laatste minuut live bijwerken met de prijs van de server
+      const tm = Math.floor(now / 60000) * 60;
+      const c = tm > last.time ? { time: tm, open: last.close, high: Math.max(last.close, px), low: Math.min(last.close, px), close: px }
+        : { ...last, high: Math.max(last.high, px), low: Math.min(last.low, px), close: px };
+      if (tm > last.time) m.candles.push(c); else m.candles[m.candles.length - 1] = c; m.ser.update(c);
+    }
+    const e = t.entry, long = t.side === 'long', col = long ? '#16b364' : '#ef3a5d';
+    const pnlAt = v => t.usd * (v - e) / e * (long ? 1 : -1), margin = t.usd / t.lev;
+    miniLine(m, 'entry', { price: e || t.limit, color: col, lineWidth: 2, lineStyle: e ? 0 : 2, axisLabelVisible: true,
+      title: e ? `${sgn(t.upnl, 2)} (${sgn(t.upnl / margin * 100, 1)}%)` : 'limiet' });
+    miniLine(m, 'sl', e && t.sl && { price: t.sl, color: '#ff4d6d', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `SL ${sgn(pnlAt(t.sl), 2)}` });
+    miniLine(m, 'tp', e && t.tp && { price: t.tp, color: '#2fbf4a', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `TP ${sgn(pnlAt(t.tp), 2)}` });
+    const sml = st.auto.markets && st.auto.markets[t.coin], lk = (layerOn.has('sr') ? 1 : 0) + JSON.stringify((sml && sml.levels) || []);
+    if (lk !== m.srKey) { m.srKey = lk; srLines(m.ser, m.sr || (m.sr = []), sml && sml.levels, layerOn.has('sr')); }
+    const c = tradeConf(t);
+    m.box.querySelector('.mh').innerHTML = `<b style="color:${tColor(t.coin)}">${short(t.coin)}</b><span class="${long ? 'up' : 'down'}">${long ? '▲ long' : '▼ short'} ${t.lev}x</span>
+      <span class="muted">${usd(t.usd)}</span>${c == null ? '' : `<span class="muted" title="huidig vertrouwen van het model">${fmt(c * 100, 0)}%</span>`}
+      <span class="r ${t.state === 'entering' ? 'muted' : t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? 'limiet wacht' : sgn(t.upnl, 2)}</span>`;
+    drawDepth(m.box.querySelector('canvas.depth'), m.host, m.ch, m.ser, m.book);
+  });
+  for (const k of Object.keys(minis)) if (!seen.has(k)) { minis[k].ch.remove(); minis[k].box.remove(); delete minis[k]; }
+}
+
+// steun en weerstand van de server (draaipunten op 5m over 2 dagen), als stippellijnen
+function srLines(ser, store, levels, on) {
+  for (const l of store.splice(0)) ser.removePriceLine(l);
+  if (!on || !levels) return;
+  for (const l of levels) store.push(ser.createPriceLine({ price: l.px, color: l.n >= 3 ? 'rgba(199,125,255,.85)' : 'rgba(199,125,255,.45)',
+    lineWidth: Math.min(3, l.n), lineStyle: 2, axisLabelVisible: false, title: l.n >= 2 ? `S/R ${l.n}x` : '' }));
+}
+st.srLines = []; st.srKey = '';
+function drawSR() {
+  const sm = srvMarket(), lv = sm && sm.levels, key = (layerOn.has('sr') ? 1 : 0) + JSON.stringify(lv || []);
+  if (key === st.srKey) return; st.srKey = key; srLines(cs, st.srLines, lv, layerOn.has('sr'));
+}
+// trendlijnen: door de laatste twee toppen (dalend) en de laatste twee bodems (stijgend) op 15m, doorgetrokken tot nu
+st.trendS = [];
+function pivots15(k = 4) {
+  const b = []; for (const c of candles) { const t = Math.floor(c.t / 9e5) * 9e5, l = b[b.length - 1];
+    if (l && l.t === t) { l.h = Math.max(l.h, c.h); l.l = Math.min(l.l, c.l); l.c = c.c; } else b.push({ t, h: c.h, l: c.l, c: c.c }); }
+  const hi = [], lo = [];
+  for (let i = k; i < b.length - k; i++) { const w = b.slice(i - k, i + k + 1);
+    if (b[i].h >= Math.max(...w.map(x => x.h))) hi.push([b[i].t, b[i].h]);
+    if (b[i].l <= Math.min(...w.map(x => x.l))) lo.push([b[i].t, b[i].l]); }
+  return { hi, lo };
+}
+function drawTrend() {
+  for (const s of st.trendS.splice(0)) chart.removeSeries(s);
+  if (!layerOn.has('trend') || candles.length < 200) return;
+  const { hi, lo } = pivots15(), end = candles[candles.length - 1].t;
+  const line = ([t1, p1], [t2, p2], col) => {
+    const slope = (p2 - p1) / (t2 - t1), s = chart.addLineSeries({ color: col, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      autoscaleInfoProvider: () => null });
+    s.setData([{ time: t1 / 1000, value: p1 }, { time: Math.floor(end / 60000) * 60, value: p1 + slope * (end - t1) }]); st.trendS.push(s);
+  };
+  if (hi.length >= 2) { const [a, b] = hi.slice(-2); if (b[1] < a[1]) line(a, b, 'rgba(239,58,93,.8)'); }   // dalende toppen: weerstandslijn
+  if (lo.length >= 2) { const [a, b] = lo.slice(-2); if (b[1] > a[1]) line(a, b, 'rgba(22,179,100,.8)'); }  // stijgende bodems: steunlijn
+}
+// EMA 20/50/200 op 5m, uit de 1m-candles (laatste prijs per 5 min), zoals de zwerm ze gebruikt
+st.maS = [];
+const MA_COL = ['rgba(247,37,133,.9)', 'rgba(255,183,3,.9)', 'rgba(220,220,255,.85)'];
+function drawMA() {
+  for (const s of st.maS.splice(0)) chart.removeSeries(s);
+  if (!layerOn.has('ma') || candles.length < 120) return;
+  const b = []; for (const c of candles) { const t = Math.floor(c.t / 3e5) * 3e5, l = b[b.length - 1];
+    if (l && l.t === t) l.c = c.c; else b.push({ t, c: c.c }); }
+  [20, 50, 200].forEach((n, j) => {
+    if (b.length < n + 2) return;
+    const a = 2 / (n + 1); let e = b.slice(0, n).reduce((s, x) => s + x.c, 0) / n; const d = [];
+    for (let i = n; i < b.length; i++) { e += a * (b[i].c - e); d.push({ time: b[i].t / 1000, value: e }); }
+    const s = chart.addLineSeries({ color: MA_COL[j], lineWidth: j === 2 ? 2 : 1, priceLineVisible: false, lastValueVisible: true, title: 'EMA ' + n,
+      crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
+    s.setData(d); st.maS.push(s);
+  });
+}
+// RSI en MACD op 5m in een strook onderaan de grafiek
+st.oscS = [];
+function drawOsc() {
+  for (const s of st.oscS.splice(0)) chart.removeSeries(s);
+  const r = layerOn.has('rsi'), mc = layerOn.has('macd'), n = (r ? 1 : 0) + (mc ? 1 : 0);
+  chart.priceScale('right').applyOptions({ scaleMargins: { top: .08, bottom: n ? .1 + .16 * n : .08 } });
+  if (!n || candles.length < 60) return;
+  const b = []; for (const c of candles) { const t = Math.floor(c.t / 3e5) * 3e5, l = b[b.length - 1];
+    if (l && l.t === t) l.c = c.c; else b.push({ t, c: c.c }); }
+  const T = i => b[i].t / 1000, opt = (id, top, bot) => ({ priceScaleId: id, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: true });
+  let slot = 0;
+  const band = () => { const top = 1 - .16 * (n - slot), bot = .16 * (n - slot - 1) + .02; slot++; return { top: top + .02, bottom: bot }; };
+  if (r && b.length > 16) {
+    let up = 0, dn = 0; const d = [];
+    for (let i = 1; i < b.length; i++) { const x = b[i].c - b[i - 1].c;
+      if (i <= 14) { up += Math.max(x, 0) / 14; dn += Math.max(-x, 0) / 14; } else { up = (up * 13 + Math.max(x, 0)) / 14; dn = (dn * 13 + Math.max(-x, 0)) / 14; }
+      if (i >= 14) d.push({ time: T(i), value: dn ? 100 - 100 / (1 + up / dn) : 100 }); }
+    const s = chart.addLineSeries({ ...opt('rsi'), color: '#b5e48c', lineWidth: 1, title: 'RSI' }); s.setData(d);
+    chart.priceScale('rsi').applyOptions({ scaleMargins: band(), autoScale: false });
+    s.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
+    s.createPriceLine({ price: 70, color: 'rgba(239,58,93,.5)', lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
+    s.createPriceLine({ price: 30, color: 'rgba(22,179,100,.5)', lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
+    st.oscS.push(s);
+  }
+  if (mc && b.length > 40) {
+    let e12 = b[0].c, e26 = b[0].c, sig = 0; const ml = [], sl = [], hs = [];
+    for (let i = 1; i < b.length; i++) { e12 += 2 / 13 * (b[i].c - e12); e26 += 2 / 27 * (b[i].c - e26);
+      const m = e12 - e26; sig = i === 1 ? m : sig + .2 * (m - sig);
+      if (i >= 26) { ml.push({ time: T(i), value: m }); sl.push({ time: T(i), value: sig });
+        hs.push({ time: T(i), value: m - sig, color: m - sig >= 0 ? 'rgba(22,179,100,.6)' : 'rgba(239,58,93,.6)' }); } }
+    const h = chart.addHistogramSeries({ ...opt('macd'), title: '' }); h.setData(hs);
+    const a = chart.addLineSeries({ ...opt('macd'), color: '#48cae4', lineWidth: 1, title: 'MACD' }); a.setData(ml);
+    const c = chart.addLineSeries({ ...opt('macd'), color: '#f5a524', lineWidth: 1, lastValueVisible: false }); c.setData(sl);
+    chart.priceScale('macd').applyOptions({ scaleMargins: band() });
+    st.oscS.push(h, a, c);
+  }
+}
+// afgesloten trades: lijn van instap naar uitstap, groen bij winst en rood bij verlies
+st.tradeS = [];
+function drawTradeSegs() {
+  for (const s of st.tradeS.splice(0)) chart.removeSeries(s);
+  const first = candles.length ? candles[0].t : 0, mt = ms => Math.floor(ms / 60000) * 60;
+  const hs = ((st.auto && st.auto.history) || []).filter(h => h.coin === st.coin && h.opened && h.opened >= first).slice(-40);
+  for (const h of hs) {
+    if (mt(h.t) <= mt(h.opened)) continue;
+    const s = chart.addLineSeries({ color: h.pnl >= 0 ? '#16b364' : '#ef3a5d', lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false,
+      crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
+    s.setData([{ time: mt(h.opened), value: h.entry }, { time: mt(h.t), value: h.exit }]); st.tradeS.push(s);
+  }
+}
+
+// ---------- tabblad PnL: per uur, dag, week, maand, jaar of per trade ----------
+const pnlS = { b: 'd', m: 'paper', rows: [], chart: null };
+function bucketStart(ms, b) {
+  const d = new Date(ms);
+  if (b === 'h') { d.setMinutes(0, 0, 0); return d.getTime(); }
+  d.setHours(0, 0, 0, 0);
+  if (b === 'd') return d.getTime();
+  if (b === 'w') { d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); }  // maandag
+  if (b === 'm') { d.setDate(1); return d.getTime(); }
+  if (b === 'y') { d.setMonth(0, 1); return d.getTime(); }
+  return ms;
+}
+const bucketLbl = (ms, b) => { const d = new Date(ms);
+  return b === 'h' ? d.toLocaleString('nl-BE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    : b === 'd' ? d.toLocaleDateString('nl-BE', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    : b === 'w' ? 'week van ' + d.toLocaleDateString('nl-BE', { day: 'numeric', month: 'short', year: 'numeric' })
+    : b === 'm' ? d.toLocaleDateString('nl-BE', { month: 'long', year: 'numeric' }) : b === 'y' ? String(d.getFullYear()) : hhmmss(ms); };
+async function loadPnl() {
+  try { pnlS.rows = (await (await fetch('/api/desk/pnl')).json()).trades || []; } catch (e) { pnlS.rows = []; }
+  renderPnl();
+}
+function renderPnl() {
+  if (!pnlS.chart) {
+    pnlS.chart = LightweightCharts.createChart($('pnlChart'), { autoSize: true,
+      layout: { background: { color: 'transparent' }, textColor: TH.muted, fontFamily: 'ui-monospace, monospace' },
+      grid: { vertLines: { visible: false }, horzLines: { color: TH.dark ? '#10142a' : '#eef0f4' } },
+      rightPriceScale: { borderVisible: false }, leftPriceScale: { visible: true, borderVisible: false },
+      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false } });
+    pnlS.chart.applyOptions(LOCAL_TIME);
+    pnlS.bars = pnlS.chart.addHistogramSeries({ priceScaleId: 'right', priceFormat: { type: 'price', precision: 2, minMove: .01 }, title: 'per periode' });
+    pnlS.cum = pnlS.chart.addLineSeries({ priceScaleId: 'left', color: '#16b364', lineWidth: 3, lineType: 2, priceFormat: { type: 'price', precision: 2, minMove: .01 }, title: 'totaal' });
+  }
+  const tz = 0;  // lokale tijd via LOCAL_TIME
+  const rows = pnlS.rows.filter(r => r[2] === (pnlS.m === 'paper')), b = pnlS.b, agg = new Map();
+  rows.forEach(([t, p, , coin, side, why], i) => { const k = b === 'a' ? t + i / 1000 : bucketStart(t, b),  // per trade: twee trades in dezelfde ms blijven apart
+      a = agg.get(k) || { n: 0, w: 0, p: 0, best: -1e9, worst: 1e9, coins: new Map() };
+    a.n++; a.w += p > 0 ? 1 : 0; a.p += p; a.best = Math.max(a.best, p); a.worst = Math.min(a.worst, p);
+    a.coins.set(coin, (a.coins.get(coin) || 0) + p); a.side = side; a.why = why; agg.set(k, a); });
+  const tick = a => b === 'a' ? `<b>${[...a.coins.keys()][0] || '?'}</b> <span class="${a.side === 'long' ? 'up' : 'down'}">${a.side || ''}</span> <span class="muted">${a.why || ''}</span>`
+    : [...a.coins].sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])).slice(0, 6)  // grootste bijdrage eerst
+      .map(([c, v]) => `<span class="${v >= 0 ? 'up' : 'down'}">${c} ${sgn(v, 2)}</span>`).join(' · ') + (a.coins.size > 6 ? ` <span class="muted">+${a.coins.size - 6}</span>` : '');
+  const ks = [...agg.keys()].sort((x, y) => x - y); let cum = 0, last = -1;
+  const bars = [], line = [];
+  for (const k of ks) { let ts = Math.floor(k / 1000) + tz; if (ts <= last) ts = last + 1; last = ts;
+    const a = agg.get(k); cum += a.p;
+    bars.push({ time: ts, value: +a.p.toFixed(4), color: a.p >= 0 ? 'rgba(22,179,100,.55)' : 'rgba(239,58,93,.55)' }); line.push({ time: ts, value: +cum.toFixed(4), color: a.p >= 0 ? '#16b364' : '#ef3a5d' }); }
+  for (let i = 0; i < line.length - 1; i++) line[i].color = line[i + 1].value >= line[i].value ? '#16b364' : '#ef3a5d';  // kleur geldt voor het stuk ná het punt
+  pnlS.bars.setData(bars); pnlS.cum.setData(line); pnlS.chart.timeScale().fitContent();
+  const n = rows.length, w = rows.filter(r => r[1] > 0).length, tot = rows.reduce((s, r) => s + r[1], 0);
+  const pos = ks.filter(k => agg.get(k).p > 0).length, name = { h: 'uren', d: 'dagen', w: 'weken', m: 'maanden', y: 'jaren', a: 'trades' }[b];
+  $('pnlSum').innerHTML = `<span>totaal <b class="${tot >= 0 ? 'up' : 'down'}">${sgn(tot, 2)}</b></span><span>${n} trades · winrate ${n ? fmt(w / n * 100, 0) : '–'}%</span>
+    <span>${pos} van ${ks.length} ${name} in de plus</span>${ks.length ? `<span>beste ${sgn(Math.max(...ks.map(k => agg.get(k).p)), 2)} · slechtste ${sgn(Math.min(...ks.map(k => agg.get(k).p)), 2)}</span>` : ''}`;
+  $('pnlTable').innerHTML = `<tr><th>${{ h: 'uur', d: 'dag', w: 'week', m: 'maand', y: 'jaar', a: 'trade' }[b]}</th><th>${b === 'a' ? 'ticker' : 'tickers'}</th><th>trades</th><th>winrate</th><th>beste</th><th>slechtste</th><th>pnl</th><th>totaal</th></tr>`
+    + (ks.length ? ks.slice().reverse().slice(0, 60).map(k => { const a = agg.get(k), c = line[ks.indexOf(k)].value;
+      return `<tr><td>${bucketLbl(k, b)}</td><td>${tick(a)}</td><td>${a.n}</td><td>${fmt(a.w / a.n * 100, 0)}%</td><td>${sgn(a.best, 2)}</td><td>${sgn(a.worst, 2)}</td>
+        <td class="${a.p >= 0 ? 'up' : 'down'}">${sgn(a.p, 2)}</td><td class="${c >= 0 ? 'up' : 'down'}">${sgn(c, 2)}</td></tr>`; }).join('')
+      : `<tr><td colspan="8" class="muted">nog geen afgesloten ${pnlS.m === 'paper' ? 'papier' : 'live'}trades</td></tr>`);
+}
+$('pnlSeg').onclick = e => { const b = e.target.dataset.b; if (!b) return; pnlS.b = b;
+  $('pnlSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.b === b)); renderPnl(); };
+$('pnlMode').onclick = e => { const m = e.target.dataset.m; if (!m) return; pnlS.m = m;
+  $('pnlMode').querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.m === m)); renderPnl(); };
+setInterval(() => { if ($('tabPnl').style.display !== 'none') loadPnl(); }, 30000);
+
+// ---------- leren & coach ----------
+function renderLearn() {
+  const L = st.auto && st.auto.learn; if (!L) return;
+  $('learnBtn').textContent = 'Geleerd: ' + (L.on ? 'AAN' : 'UIT'); $('learnBtn').classList.toggle('on', !!L.on);
+  const gname = { crypto: 'crypto', stock: 'aandelen (HIP-3)' }, gs = Object.entries(L.groups || {});
+  const wbars = (w, names) => w.map((v, i) => `<div class="bar"><span>${names[i]}</span><span style="background:var(--panel-2);border-radius:3px">
+    <i style="width:${Math.min(100, Math.abs(v) / 1.5 * 100)}%;background:${v >= 0 ? '#16b364' : '#ef3a5d'}"></i></span><span>${sgn(v, 2)}</span></div>`).join('');
+  $('learnBox').innerHTML = `<p><b>${L.n}</b> vensters van ${L.window / 60} min verzameld. Per groep zijn er minstens ${L.min} nodig voor hij gaat leren;
+    daarna toetst hij elk uur op de nieuwste 30% die het model niet gezien heeft.</p>`
+    + (gs.length ? gs.map(([g, i]) => i.ll_learned == null ? `<p><b>${gname[g] || g}</b>: ${i.n} / ${L.min} vensters, nog aan het verzamelen.</p>`
+      : `<p><b>${gname[g] || g}</b> (${i.n} vensters): geleerd model log-loss <b>${fmt(i.ll_learned, 4)}</b> (${fmt(i.acc_learned * 100, 0)}% juist)
+        tegen vast ${fmt(i.ll_base, 4)} (${fmt(i.acc_base * 100, 0)}% juist) → <b class="${i.use ? 'up' : 'muted'}">${i.use ? 'geleerd in gebruik' : 'vast blijft'}</b>.</p>
+        ${i.w ? wbars(i.w, L.names) : ''}`).join('') : '<p class="muted">Nog niet getraind: de eerste training draait een minuut na de start, daarna elk uur.</p>');
+}
+$('learnBtn').onclick = async () => { await autoPost('/api/desk/auto', { learn: !(st.auto.learn && st.auto.learn.on) }); await pollAuto(); renderLearn(); };
+async function pollCoach() {
+  try {
+    const c = await (await fetch('/api/desk/coach')).json(), cf = c.config, rs = c.reports || [], last = rs[rs.length - 1];
+    $('coachCfg').textContent = (cf.url ? `${cf.model} op ${cf.url}` : 'nog geen model gekozen') + ` · elke dag om ${cf.hour}u`
+      + (c.status.running ? ' · BEZIG (een 35B-model kan enkele minuten nodig hebben)…' : '') + (c.status.error ? ' · fout: ' + c.status.error : '');
+    $('coachRun').disabled = !!c.status.running;
+    if (last) $('coachBox').innerHTML = `<div class="cap">${new Date(last.at).toLocaleString('nl-BE')} · ${last.model} · ${last.n_trades} trades · ${sgn(last.pnl, 2)} · ${fmt(last.seconds, 0)} s</div>`
+      + last.text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  } catch (e) {}
+}
+$('coachRun').onclick = async () => { await fetch('/api/desk/coach/run', { method: 'POST' }); pollCoach(); };
+$('coachDetect').onclick = async () => {
+  const r = await fetch('/api/desk/coach/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: S.token, detect: true }) });
+  const j = await r.json().catch(() => ({})); $('coachCfg').textContent = r.ok ? `gevonden: ${j.config.model} op ${j.config.url} (ook: ${(j.models || []).slice(1, 4).join(', ')})` : (j.detail || 'niet gevonden');
+};
+setInterval(pollCoach, 10000);
+$('sortSeg').onclick = e => { const b = e.target.dataset.by; if (!b) return; allState.by = b; localStorage.setItem('desk.sortBy', b); allState.sortedAt = 0; renderAll(); };
+$('edgeList').onclick = e => { const r = e.target.closest('tr[data-c]'); if (!r) return;
+  document.querySelector('.tabs button[data-tab="desk"]').click(); if (r.dataset.c !== st.coin) setCoin(r.dataset.c); }; setInterval(renderLearn, 5000);
+
+// ---------- trace / wire ----------
+function trace(from, to, act, text, val = '', at = Date.now(), coin = st.coin) {
+  st.traceN++; st.hand.push(Date.now());
+  const a = AG[from], el = document.createElement('div'); el.className = 't';
+  el.innerHTML = `<span class="dot" style="background:${a.c}"></span><span class="muted">${hhmmss(at)}</span>
+    <span class="who" style="background:${a.c}">${act}</span><span><b style="color:${tColor(coin)}">${coin ? short(coin) : 'ZWERM'}</b> ${text}</span>
+    <span class="hand">${to ? a.n + '→' + AG[to].n : val}</span>`;
+  const t = $('trace'); t.prepend(el); while (t.children.length > 120) t.lastChild.remove();
+  $('traceCount').textContent = st.traceN + ' stappen';
+  setWork(from); if (to) setTimeout(() => setWork(to), 350);
+}
+function wire(agent, text, chip) {
+  st.wire.unshift({ a: agent, text, chip, t: Date.now() }); st.wire.length = Math.min(st.wire.length, 12);
+  $('wire').innerHTML = st.wire.map(w => `<span><b style="color:${AG[w.a].c}">● ${AG[w.a].n}</b> ${w.text}
+    ${w.chip ? `<span class="chip" style="background:${AG[w.a].c}">${w.chip}</span>` : ''} <span class="muted">${hhmmss(w.t)}</span></span>`).join('');
+}
+function setWork(k) { st.work[k] = Date.now(); }
+
+// ---------- marktdata: Hyperliquid websocket met simulatie als terugval ----------
+let ws, wsOk = false, simTimer = null;
+function connect() {
+  try { ws && ws.close(); } catch (e) {}
+  wsOk = false;
+  ws = new WebSocket('wss://api.hyperliquid.xyz/ws');
+  ws.onopen = () => {
+    const sub = s => ws.send(JSON.stringify({ method: 'subscribe', subscription: s }));
+    sub({ type: 'trades', coin: st.coin }); sub({ type: 'l2Book', coin: st.coin });
+    sub({ type: 'candle', coin: st.coin, interval: '1m' }); sub({ type: 'allMids' });
+  };
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.channel === 'trades') { wsOk = true; stopSim(); for (const t of m.data) if (t.coin === st.coin) onTrade(+t.px, +t.sz, t.side === 'B', t.time); }
+    else if (m.channel === 'l2Book' && m.data.coin === st.coin) st.bookL = m.data.levels.map(side => side.map(l => [+l.px, +l.sz]));
+    else if (m.channel === 'candle' && m.data.s === st.coin) onCandle({ t: m.data.t, o: +m.data.o, h: +m.data.h, l: +m.data.l, c: +m.data.c, v: +m.data.v });
+    else if (m.channel === 'allMids') { st.eth = +m.data.mids[chainCoin()]; }
+  };
+  ws.onclose = () => setTimeout(connect, 3000);
+  setTimeout(() => { if (!wsOk) startSim(); }, 7000);
+  const ping = setInterval(() => ws.readyState === 1 ? ws.send('{"method":"ping"}') : clearInterval(ping), 30000);
+}
+function onCandle(c) {
+  const last = candles[candles.length - 1];
+  if (last && last.t === c.t) candles[candles.length - 1] = c; else if (!last || c.t > last.t) candles.push(c);
+  if (candles.length > 400) candles.shift();
+  cs.update({ time: c.t / 1000, open: c.o, high: c.h, low: c.l, close: c.c });
+}
+function onTrade(px, sz, buy, t) {
+  st.px = px; st.trades.push({ px, sz, buy, t }); st.vwapPV += px * sz; st.vwapV += sz;
+  const cut = Date.now() - 60000; while (st.trades.length && st.trades[0].t < cut) st.trades.shift();
+  if (st.sim) {  // candles zelf opbouwen
+    const m = Math.floor(t / 60000) * 60000, last = candles[candles.length - 1];
+    if (last && last.t === m) onCandle({ t: m, o: last.o, h: Math.max(last.h, px), l: Math.min(last.l, px), c: px, v: last.v + sz });
+    else onCandle({ t: m, o: px, h: px, l: px, c: px, v: sz });
+  }
+}
+function startSim() {
+  if (st.sim) return; st.sim = true; $('feedBadge').style.display = '';
+  $('fFeed').textContent = 'geen verbinding met Hyperliquid · gesimuleerde koers';
+  if (!st.px) st.px = SIM_PX[st.coin];
+  if (!st.eth) st.eth = SIM_PX[chainCoin()];
+  let drift = 0;
+  simTimer = setInterval(() => {
+    drift = .97 * drift + (Math.random() - .5) * 2e-5;
+    const n = 1 + Math.floor(Math.random() * 6);
+    for (let i = 0; i < n; i++) {
+      const r = drift / n + (Math.random() - .5) * 2.4e-4 / Math.sqrt(n), px = st.px * Math.exp(r);
+      onTrade(px, Math.random() ** 3 * (st.coin === 'BTC' ? 2 : st.coin === 'ETH' ? 30 : 600 / Math.max(1, SIM_PX[st.coin] / 100)), r > 0 || Math.random() < .3, Date.now());
+    }
+    st.eth *= Math.exp(drift / 2 + (Math.random() - .5) * 2e-4);
+    const step = st.px * 1e-5, bids = [], asks = [];
+    for (let i = 0; i < 12; i++) { bids.push([st.px - step * (i + .5), Math.random() * 4 * (1 + drift * 3e4)]); asks.push([st.px + step * (i + .5), Math.random() * 4 * (1 - drift * 3e4)]); }
+    st.bookL = [bids, asks.map(([p, s]) => [p, Math.max(.05, s)])];
+  }, 250);
+}
+function stopSim() { if (!st.sim) return; st.sim = false; st.winStart = 0; st.lastPx = 0; clearInterval(simTimer); $('feedBadge').style.display = 'none'; }
+
+async function loadHistory() {
+  candles = [];
+  try {
+    const r = await fetch(`/api/desk/candles?coin=${encodeURIComponent(st.coin)}&minutes=4320`);
+    if (!r.ok) throw new Error(await r.text());
+    candles = await r.json();
+  } catch (e) {
+    let p = SIM_PX[st.coin], t = Math.floor(Date.now() / 60000) * 60000 - 240 * 60000;
+    for (let i = 0; i < 240; i++) { const o = p; p *= Math.exp((Math.random() - .5) * .003); candles.push({ t: t + i * 60000, o, h: Math.max(o, p) * 1.0004, l: Math.min(o, p) * .9996, c: p, v: Math.random() * 50 }); }
+  }
+  const lastC = candles.length ? candles[candles.length - 1].c : SIM_PX[st.coin];  // goedkope coins (XLM, PUMP) hebben meer decimalen nodig
+  const prec = lastC >= 1000 ? 1 : lastC >= 10 ? 2 : lastC >= 1 ? 4 : lastC >= .01 ? 5 : 7;
+  cs.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: Math.pow(10, -prec) } });
+  vwapS.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: Math.pow(10, -prec) } });
+  cs.setData(candles.map(c => ({ time: c.t / 1000, open: c.o, high: c.h, low: c.l, close: c.c })));
+  chart.timeScale().setVisibleLogicalRange({ from: candles.length - 90, to: candles.length + 3 });  // laatste anderhalf uur, zodat de kenmerklijnen leesbaar zijn
+  const last = candles[candles.length - 1]; if (last && !st.px) st.px = last.c;
+  // σ per seconde uit de 1m-candles
+  const rs = []; for (let i = 1; i < candles.length; i++) rs.push(Math.log(candles[i].c / candles[i - 1].c));
+  const v = rs.reduce((a, r) => a + r * r, 0) / Math.max(1, rs.length);
+  st.var1 = v / 60 || 1e-8;
+  // vwap van de sessie (sinds 00:00 UTC) uit de candles
+  const day = Math.floor(Date.now() / 864e5) * 864e5;
+  st.vwapPV = 0; st.vwapV = 0;
+  const vw = [];  // volume-gewogen gemiddelde prijs sinds 00:00 UTC, als lijn vanaf het begin van de dag
+  for (const c of candles) if (c.t >= day) { const tp = (c.h + c.l + c.c) / 3; st.vwapPV += tp * c.v; st.vwapV += c.v; if (st.vwapV) vw.push({ time: c.t / 1000, value: st.vwapPV / st.vwapV }); }
+  vwapS.setData(vw); drawTrend(); drawMA(); drawOsc();
+}
+
+// ---------- kenmerken ----------
+function features(now) {
+  const tr = st.trades, f = {};
+  const flowOver = ms => { let b = 0, s = 0; for (const t of tr) if (t.t > now - ms) (t.buy ? b += t.sz : s += t.sz); return b + s ? (b - s) / (b + s) : 0; };
+  f.flow10 = flowOver(10000); f.flow30 = flowOver(30000);
+  const recent = tr.filter(t => t.t > now - 10000);
+  f.tps = recent.length / 10;
+  f.size = recent.length ? recent.reduce((a, t) => a + t.sz * t.px, 0) / recent.length : 0;
+  if (st.bookL) {
+    const [b, a] = st.bookL, sum = (l, n) => l.slice(0, n).reduce((s, x) => s + x[1], 0);
+    const b5 = sum(b, 5), a5 = sum(a, 5), b20 = sum(b, 20), a20 = sum(a, 20);
+    f.book = b5 + a5 ? (b5 - a5) / (b5 + a5) : 0; f.bookDeep = b20 + a20 ? (b20 - a20) / (b20 + a20) : 0;
+    f.spread = b[0] && a[0] ? (a[0][0] - b[0][0]) / st.px * 1e4 : 0;
+  } else { f.book = f.bookDeep = f.spread = 0; }
+  const el = Math.max(1, (now - st.winStart) / 1000);
+  f.mom = st.open0 ? Math.log(st.px / st.open0) / Math.sqrt(st.var1 * el) : 0;
+  f.vol5 = Math.sqrt(st.var1 * WIN());
+  f.chain = st.ethOpen && st.eth ? Math.log(st.eth / st.ethOpen) / Math.sqrt(st.var1 * el) : 0;
+  const vwap = st.vwapV ? st.vwapPV / st.vwapV : st.px;
+  f.vwap = vwap; f.vwapDist = (st.px - vwap) / st.px * 1e4;
+  // Spotter-score: tape, boek en momentum samen, tussen -1 en 1
+  f.score = clamp(.35 * f.flow30 + .2 * f.flow10 + .25 * f.book + .1 * f.bookDeep + .1 * clamp(f.mom / 2, -1, 1), -1, 1);
+  return f;
+}
+
+// ---------- model: de server rekent, de pagina toont ----------
+// De zwerm draait op de server (app/desk_auto.py). Zonder server-model rekent de pagina zelf met een vaste β als terugval.
+function costBps() { return st.auto && st.auto.costs ? st.auto.costs.round : 2 * S.fee + 1; }
+const srvMarket = () => st.auto && st.auto.markets && st.auto.markets[st.coin];
+function model(f, now) {
+  const sm = srvMarket();
+  if (sm && sm.model && sm.model.sd) return { ...sm.model, pr: sm.prior || { beta: .25, n: 0, hit: null } };
+  const left = Math.max(1, WIN() - (now - st.winStart) / 1000), sd = Math.sqrt(st.var1 * left);
+  const pr = { beta: .25, n: 0, hit: null }, p = Phi(pr.beta * f.score);
+  const eMove = sd * Math.sqrt(2 / Math.PI) * 1e4;            // verwachte absolute beweging in bps
+  const be = .5 + costBps() / (2 * Math.max(eMove, .01));     // winkans nodig om kosten terug te verdienen
+  const side = p >= .5 ? 'long' : 'short', pDir = Math.max(p, 1 - p);
+  return { p, pDir, side, be, edge: (pDir - be) * 100, sd, left, eMove, pr };
+}
+
+function newWindow(now) {
+  const W = WIN(), ws = Math.floor(now / (W * 1000)) * W * 1000;
+  if (ws === st.winStart) return false;
+  st.winStart = ws; st.open0 = st.px; st.ethOpen = st.eth;
+  openLine.applyOptions({ price: st.px });
+  trace('closer', 'spotter', 'OPEN', `nieuw venster ${hhmmss(ws).slice(0, 5)} (${winLbl()}), open ${fmt(st.px, pxD())}`);
+  return true;
+}
+
+// ---------- signalen op de grafiek ----------
+// pijl = instap (long onder de candle, short erboven), bolletje = afgerekend met pnl, grijs vierkant = PASS-venster
+st.passes = {};  // per venster de laatste PASS van de server, weg zodra er toch een EDGE kwam
+function renderMarks() {
+  const mt = ms => Math.floor(ms / 60000) * 60, out = [];
+  const entry = (opened, side, live) => out.push({ time: mt(opened), position: side === 'long' ? 'belowBar' : 'aboveBar',
+    color: side === 'long' ? '#16b364' : '#ef3a5d', shape: side === 'long' ? 'arrowUp' : 'arrowDown', text: (live ? 'LIVE ' : '') + side.toUpperCase() });
+  const exit = h => out.push({ time: mt(h.t), position: h.side === 'long' ? 'aboveBar' : 'belowBar', color: h.pnl >= 0 ? '#16b364' : '#ef3a5d',
+    shape: h.side === 'long' ? 'arrowDown' : 'arrowUp', text: `DICHT ${{ SL: 'stop', TP: 'TP', venster: 'einde', omgedraaid: 'omgedraaid' }[h.reason] || h.reason || ''} ${sgn(h.pnl, 2)}` });
+  if (st.auto && st.auto.history) for (const h of st.auto.history) if (h.coin === st.coin) { if (h.opened) entry(h.opened, h.side, !h.paper); exit(h); }
+  const sm = srvMarket(), tk = sm && sm.ticket;
+  if (tk && tk.entry) entry((tk.filled_at || tk.opened) * 1000, tk.side, !tk.paper);
+  for (const t of Object.values(st.passes)) out.push({ time: mt(t), position: 'aboveBar', color: '#b8bfcc', shape: 'square', text: 'PASS' });
+  const first = candles.length ? candles[0].t / 1000 : 0;
+  cs.setMarkers(out.filter(m => m.time >= first).sort((a, b) => a.time - b.time));
+  drawTradeSegs();
+}
+
+// ---------- live: de zwerm op de server ----------
+// Echte orders plaatst alleen de server-zwerm (app/desk_auto.py), ook als deze pagina dicht is.
+// De pagina toont zijn toestand, keurt orders goed en zet hem aan of uit.
+st.auto = null; st.autoSeq = 0;
+const isLive = () => !!(st.auto && st.auto.allowed && st.auto.on);
+async function autoPost(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: S.token, ...body }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+}
+async function pollAuto() {
+  try {
+    const a = await (await fetch('/api/desk/auto?since=' + st.autoSeq)).json();
+    const tag = a.live ? '<b style="color:var(--down)">LIVE</b>' : '<span class="muted">papier</span>', W = (a.window_min || 60) * 60000;
+    for (const t of a.trace) {
+      const ag = AG[t.agent] ? t.agent : 'prior';
+      const txt = t.coin ? t.text.replace(t.coin + ' · ', '') : t.text;
+      if (!t.coin || t.coin === st.coin) trace(ag, null, t.act, /^(papier|LIVE) /.test(txt) ? txt.replace(/^LIVE /, tag + ' ') : `${tag} ${txt}`, t.val, t.t, t.coin);
+      if (['TAKE', 'AFREK', 'STOP', 'AAN', 'UIT', 'VENSTER', 'RESET'].includes(t.act)) wire(ag, (a.live ? 'live: ' : 'papier: ') + t.text, t.val || null);
+      if (t.coin === st.coin && t.act === 'PASS') st.passes[Math.floor(t.t / W)] = t.t;
+      if (t.coin === st.coin && t.act === 'EDGE') delete st.passes[Math.floor(t.t / W)];
+    }
+    allFeed(a.trace);
+    const changed = a.trace.some(t => ['TAKE', 'AFREK', 'PASS', 'EDGE'].includes(t.act));
+    const coinsChanged = JSON.stringify(a.coins) !== JSON.stringify(st.auto && st.auto.coins);
+    if (st.auto && a.auto_scan && a.scan_at !== st.auto.scan_at) loadScan();  // scanner op de server liep: zelfde top 25 tonen
+    const winChanged = !st.auto || st.auto.window_min !== a.window_min || st.auto.min_edge !== a.min_edge
+      || JSON.stringify(st.auto.size) !== JSON.stringify(a.size);
+    if (a.size && a.portfolio) $('hdMargUsd').textContent = '= ' + usd(a.portfolio.equity * a.size.max_margin_pct / 100, 2);
+    st.autoSeq = a.seq; st.auto = a; if (changed) renderMarks(); if (coinsChanged && scanRows.length) renderScan();
+    if (winChanged) renderWinSeg();
+  } catch (e) { st.auto = null; }
+  renderAuto();
+}
+const EDGES = [[2, 'streng'], [1, 'normaal'], [0, 'los'], [-2, 'leren']];
+function renderEdgeSeg() {
+  const a = st.auto, cur = a ? a.min_edge : 2;
+  $('edgeSeg').innerHTML = EDGES.map(([v, n]) => `<button data-e="${v}" class="${cur === v ? 'on' : ''}" title="instappen vanaf ${sgn(v, 0, '¢')} boven break-even">${n}</button>`).join('');
+}
+function renderWinSeg() {
+  renderEdgeSeg();
+  const sz = st.auto && st.auto.size; if (sz && document.activeElement !== $('hdMarg')) $('hdMarg').value = sz.max_margin_pct;
+  const a = st.auto, ws = (a && a.windows) || [15, 60, 240];
+  $('winSeg').innerHTML = ws.map(m => `<button data-w="${m}" class="${a && a.window_min === m ? 'on' : ''}">${winLbl(m)}</button>`).join('');
+  $('winLbl').textContent = winLbl();
+}
+let notified = 0;
+function renderAuto() {
+  const a = st.auto, ok = a && a.allowed;
+  if (a) {  // de server-zwerm volgt deze markten altijd, op papier tot live aan staat
+    $('coinAuto').style.display = '';
+    $('coinAuto').innerHTML = Object.entries(a.coins).map(([c, v]) => `<button data-c="${c}" class="${v ? 'on' : ''}" title="${c}: zwerm ${v ? 'volgt' : 'volgt niet'}">${v ? '●' : '○'} ${short(c)}</button>`).join('');
+    renderAll();
+  } else $('coinAuto').style.display = 'none';
+  if (a && document.activeElement !== $('scanN')) $('scanN').value = String(a.scan_n ?? 25);
+  if (a) { $('scanAuto').textContent = 'Auto: ' + (a.auto_scan ? 'AAN' : 'UIT'); $('scanAuto').classList.toggle('danger', !!a.auto_scan); }
+  $('autoBtn').style.display = ok ? '' : 'none'; $('confBtn').style.display = ok ? '' : 'none';
+  if (!ok) { $('approve').classList.remove('on'); return; }
+  $('autoBtn').textContent = 'Zwerm live: ' + (a.on ? 'AAN' : 'UIT');
+  $('autoBtn').className = 'btn ' + (a.on ? 'danger' : '');
+  $('confBtn').textContent = 'Bevestigen: ' + (a.confirm ? 'AAN' : 'UIT');
+  $('confBtn').className = 'btn ' + (a.confirm ? '' : 'danger');
+  $('modeBadge').textContent = a.on ? (a.halted ? 'LIVE · GESTOPT' : 'LIVE') : 'PAPER';
+  $('modeBadge').className = 'badge ' + (a.on ? 'live' : 'paper');
+  $('sAppr').textContent = a.on ? (a.confirm ? 'ELKE ORDER' : 'UIT · AGENTS AUTONOOM') : 'ZWERM UIT';
+  $('fLive').innerHTML = a.on ? `<b style="color:#ff6b81">LIVE ${Object.keys(a.coins).filter(c => a.coins[c]).join(' + ') || 'geen coin'}</b> · max $${st.server ? st.server.max_usd : '?'}/order · ${st.server ? st.server.account : ''}${st.server && st.server.subaccount ? ' (sub-account)' : ''}`
+    + (a.halted ? ` · <b style="color:#ff6b81">${a.halted}</b>` : '') + (a.feed ? '' : ' · <b style="color:#ff6b81">server zonder koersfeed</b>') : 'LIVE UIT · papier';
+  const p = a.pending;
+  if (p) {
+    const left = Math.max(0, Math.round(p.expires - Date.now() / 1000));
+    $('apText').textContent = `${p.side.toUpperCase()} ${p.coin} $${p.usd} · edge ${sgn(p.edge, 1, '¢')}`;
+    $('apTimer').textContent = left + 's'; $('approve').classList.add('on');
+    if (notified !== p.id && window.Notification && Notification.permission === 'granted') { notified = p.id; new Notification('Swarm Desk: order wacht', { body: $('apText').textContent }); }
+  } else $('approve').classList.remove('on');
+}
+async function answer(yes) {
+  const p = st.auto && st.auto.pending; if (!p) return;
+  try { await autoPost('/api/desk/auto/approve', { id: p.id, yes }); } catch (e) { trace('taker', null, 'FOUT', e.message); }
+  pollAuto();
+}
+async function refreshStatus() {
+  try { st.server = await (await fetch('/api/desk/status')).json(); } catch (e) { st.server = { live: false, auto_allowed: false, reasons: ['server niet bereikbaar'] }; }
+  $('liveInfo').textContent = st.server.auto_allowed ? `Server klaar voor live (${st.server.account}${st.server.subaccount ? ', sub-account' : ''}, max $${st.server.max_usd}/order). Zet de zwerm aan met de knop bovenaan.`
+    : st.server.live ? 'Live is ingesteld, maar DESK_AUTO=1 ontbreekt in data/desk.env.' : 'Server niet klaar voor live: ' + st.server.reasons.join('; ');
+  if (isLive()) refreshAccount();
+}
+async function refreshAccount() {
+  try { const r = await fetch('/api/desk/account'); if (r.ok) st.account = await r.json(); } catch (e) {}
+}
+
+// ---------- tekenen ----------
+function spark(id, data, color, opts = {}) {
+  const c = $(id); if (!c) return; const [x, w, h] = canvasCtx(c); if (!data || data.length < 2) return;
+  let lo = Math.min(...data), hi = Math.max(...data); if (opts.zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+  if (hi - lo < 1e-12) { hi += 1; lo -= 1; }
+  const X = i => i / (data.length - 1) * w, Y = v => h - 3 - (v - lo) / (hi - lo) * (h - 6);
+  if (opts.zero) { x.strokeStyle = TH.border; x.beginPath(); x.moveTo(0, Y(0)); x.lineTo(w, Y(0)); x.stroke(); }
+  x.beginPath(); data.forEach((v, i) => i ? x.lineTo(X(i), Y(v)) : x.moveTo(X(i), Y(v)));
+  x.strokeStyle = color; x.lineWidth = 1.4; x.stroke();
+  x.lineTo(w, h); x.lineTo(0, h); x.closePath(); x.globalAlpha = .08; x.fillStyle = color; x.fill(); x.globalAlpha = 1;
+}
+
+// reactor: ring van gekleurde draden, zes agents erop, kern in het midden
+const strands = Array.from({ length: 140 }, (_, i) => ({ ph: Math.random() * 6.28, amp: 4 + Math.random() * 26, f: 2 + Math.floor(Math.random() * 5), sp: (Math.random() - .5) * .6, col: i }));
+function hue(a) { const cols = AGENTS.map(g => g.c); const t = ((a / (2 * Math.PI)) % 1 + 1) % 1 * 6, i = Math.floor(t); return cols[(i + 1) % 6]; }
+let ringSpots = [];
+// snelheid van een trade-bol: bijna stil bij een wachtende limiet, vooruit bij winst en achteruit bij verlies
+const spins = {};
+function spinPhase(key, t, base) {
+  const now = performance.now() / 1000, s = spins[key] || (spins[key] = { ph: Math.random(), t: now });
+  const pct = t.state === 'entering' ? 0 : (t.upnl || 0) / Math.max(1e-9, t.usd / t.lev) * 100;
+  // winst draait vooruit, verlies achteruit; hoe groter (in % van de marge), hoe sneller: 1% = 2,5x, max 8x
+  const mult = t.state === 'entering' ? .1 : Math.sign(pct || 1) * clamp(1 + Math.abs(pct) * 1.5, 1, 8);
+  s.ph += Math.min(.1, now - s.t) * base * mult; s.t = now; return s.ph;
+}
+$('ring').onclick = e => { const b = $('ring').getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
+  const hit = ringSpots.find(p => Math.hypot(p.px - mx, p.py - my) < 22); if (hit && hit.coin !== st.coin) setCoin(hit.coin); };
+function drawRing(time) {
+  const c = $('ring'), [x, w, h] = canvasCtx(c), cx = w / 2, cy = h / 2 + 50, R = Math.min(w * .3, h * .55), ry = Math.min(R * .55, h / 2 - 100);
+  const tm = time / 1000, energy = .4 + Math.min(1.5, Math.abs(st.feat.score || 0) * 3);
+  // draden
+  x.lineWidth = TH.dark ? 1 : .7; if (TH.dark) x.globalCompositeOperation = 'lighter';  // neon: kleuren tellen op tot een gloed
+  for (const s of strands) {
+    x.beginPath();
+    for (let k = 0; k <= 64; k++) {
+      const a = k / 64 * Math.PI * 2, wob = Math.sin(a * s.f + s.ph + tm * s.sp * energy) * s.amp;
+      const px = cx + (R + wob) * Math.cos(a + tm * .05), py = cy + (ry + wob * .7) * Math.sin(a + tm * .05);
+      k ? x.lineTo(px, py) : x.moveTo(px, py);
+    }
+    x.strokeStyle = hue(s.ph * 3); x.globalAlpha = TH.dark ? .22 * energy : .28; x.stroke();
+  }
+  x.globalAlpha = 1; x.globalCompositeOperation = 'source-over';
+  // agents als ringen dwars op de torus: de trades rijden erdoorheen (eerst de achterste helft, na de trades de voorste)
+  const agRings = AGENTS.map((a, i) => {
+    const ang = -Math.PI / 2 + i * Math.PI / 3 + tm * .05, px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang);
+    const rot = Math.atan2(ry * Math.cos(ang), -R * Math.sin(ang)) + Math.PI / 2;  // loodrecht op de baan
+    const active = Date.now() - (st.work[a.k] || 0) < 1500, big = (active ? 36 + Math.sin(tm * 8) * 3 : 32);
+    return { a, px, py, rot, active, big };
+  });
+  const ringHalf = (g, from, to, alpha) => {
+    x.beginPath(); x.ellipse(g.px, g.py, g.big, g.big * .32, g.rot, from, to);
+    if (TH.dark) { x.shadowColor = g.a.c; x.shadowBlur = g.active ? 30 : 16; }
+    x.strokeStyle = g.a.c; x.lineWidth = g.active ? 7 : 5; x.globalAlpha = alpha; x.stroke(); x.globalAlpha = 1; x.shadowBlur = 0;
+  };
+  agRings.forEach(g => ringHalf(g, Math.PI, Math.PI * 2, .55));
+  // ticket dat over de ring rijdt
+  // elke open trade van de gedeelde portefeuille rijdt als cirkel over de ring, met de ticker erbij
+  const open = (st.auto && st.auto.portfolio && st.auto.portfolio.open) || [];
+  ringSpots = [];
+  open.forEach((rt, i) => {
+    const ang = -Math.PI / 2 + (i / Math.max(1, open.length) + spinPhase('ring:' + rt.coin, rt, 1 / 40)) * Math.PI * 2;  // winst = sneller rond
+    const px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang), col = rt.side === 'long' ? '#16b364' : '#ef3a5d';
+    ringSpots.push({ coin: rt.coin, px, py });
+    const focus = rt.coin === st.coin, r = focus ? 13 : 10;
+    x.globalAlpha = rt.state === 'entering' ? .45 : 1;
+    x.beginPath(); x.arc(px, py, r + 3, 0, 7); x.fillStyle = tColor(rt.coin); x.fill();
+    x.beginPath(); x.arc(px, py, r, 0, 7); x.fillStyle = col; x.fill(); x.globalAlpha = 1;
+    x.font = '700 10px ui-monospace, monospace'; x.textAlign = 'center'; x.fillStyle = TH.text;
+    x.fillText(`${short(rt.coin)} ${rt.side === 'long' ? '▲' : '▼'}${rt.state === 'entering' ? ' limiet' : ' ' + sgn(rt.upnl, 2)}`, px, py - r - 7);
+  });
+  agRings.forEach(g => {  // voorste helft over de trades heen, plus de naam
+    ringHalf(g, 0, Math.PI, 1);
+    x.font = '700 10px ui-monospace, monospace'; x.fillStyle = g.active ? g.a.c : TH.text; x.textAlign = 'center';
+    x.fillText(g.a.n, g.px, g.py + g.big + 12);  // naam altijd onder de ring (bovenaan valt die anders onder de balk)
+  });
+  // kern
+  const pr = 48 + (st.feat.score ? Math.abs(st.feat.score) * 14 : 0) + Math.sin(tm * 2) * 2;
+  const g = x.createRadialGradient(cx, cy, pr * .3, cx, cy, pr * 1.8); g.addColorStop(0, 'rgba(36,99,235,.18)'); g.addColorStop(1, 'rgba(36,99,235,0)');
+  x.fillStyle = g; x.beginPath(); x.arc(cx, cy, pr * 1.8, 0, 7); x.fill();
+  if (TH.dark) { x.shadowColor = 'rgba(200,220,255,.9)'; x.shadowBlur = 50; }
+  x.beginPath(); x.arc(cx, cy, pr, 0, 7); x.fillStyle = TH.dark ? '#f4f7ff' : '#15171c'; x.fill(); x.shadowBlur = 0;
+  x.fillStyle = TH.dark ? '#04050b' : '#fff'; x.beginPath(); x.roundRect(cx - 15, cy - 18, 9, 34, 5); x.roundRect(cx + 6, cy - 18, 9, 34, 5); x.fill();
+  if ($('tabAll').style.display !== 'none') drawAllRing(tm);
+  requestAnimationFrame(drawRing);
+}
+
+// overzicht: elke gevolgde ticker als cirkel op een ring; gevuld (groen long, rood short) zolang er een trade loopt
+let allSpots = [];
+function drawAllRing(tm) {
+  const c = $('allRing'), [x, w, h] = canvasCtx(c), a = st.auto; allSpots = [];
+  if (!a) return;
+  const on = Object.keys(a.coins).filter(k => a.coins[k]), open = {};
+  const coins = allState.order.filter(c => on.includes(c)).concat(on.filter(c => !allState.order.includes(c)));  // beste bovenaan, met de klok mee
+  for (const t of (a.portfolio && a.portfolio.open) || []) open[t.coin] = t;
+  const cx = w / 2, cy = h / 2, R = Math.min(w * .44, 900), ry = h / 2 - 50;
+  // gelijke afstand langs de omtrek van de ellips, anders klonteren de cirkels samen aan de smalle uiteinden
+  const N = 720, pts = [], cum = [0];
+  for (let k = 0; k <= N; k++) { const a = -Math.PI / 2 + k / N * Math.PI * 2; pts.push([cx + R * Math.cos(a), cy + ry * Math.sin(a)]);
+    if (k) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1])); }
+  const at = f => { const L = f * cum[N]; let k = cum.findIndex(v => v >= L); return pts[Math.max(0, k)]; };
+  x.lineWidth = 1; x.strokeStyle = TH.border; x.beginPath(); x.ellipse(cx, cy, R, ry, 0, 0, 7); x.stroke();
+  const pf = a.portfolio || {};
+  x.textAlign = 'center'; x.fillStyle = TH.text; x.font = '700 26px ui-monospace, monospace';
+  x.fillText(pf.equity != null ? '$' + fmt(pf.equity, 2) : '–', cx, cy - 4);
+  x.font = '11px ui-monospace, monospace'; x.fillStyle = TH.muted;
+  x.fillText(`${(pf.open || []).length} trade(s) open · ${coins.length} tickers gevolgd · ${pf.mode === 'live' ? 'LIVE' : 'papier'}`, cx, cy + 18);
+  x.fillText(`venster ${winLbl()} · drempel ${sgn(a.min_edge || 0, 0, '¢')}`, cx, cy + 34);
+  coins.forEach((coin, i) => {
+    const [px, py] = at(i / coins.length);
+    const t = open[coin], m = a.markets[coin] || {}, col = edgeCol(m.model && m.model.edge), r = t ? 26 + Math.sin(tm * 4) * 2 : 20;
+    if (TH.dark) { x.shadowColor = col; x.shadowBlur = t ? 30 : 10; }
+    if (t) {  // draaiende boog rond de bol: groen vooruit bij winst, rood achteruit bij verlies
+      x.beginPath(); x.arc(px, py, r + 9, 0, 7); x.strokeStyle = col; x.lineWidth = 3; x.globalAlpha = .25; x.stroke(); x.globalAlpha = 1;
+      const a0 = spinPhase('all:' + coin, t, 1) * Math.PI * 2, win = (t.upnl || 0) >= 0;
+      x.beginPath(); x.arc(px, py, r + 9, a0, a0 + Math.PI * .7); x.strokeStyle = win ? '#16b364' : '#ef3a5d'; x.lineWidth = 4; x.stroke();
+      x.beginPath(); x.arc(px, py, r + 9, a0 + Math.PI, a0 + Math.PI * 1.7); x.stroke();
+    }
+    x.beginPath(); x.arc(px, py, r, 0, 7);
+    x.fillStyle = t ? (t.side === 'long' ? '#16b364' : '#ef3a5d') : TH.panel; x.globalAlpha = t && t.state === 'entering' ? .5 : 1; x.fill(); x.globalAlpha = 1;
+    x.lineWidth = 3; x.strokeStyle = col; x.stroke(); x.shadowBlur = 0;
+    x.fillStyle = t ? '#fff' : col; x.font = '700 11px ui-monospace, monospace'; x.fillText(short(coin).slice(0, 6), px, py + 4);
+    x.fillStyle = TH.text; x.font = '10px ui-monospace, monospace';
+    const lbl = t ? `${t.side === 'long' ? '▲' : '▼'} ${t.lev}x ${t.state === 'entering' ? 'wacht op vulling' : sgn(t.upnl, 2)}` : !(m.model && m.model.edge != null) ? 'opwarmen…' : allState.by === 'score' ? `score ${m.score == null ? '–' : sgn(m.score, 2)}` : `edge ${edgeTxt(m.model.edge)}`;
+    x.fillText(lbl, px, py + r + 15);
+    allSpots.push({ coin, px, py, r });
+  });
+}
+$('allRing').onclick = e => {
+  const b = $('allRing').getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
+  const hit = allSpots.find(p => Math.hypot(p.px - mx, p.py - my) < p.r + 8); if (!hit) return;
+  document.querySelector('.tabs button[data-tab="desk"]').click(); if (hit.coin !== st.coin) setCoin(hit.coin);
+};
+
+function pfData() {  // gedeelde portefeuille van de server: papier, of het Hyperliquid-account als live aan staat
+  const a = st.auto, pf = a && a.portfolio; if (!pf) return null;
+  const live = pf.mode === 'live', hs = (a.history || []).filter(h => !h.paper === live);
+  let curve = pf.curve.map(p => p[1]);
+  if (live) { let c = 0; curve = [0, ...hs.map(h => (c += h.pnl))]; }
+  return { pf, live, hs, curve };
+}
+// portefeuillewaarde als vloeiende lijn: groen waar hij stijgt, rood waar hij daalt; laatste punt = nu (met open trades)
+function drawEquity(x, w, h, d, base) {
+  const lo = Math.min(base, ...d), hi = Math.max(base, ...d), pad = (hi - lo) * .12 || 1;
+  const X = i => 4 + i / (d.length - 1) * (w - 8), Y = v => h - 6 - (v - lo + pad) / (hi - lo + 2 * pad) * (h - 12);
+  x.strokeStyle = TH.border; x.setLineDash([3, 4]); x.beginPath(); x.moveTo(0, Y(base)); x.lineTo(w, Y(base)); x.stroke(); x.setLineDash([]);
+  // zachte vulling tot de startwaarde: groen boven, rood onder
+  for (const [up, col] of [[true, '22,179,100'], [false, '239,58,93']]) {
+    x.save(); x.beginPath(); up ? x.rect(0, 0, w, Y(base)) : x.rect(0, Y(base), w, h); x.clip();
+    const g = x.createLinearGradient(0, up ? 0 : h, 0, Y(base)); g.addColorStop(0, `rgba(${col},.28)`); g.addColorStop(1, `rgba(${col},0)`);
+    x.beginPath(); x.moveTo(X(0), Y(base)); smooth(x, d, X, Y, true); x.lineTo(X(d.length - 1), Y(base)); x.closePath(); x.fillStyle = g; x.fill(); x.restore();
+  }
+  x.lineWidth = 2.2; x.lineCap = 'round';
+  if (TH.dark) { x.shadowBlur = 8; }
+  // vloeiend pad in stukken: van midden tot midden met het punt als controlepunt; kleur per stuk naar de richting
+  const n = d.length, P = i => [X(i), Y(d[i])], M = k => k < 0 ? P(0) : k >= n - 1 ? P(n - 1) : [(X(k) + X(k + 1)) / 2, (Y(d[k]) + Y(d[k + 1])) / 2];
+  const V = k => k < 0 ? d[0] : k >= n - 1 ? d[n - 1] : (d[k] + d[k + 1]) / 2;
+  for (let k = 0; k < n; k++) {
+    const col = V(k) >= V(k - 1) ? '#16b364' : '#ef3a5d'; x.strokeStyle = col; if (TH.dark) x.shadowColor = col;
+    x.beginPath(); x.moveTo(...M(k - 1)); x.quadraticCurveTo(...P(k), ...M(k)); x.stroke();
+  }
+  x.shadowBlur = 0;
+  const last = d[d.length - 1], col = last >= base ? '#16b364' : '#ef3a5d';
+  x.beginPath(); x.arc(X(d.length - 1), Y(last), 4, 0, 7); x.fillStyle = col; x.fill();
+}
+function smooth(x, d, X, Y, cont) {  // vloeiend pad door alle punten (kwadratische curves via de middens)
+  cont ? x.lineTo(X(0), Y(d[0])) : x.moveTo(X(0), Y(d[0]));
+  for (let i = 1; i < d.length - 1; i++) x.quadraticCurveTo(X(i), Y(d[i]), (X(i) + X(i + 1)) / 2, (Y(d[i]) + Y(d[i + 1])) / 2);
+  x.lineTo(X(d.length - 1), Y(d[d.length - 1]));
+}
+function drawBalance() {
+  const D = pfData(), c = $('balChart'), [x, w, h] = canvasCtx(c), d = D ? D.curve : [];
+  if (d.length < 2) { x.fillStyle = TH.muted; x.font = '12px system-ui'; x.fillText('Verloop verschijnt na het eerste afgerekende ticket', 8, h / 2); }
+  else drawEquity(x, w, h, D.live ? d : d.concat([D.pf.equity]), D.live ? 0 : (D.pf.start || d[0]));
+  const pb = $('pnlBars'), [y, w2, h2] = canvasCtx(pb), hs = D ? D.hs.slice(-120) : [];
+  const mx = Math.max(1e-9, ...hs.map(t => Math.abs(t.pnl))), bw = w2 / Math.max(hs.length, 60);
+  hs.forEach((t, i) => { const bh = Math.abs(t.pnl) / mx * (h2 / 2 - 2); y.fillStyle = tColor(t.coin);
+    y.fillRect(i * bw, t.pnl >= 0 ? h2 / 2 - bh : h2 / 2, Math.max(1, bw - 1), bh); });
+}
+
+function drawDist(m) {
+  const c = $('dist'), [x, w, h] = canvasCtx(c); if (!st.open0 || !m) return;
+  // verdeling van de koers bij sluiting (lognormaal rond de huidige koers + verwachte drift)
+  const mu = Math.log(st.px) + (m.p - .5) * 0.4 * m.sd, sd = Math.max(m.sd, 1e-6);
+  const lo = Math.exp(mu - 3.2 * sd), hi = Math.exp(mu + 3.2 * sd), N = 60, bins = [];
+  for (let i = 0; i < N; i++) { const p = lo + (hi - lo) * (i + .5) / N, z = (Math.log(p) - mu) / sd; bins.push([p, Math.exp(-z * z / 2)]); }
+  const bw = w / N, top = 18;
+  bins.forEach(([p, d], i) => { const bh = d * (h - top - 16); x.fillStyle = p >= st.px ? (TH.dark ? '#f5a524' : '#2463eb') : (TH.dark ? '#2a3360' : '#c9d6f7'); x.fillRect(i * bw + 1, h - 16 - bh, bw - 2, bh); });
+  // cdf
+  x.beginPath(); bins.forEach(([p], i) => { const v = Phi((Math.log(p) - mu) / sd); const yy = h - 16 - v * (h - top - 16); i ? x.lineTo(i * bw + bw / 2, yy) : x.moveTo(bw / 2, yy); });
+  x.strokeStyle = '#2fbf4a'; x.lineWidth = 1.5; x.stroke();
+  const X = p => (p - lo) / (hi - lo) * w;
+  x.strokeStyle = '#f08c00'; x.setLineDash([4, 3]); x.beginPath(); x.moveTo(X(st.px), top); x.lineTo(X(st.px), h - 16); x.stroke(); x.setLineDash([]);
+  x.fillStyle = TH.text; x.font = '700 11px ui-monospace, monospace'; x.textAlign = 'left';
+  x.fillText(`nu ${fmt(st.px, pxD())}`, Math.min(w - 110, X(st.px) + 4), 12);
+  x.fillStyle = TH.muted; x.font = '10px ui-monospace, monospace';
+  x.fillText(fmt(lo, pxD()), 2, h - 3); x.textAlign = 'right'; x.fillText(fmt(hi, pxD()), w - 2, h - 3);
+}
+
+function drawSpec() {
+  const c = $('spec'), [x, w, h] = canvasCtx(c), cols = st.specCols, nF = FEATS.length;
+  const LW = 74, cw = (w - LW) / Math.max(cols.length, 20), ch = h / nF;  // rekt uit tot er 120 kolommen zijn  // links een kolom met de naam van elk kenmerk
+  const col = v => { const t = clamp((v + 1) / 2, 0, 1); // blauw → groen → geel
+    const r = Math.round(t < .5 ? 30 + t * 2 * 20 : 50 + (t - .5) * 2 * 200), g = Math.round(t < .5 ? 60 + t * 2 * 130 : 190 + (t - .5) * 2 * 40), b = Math.round(t < .5 ? 160 - t * 2 * 60 : 100 - (t - .5) * 2 * 80); return `rgb(${r},${g},${b})`; };
+  const x0 = w - cols.length * cw;  // nieuwste kolom rechts
+  cols.forEach((cv, i) => cv.forEach((v, j) => { x.fillStyle = col(v); x.fillRect(x0 + i * cw, j * ch, Math.ceil(cw), Math.ceil(ch) - 1); }));
+  x.font = '600 10px ui-monospace, monospace'; x.textBaseline = 'middle'; x.textAlign = 'left';
+  FEATS.forEach((n, j) => { x.fillStyle = j % 2 ? TH.panel2 : TH.panel; x.fillRect(0, j * ch, LW - 4, Math.ceil(ch) - 1);
+    x.fillStyle = TH.text; x.fillText(n, 4, j * ch + ch / 2); });
+  const last = cols[cols.length - 1] || [];
+  $('feat').innerHTML = FEATS.map((f, j) => `<div title="${FEAT_INFO[j]}"><span>${f}</span><i style="width:${Math.abs(last[j] || 0) * 100}%;background:${(last[j] || 0) >= 0 ? '#16b364' : '#ef3a5d'}"></i></div>`).join('');
+}
+
+function drawBook() {
+  if (!st.bookL) return;
+  const [b, a] = st.bookL, asks = a.slice(0, 9).reverse(), bids = b.slice(0, 9), mx = Math.max(...asks.concat(bids).map(l => l[1]), 1e-9);
+  const row = (l, col) => `<div><i style="width:${l[1] / mx * 100}%;background:${col}"></i><span>${fmt(l[0], pxD() || 1)}</span><span>${fmt(l[1], 3)}</span></div>`;
+  const spr = a[0] && b[0] ? a[0][0] - b[0][0] : 0;
+  $('book').innerHTML = `<div class="cap" style="display:grid;grid-template-columns:1fr 1fr"><span>prijs</span><span style="text-align:right">grootte</span></div>`
+    + asks.map(l => row(l, '#ef3a5d')).join('') + `<span class="spread">spread ${fmt(spr, 2)} · ${fmt(spr / st.px * 1e4, 2)}bp</span>` + bids.map(l => row(l, '#16b364')).join('');
+}
+
+// uitleg in gewone taal, uit de getallen die de agents bij de instap gebruikten (geen taalmodel, gewoon regels)
+function explain(t, sm) {
+  const w = t && t.why, mo = (sm && sm.model) || {}, pr = (sm && sm.prior) || {};
+  const bars = parts => parts.map(([n, c, v]) => `<div class="bar"><span>${n}</span><span style="background:var(--panel-2);border-radius:3px">
+    <i style="width:${Math.min(100, Math.abs(c) / .35 * 100)}%;background:${c >= 0 ? '#16b364' : '#ef3a5d'}"></i></span><span>${sgn(c, 2)}</span></div>`).join('');
+  if (!w) {
+    if (mo.p == null) return '<span class="muted">wacht op data van de server</span>';
+    const side = mo.p >= .5 ? 'stijgen' : 'dalen';
+    return `<p>Geen trade op ${short(st.coin)}. De zwerm schat <b>${cents(mo.pDir)}</b> kans dat de koers gaat ${side}, maar heeft
+      <b>${cents(mo.be)}</b> nodig om de kosten (${fmt(costBps(), 1)} bp) terug te verdienen op een verwachte beweging van ${fmt(mo.eMove, 1)} bp.</p>
+      <p>${mo.edge >= ((st.auto && st.auto.min_edge) || 0) ? 'Dat is genoeg: hij stapt in zodra hij in de beslisfase zit en er ruimte is in de portefeuille.' : `Edge ${sgn(mo.edge, 1, '¢')}: te weinig, dus <b>PASS</b>.`}
+      Prior vertrouwt de score met β ${fmt(pr.beta, 2)} (${pr.n || 0} vensters geleerd${pr.hit != null ? ', ' + fmt(pr.hit * 100, 0) + '% juist' : ''}).</p>`;
+  }
+  const dir = t.side === 'long' ? 'stijgt' : 'daalt', top = w.parts.filter(x => Math.abs(x[1]) > .01).slice(0, 2).map(x => x[0]).join(' en ') || 'een zwak signaal';
+  const now = tradeConf(t);
+  return `<p><b>${t.side.toUpperCase()} ${short(t.coin)}</b> omdat vooral <b>${top}</b> wezen op een koers die ${dir} (score ${sgn(w.score, 2)}).</p>
+    ${bars(w.parts)}
+    <p>${w.src === 'geleerd' ? 'Het <b>geleerde model</b>' : 'Prior'} zette dat om in <b>${cents(w.p)}</b> kans (β ${fmt(w.beta, 2)}, ${w.n} vensters geleerd). Break-even na ${fmt(w.cost, 1)} bp kosten
+      op een verwachte beweging van ${fmt(w.emove, 1)} bp was ${cents(w.be)}, dus edge <b>${sgn(w.edge, 1, '¢')}</b>.</p>
+    <p>${w.lev_risk != null ? `Hefboom: de stop ligt ${fmt(w.sl_bp, 0)} bp weg; om daar hooguit ${w.risk_pct}% van de marge te verliezen mag het ${w.lev_risk}x zijn,
+      maal vertrouwen ${fmt(w.lev_conf * 100, 0)}% (edge ${sgn(w.edge, 1, '¢')})${w.lev_skill != null ? `, maal trefzekerheid van deze markt ${fmt(w.lev_skill * 100, 0)}%, maal staat van dienst ${fmt(w.lev_trust * 100, 0)}% (${w.trust_why})` : ''} = <b>${w.lev}x</b>${w.want_lev > w.lev ? ` (begrensd op max ${w.lev_cap}x)` : ''}.` : `Kelly: σ ${fmt(w.sd, 0)} bp → hefboom ${w.lev}x.`}
+      Kelly ×${w.kelly} wilde ${usd(w.kelly_usd)} positie,
+      ${w.capped ? `afgetopt op ${w.max_margin_pct}% marge` : 'binnen de grens'} → ${usd(w.margin, 2)} marge, ${usd(w.usd, 2)} positie.</p>
+    ${w.bt ? `<p>Dag-backtests: ${w.bt.open} van de ${w.bt.prof} winstgevende strategieën hebben nu een open koopsignaal (${w.bt.trend}), beste is ${w.bt.best || '–'}.
+      ${w.bt_against ? 'De trade ging daartegenin, dus vroeg de zwerm 1¢ extra edge.' : 'Geen tegenwind van de dagtrend.'}</p>` : ''}
+    ${w.strat ? `<p>Strategieën op dit venster: ${w.strat.long.length ? w.strat.long.join(', ') + (w.strat.n > w.strat.long.length ? ' en' : '') : 'geen van de'} ${w.strat.n} bewezen strategieën ${w.strat.long.length ? 'zitten nu long' : 'zit nu long'}, stem ${sgn(w.strat.v, 2)}.
+      ${w.strat.against ? 'De trade ging daartegenin, dus vroeg de zwerm 1¢ extra edge.' : 'Geen tegenwind van de strategieën.'}</p>` : ''}
+    ${w.wall ? `<p>Ruimte: de eerste ${t.side === 'long' ? 'weerstand' : 'steun'} lag op ${fmt(w.wall, pxD())} (${w.wall_name || w.wall_n + 'x geraakt'}), ${fmt(w.room, 2)}σ verder. Genoeg ruimte om in te stappen (minstens 0,3σ).</p>` : ''}
+    ${t.sl || t.tp ? `<p>Uitstap: stop ${t.sl ? fmt(t.sl, pxD()) : 'uit'}${t.plan ? ` (${t.plan.sl})` : ''}, take-profit ${t.tp ? fmt(t.tp, pxD()) : 'uit'}${t.plan ? ` (${t.plan.tp})` : ''}${t.plan && t.plan.rr ? `, winst/risico ${fmt(t.plan.rr, 2)}` : ''}.
+      Draait het model tijdens de trade om (de andere kant krijgt edge), dan sluit hij meteen.
+      Raakt hij geen van beide, dan kijkt hij op het einde van het venster van ${(st.auto && st.auto.window_min) || '?'} min of hij opnieuw dezelfde kant op zou gaan: zo ja, dan loopt de trade door${st.auto && st.auto.exits ? ` (max ${st.auto.exits.hold} vensters)` : ''}, zo nee, dan sluit hij.</p>` : ''}
+    ${t.holds ? `<p>Loopt al <b>${t.holds}</b> venster${t.holds > 1 ? 's' : ''} door: ${(t.holds_why || []).filter(x => x.hold).map(x => `${hhmmss(x.t).slice(0, 5)} ${cents(x.p)} vs ${cents(x.be)}`).join(', ')}.</p>` : ''}
+    ${now != null ? `<p>Nu: <b class="${now >= .5 ? 'up' : 'down'}">${fmt(now * 100, 0)}%</b> kans dat het zijn kant op gaat${now < .5 ? ': het model twijfelt nu aan deze trade' : ''}.</p>` : ''}`;
+}
+
+// waarom een trade dicht ging, in gewone taal
+function exitStory(h) {
+  const e = h.exit_why || {}, r = e.reason || h.reason || 'venster', win = h.pnl >= 0;  // oudere trades hebben nog geen reden: die sloten altijd aan het einde van het venster
+  const how = { SL: `de koers raakte de stop-loss${h.plan ? ' (' + h.plan.sl + ')' : ''}`, TP: `de koers raakte de take-profit${h.plan ? ' (' + h.plan.tp + ')' : ''}${e.maker ? ', die als limiet in het boek lag (maker)' : ''}`,
+    venster: `het venster van ${e.window || '?'} min was voorbij: de voorspelling gold tot dan, dus de zwerm stapte uit ${e.maker ? 'als maker (goedkoop)' : 'met een marktorder'}`,
+    omgedraaid: `het model draaide om: de kans voor de andere kant werd groot genoeg om die trade zelf te openen, dus stapte hij uit ${e.maker ? 'als maker (goedkoop)' : 'met een marktorder (de limiet werd niet binnen 30 s gevuld)'}`, 'kill switch': 'jij drukte de kill switch', daglimiet: 'de daglimiet op verlies werd geraakt', 'venster gewijzigd': 'je koos een ander venster' }[r] || r;
+  return `<p><b class="${win ? 'up' : 'down'}">${h.side.toUpperCase()} ${short(h.coin)} ${sgn(h.pnl, 2)}</b> · dicht om ${hhmmss(h.t).slice(0, 5)} omdat ${how}.
+    ${e.held != null ? `Na ${fmt(e.held, 0)} min stond de koers ${sgn(e.move, 2)}σ ${e.move >= 0 ? 'in' : 'tegen'} zijn richting` : ''}${e.conf != null ? `, en het model gaf toen nog ${fmt(e.conf * 100, 0)}% kans voor zijn kant` : ''}.
+    ${h.holds ? `Liep ${h.holds} venster${h.holds > 1 ? 's' : ''} door omdat het model telkens dezelfde kant op bleef wijzen.` : ''}
+    ${(h.holds_why || []).filter(x => !x.hold).slice(-1).map(x => `Bij het laatste venster gaf het model nog ${cents(x.p)} tegen ${cents(x.be)} break-even: te weinig om door te lopen.`).join('')}
+    ${e.fees ? `Kosten ${usd(e.fees, 2)}.` : ''} ${h.why ? `Instap: ${cents(h.why.p)} kans tegen ${cents(h.why.be)} break-even, gedragen door ${h.why.parts.slice(0, 2).map(x => x[0]).join(' en ')}.` : ''}</p>`;
+}
+
+function drawLevels() {
+  const sm = srvMarket(), srvT = sm && sm.ticket;
+  // instaplijn: groen voor long, rood voor short, met de lopende winst of verlies
+  const lp = srvT ? (srvT.entry || srvT.limit) : null;
+  if (lp) {
+    const col = srvT.side === 'long' ? '#16b364' : '#ef3a5d', e = srvT.entry;
+    const up = e ? srvT.usd * (sm.px - e) / e * (srvT.side === 'long' ? 1 : -1) : 0;
+    const title = `${srvT.side.toUpperCase()} ${srvT.lev}x ${usd(srvT.usd)} · ${e ? (up >= 0 ? 'WINST ' : 'VERLIES ') + sgn(up, 2) + ' (' + sgn(up / (srvT.usd / srvT.lev) * 100, 1) + '%)' : 'limiet wacht'}`;
+    const opt = { price: lp, color: col, lineWidth: 2, lineStyle: e ? 0 : 2, axisLabelVisible: true, title };
+    if (st.entryLine) st.entryLine.applyOptions(opt); else st.entryLine = cs.createPriceLine(opt);
+  } else if (st.entryLine) { cs.removePriceLine(st.entryLine); st.entryLine = null; }
+  for (const k of ['sl', 'tp']) {  // stop-loss en take-profit: stippellijn, met de muis te verslepen
+    const lv = st.drag && st.drag.k === k ? st.drag.price : srvT && srvT.entry ? srvT[k] : null, key = k + 'Line';
+    if (lv) {
+      const e = srvT.entry, pnl = srvT.usd * (lv - e) / e * (srvT.side === 'long' ? 1 : -1);
+      const opt = { price: lv, color: k === 'sl' ? '#ff4d6d' : '#2fbf4a', lineWidth: 2, lineStyle: 1, axisLabelVisible: true,
+        title: `${k === 'sl' ? 'STOP' : 'TAKE PROFIT'} ${sgn(pnl, 2)} · sleep om te verplaatsen` };
+      if (st[key]) st[key].applyOptions(opt); else st[key] = cs.createPriceLine(opt);
+    } else if (st[key]) { cs.removePriceLine(st[key]); st[key] = null; }
+  }
+
+}
+
+// ---------- hoofdlus, elke seconde ----------
+let lastSec = 0;
+function tick() {
+  const now = Date.now();
+  $('clock').textContent = hhmmss(now);
+  if (!st.px) return;
+  newWindow(now);
+  // σ bijwerken met 1s-rendementen (EWMA)
+  if (st.lastPx) { const r = Math.log(st.px / st.lastPx); if (Math.abs(r) < .02) st.var1 = .985 * st.var1 + .015 * r * r; }
+  st.lastPx = st.px;
+  const f = features(now), m = model(f, now); st.feat = f;
+  const sm = srvMarket(), srvT = sm && sm.ticket;
+
+  // series
+  push('tps', f.tps); push('bookImb', f.book); push('fair', m.p); push('flow', f.flow30); push('vol', f.vol5 * 1e4); push('chain', f.chain); push('plasma', f.flow10, 120);
+  const vals = { tps: fmt(f.tps, 1) + ' tr/s', bookImb: sgn(f.book, 2), fair: cents(m.p), flow: sgn(f.flow30, 2), vol: fmt(f.vol5 * 1e4, 1) + 'bp', chain: sgn(f.chain, 2) + 'σ' };
+  BANK.forEach(([, k], i) => { $('bv-' + k).textContent = vals[k]; spark('bc-' + k, st.series[k], AGENTS[i].c, { zero: k !== 'tps' && k !== 'vol' && k !== 'fair' }); });
+  spark('plasma', st.series.plasma, '#2463eb', { zero: true });
+  if (now - lastSec >= 2000) {
+    lastSec = now;
+    st.specCols.push([f.flow10, f.flow30, f.book, f.bookDeep, clamp(f.mom / 2, -1, 1), clamp(f.vol5 * 1e4 / 30 - .5, -1, 1), clamp(f.tps / 10 - .5, -1, 1),
+      clamp(Math.log10(f.size + 1) / 6 - .3, -1, 1), clamp(-f.spread, -1, 1), clamp(f.chain / 2, -1, 1), clamp(f.vwapDist / 50, -1, 1), f.score]);
+    pushFeatures(st.specCols[st.specCols.length - 1], now); drawHeat();
+    if (st.specCols.length > 120) st.specCols.shift();
+    drawSpec();
+  }
+
+  // vertrouwen per agent
+  st.conf = { spotter: Math.abs(f.score), prior: m.pr.n / (m.pr.n + 30), edge: clamp((m.edge + 10) / 20, 0, 1), kelly: clamp((2 * m.pDir - 1) * 4, 0, 1),
+              taker: srvT ? 1 : st.auto && st.auto.pending ? .6 : .1, closer: srvT ? clamp(1 - m.left / WIN(), 0, 1) : 0 };
+  AGENTS.forEach(a => { $('cf-' + a.k).style.width = (st.conf[a.k] * 100) + '%'; $('cv-' + a.k).textContent = Math.round(st.conf[a.k] * 100);
+    const work = now - (st.work[a.k] || 0) < 1500; $('ag-' + a.k).classList.toggle('work', work);
+    $('as-' + a.k).textContent = work ? '● bezig' : (a.k === 'taker' && srvT ? 'holder' : 'idle'); });
+
+  // koppen en getallen
+  const el = (now - st.winStart) / 1000, d = pxD(), move = st.open0 ? (st.px / st.open0 - 1) * 1e4 : 0;
+  $('hdSpot').textContent = fmt(st.px, d); $('ringSpot').textContent = '$' + fmt(st.px, d); $('tapePx').textContent = '$' + fmt(st.px, d);
+  $('ringOpen').textContent = fmt(st.open0, d); $('ringFair').textContent = cents(m.p); $('ringBe').textContent = cents(m.be);
+  const left = Math.max(0, WIN() - el), mmss = s => `${s >= 3600 ? Math.floor(s / 3600) + ':' : ''}${String(Math.floor(s % 3600 / 60)).padStart(s >= 3600 ? 2 : 1, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  const phase = el < DECIDE_FROM() ? 0 : el <= DECIDE_UNTIL() ? 1 : 2;
+  $('ringWin').textContent = `VENSTER ${hhmmss(st.winStart).slice(0, 5)} · ${short(st.coin)} ${winLbl().toUpperCase()}`;
+  $('ringLeft').textContent = `sluit over ${mmss(left)} · ${['zwerm verzamelt', 'zwerm beslist', 'uitrijden'][phase]}`;
+  $('stage').textContent = `FASE ${['VERZAMELEN', 'BESLISSEN', 'UITRIJDEN'][phase]} · VENSTER ${hhmmss(st.winStart).slice(0, 5)} · ${winLbl()}`;
+  $('barCoin').textContent = `${short(st.coin)} ${m.side === 'long' ? 'UP' : 'DOWN'} ${winLbl().toUpperCase()}`; $('barSpot').textContent = '$' + fmt(st.px, d);
+  $('barMove').innerHTML = `<span class="${move >= 0 ? 'up' : 'down'}">${sgn(move, 1, 'bp')}</span>`; $('barVol').textContent = 'σ ' + fmt(m.sd * 1e4, 1) + 'bp';
+  $('barP').textContent = cents(m.pDir); $('barEdge').innerHTML = `<span class="${m.edge >= 0 ? 'up' : 'down'}">${sgn(m.edge, 1, '¢')}</span>`;
+  $('sFair').textContent = cents(m.pDir); $('sBe').textContent = cents(m.be); $('sEdge').textContent = sgn(m.edge, 1, '¢');
+  const D = pfData();
+  $('sOpen').textContent = D ? D.pf.open.length : 0; $('sHolder').textContent = srvT ? 'TAKER' : st.auto && st.auto.pending ? 'MENS' : '–';
+  st.hand = st.hand.filter(t => t > now - 60000); $('sHand').textContent = st.hand.length;
+  $('pSpot').textContent = fmt(st.px, d); $('pVol').textContent = fmt(f.vol5 * 1e4, 1) + 'bp';
+  $('pLeft').textContent = mmss(left); $('pP').textContent = cents(m.p);
+  $('pEdge').innerHTML = `<span class="${m.edge >= 0 ? 'up' : 'down'}">${sgn(m.edge, 1, '¢')}</span>`;
+  $('fCost').textContent = fmt(costBps(), 1) + 'bp'; $('fBeta').textContent = fmt(m.pr.beta, 3) + (m.pr.hit != null ? ` · treffers ${fmt(m.pr.hit * 100, 0)}%` : ''); $('fN').textContent = m.pr.n;
+  if (!st.sim) $('fFeed').textContent = 'hyperliquid live';
+  const vw = st.vwapV ? st.vwapPV / st.vwapV : 0; if (vw) vwapS.update({ time: Math.floor(now / 60000) * 60, value: vw });
+  $('tapeStats').textContent = `${fmt(f.tps, 1)} TR/S · VWAP ${fmt(vw, d)} · FLOW ${sgn(f.flow30, 2)}`;
+  drawBook(); drawDist(m);
+
+  drawLevels(); drawDepthMain(); renderMinis(); drawSR();
+  const pfT = st.auto && st.auto.portfolio && st.auto.portfolio.open.find(o => o.coin === st.coin);
+  if (now % 2000 < 1000) {
+    const done = ((st.auto && st.auto.history) || []).filter(h => h.coin === st.coin).slice(-3).reverse();
+    $('why').innerHTML = explain(pfT, srvMarket()) + (done.length ? `<div class="cap" style="margin-top:8px">laatste afgesloten trades hier</div>${done.map(exitStory).join('')}` : '');
+  }
+
+  // ticket van de server-zwerm voor deze markt: limiet staat, open, of maker-uitstap
+  if (srvT) {
+    const tpx = sm.px, e = srvT.entry, upnl = e ? srvT.usd * (tpx - e) / e * (srvT.side === 'long' ? 1 : -1) : 0;
+    const stLbl = { entering: 'limiet wacht op vulling', open: 'open', exiting: 'uitstap als maker' }[srvT.state] || srvT.state;
+    $('ticket').innerHTML = `<div class="kv"><span>${short(srvT.coin)} ${srvT.side.toUpperCase()} ${srvT.lev}x ${srvT.paper ? '· papier' : '· LIVE'}</span><span>${usd(srvT.usd)}</span></div>
+      <div class="kv"><span>status</span><span>${stLbl}</span></div>
+      <div class="kv"><span>${e ? 'instap' : 'limiet'}</span><span>${fmt(e || srvT.limit, d)}</span></div><div class="kv"><span>nu</span><span>${fmt(tpx, d)}</span></div>
+      <div class="kv"><span>marge</span><span>${usd(srvT.usd / srvT.lev, 2)}</span></div>
+      <div class="kv"><span>p / break-even</span><span>${cents(srvT.p)} / ${cents(srvT.be || 0)}</span></div>
+      <div class="kv"><span>open pnl</span><span class="${upnl >= 0 ? 'up' : 'down'}">${sgn(upnl, 2)}</span></div>`;
+  } else $('ticket').innerHTML = `<span class="muted">Geen open ticket op ${short(st.coin)}</span>`;
+
+  // portefeuille: één pot voor alle tickers
+  if (D) {
+    const { pf, live, hs, curve } = D, n = pf.n, pnl = live ? pf.pnl : pf.equity - pf.start;
+    let peak = -Infinity, dd = 0; for (const v of curve) { peak = Math.max(peak, v); if (peak > 0) dd = Math.max(dd, (peak - v) / peak); }
+    $('balance').innerHTML = `<sup>$</sup>${fmt(pf.equity, 2)}`; $('balance').classList.toggle('pos', pnl >= 0);
+    $('pnlWho').textContent = live ? 'hyperliquid accountwaarde · alle tickers' : `papierportefeuille · start ${usd(pf.start)} · alle tickers`;
+    $('pnlMode').textContent = live ? 'LIVE' : 'PAPER';
+    const lt = hs[hs.length - 1];
+    $('lastSettle').innerHTML = (lt ? `laatste: ${short(lt.coin)} ${lt.side} <span class="${lt.pnl >= 0 ? 'up' : 'down'}">${sgn(lt.pnl, 2)}</span> · ` : '')
+      + `gerealiseerd ${sgn(pf.pnl, 2)} · open ${sgn(pf.upnl, 2)}`;
+    const eq = Math.max(pf.equity, 1e-9);
+    $('pfMargin').innerHTML = pf.open.map(t => `<i title="${t.coin} marge ${usd(t.margin, 2)}" style="width:${t.margin / eq * 100}%;background:${tColor(t.coin)}"></i>`).join('');
+    $('pfOpen').innerHTML = `<div class="muted"><span>vrij</span><span>${usd(pf.free, 0)}</span><span>in gebruik ${usd(pf.used, 2)}</span><span>marge</span><span>vertrouwen</span><span>pnl</span></div>`
+      + pf.open.map(t => `<div data-c="${t.coin}" title="Open ${t.coin} op de grafiek"><b style="color:${tColor(t.coin)}">${short(t.coin)}</b><span>${t.side} ${t.lev}x</span>
+        <span class="bar"><i style="width:${Math.min(100, t.margin / eq * 400)}%;background:${tColor(t.coin)}"></i></span>
+        <span>${usd(t.margin, 2)}</span><span>${confCell(t)}</span><span class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}</span></div>`).join('');
+    $('stTickets').textContent = n; $('stWin').textContent = n ? fmt(pf.wins / n * 100, 1) + '%' : '–';
+    $('stAvg').textContent = n ? sgn(pf.pnl / n, 2) : '–'; $('stDd').textContent = fmt(dd * 100, 1) + '%';
+    $('hdPnl').innerHTML = `<span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 2)}</span>`; $('hdTickets').textContent = n;
+    $('fBal').textContent = usd(pf.equity, 2); $('fDd').textContent = fmt(dd * 100, 1) + '%';
+    const hn = hs.length, longs = hs.filter(h => h.side === 'long').length, lw = hs.filter(h => h.side === 'long' && h.pnl > 0).length, sw = hs.filter(h => h.side === 'short' && h.pnl > 0).length;
+    $('split').innerHTML = `<div class="conf" style="grid-template-columns:90px 1fr 90px"><span>LONG / SHORT</span><div class="track"><div style="width:${hn ? longs / hn * 100 : 50}%;background:#16b364"></div></div><span class="num">${longs} / ${hn - longs}</span></div>
+      <div class="conf" style="grid-template-columns:90px 1fr 90px"><span>WIN L / S</span><div class="track"><div style="width:${longs ? lw / longs * 100 : 0}%;background:#2463eb"></div></div><span class="num">${longs ? fmt(lw / longs * 100, 0) : '–'}% / ${hn - longs ? fmt(sw / (hn - longs) * 100, 0) : '–'}%</span></div>`;
+    $('exhaust').innerHTML = hs.slice(-12).reverse().map(h => `<div data-c="${h.coin}" title="Open ${h.coin} op de grafiek"><span class="muted">${hhmmss(h.t).slice(0, 5)}</span><span><b style="color:${tColor(h.coin)}">${short(h.coin)}</b> ${h.side}${h.paper ? '' : ' ●'}</span><span class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</span></div>`).join('') || '<span class="muted">leeg</span>';
+  }
+  if (now % 10000 < 1000) drawBalance();
+}
+
+// ---------- bediening ----------
+async function setCoin(c) {
+  st.coin = c; localStorage.setItem('desk.coin', c);
+  renderCoinSeg();
+  $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
+  Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, depth: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
+  for (const key of ['entryLine', 'slLine', 'tpLine']) if (st[key]) { cs.removePriceLine(st[key]); st[key] = null; }
+  st.passes = {}; st.heat = {}; st.heatStep = 0; st.featPts = []; st.srKey = '';
+  stopSim(); await loadHistory(); connect(); drawBalance(); renderMarks(); syncFeatSeries(); pollHeat();
+
+}
+function renderCoinSeg() {
+  const list = [...new Set([...BASE, ...watch(), st.coin])];
+  $('coinSeg').innerHTML = list.map(c => `<button data-c="${c}" class="${c === st.coin ? 'on' : ''}" title="${c}">${short(c)}</button>`).join('');
+}
+$('coinSeg').onclick = e => e.target.dataset.c && e.target.dataset.c !== st.coin && setCoin(e.target.dataset.c);
+
+// ---------- scanner: alle Hyperliquid-perps, ook tokenized aandelen ----------
+let scanRows = [];
+async function loadScan() {
+  $('scanInfo').textContent = 'scannen… (kan 20 s duren)';
+  try {
+    const r = await fetch('/api/desk/scan'); const j = await r.json(); if (!r.ok) throw new Error(j.detail);
+    scanRows = j.rows; $('scanInfo').textContent = `bijgewerkt ${hhmmss(j.updated)} · ${scanRows.length} markten`;
+  } catch (e) { $('scanInfo').textContent = 'scanner mislukt: ' + e.message; }
+  renderScan();
+}
+function renderScan() {
+  const live = !!st.auto, w = watch(), filt = $('scanFilter').value;
+  const rows = scanRows.filter(a => filt === 'all' || (filt === 'stock') === a.stock);
+  const big = v => v >= 1e9 ? fmt(v / 1e9, 1) + 'B' : v >= 1e6 ? fmt(v / 1e6, 1) + 'M' : fmt(v / 1e3, 0) + 'K';
+  $('scanBody').innerHTML = rows.map((a, i) => {
+    const sw = live && st.auto.coins[a.coin];
+    return `<tr><td class="muted">${i + 1}</td><td><b>${short(a.coin)}</b> <span class="muted">${a.stock ? a.dex : ''}</span></td>
+      <td class="num">${fmt(a.px, a.px >= 100 ? 2 : 4)}</td><td class="num ${a.change >= 0 ? 'up' : 'down'}">${sgn(a.change, 1, '%')}</td>
+      <td class="num">$${big(a.volume)}</td><td class="num">${a.spread == null ? '–' : fmt(a.spread, 1) + 'bp'}</td>
+      <td class="num">${fmt(a.sigma5m, 1)}bp</td><td class="num"><b class="${a.ratio >= 1.5 ? 'up' : a.ratio < 1 ? 'down' : ''}">${fmt(a.ratio, 2)}</b></td>
+      <td class="num">${fmt(a.funding * 100, 4)}%</td>
+      <td><button class="btn" data-view="${a.coin}">${w.includes(a.coin) || BASE.includes(a.coin) ? 'Bekijk' : '+ Volg'}</button>
+      ${live ? `<button class="btn ${sw ? 'danger' : ''}" data-swarm="${a.coin}">${sw ? 'Zwerm ●' : 'Zwerm ○'}</button>` : ''}</td></tr>`;
+  }).join('') || '<tr><td colspan="10" class="muted">Nog geen scan.</td></tr>';
+}
+async function swarmCoins(map, ask) {
+  if (st.auto && st.auto.live && !confirm(ask)) return;
+  try { await autoPost('/api/desk/auto', { coins: map }); } catch (err) { alert(err.message); }
+  await pollAuto(); renderScan();
+}
+$('scanAllOn').onclick = () => { if (!scanRows.length) return alert('Eerst scannen.');
+  swarmCoins(Object.fromEntries(scanRows.map(r => [r.coin, true])), `Zwerm laten handelen op alle ${scanRows.length} markten? Echt geld.`); };
+$('scanAllOff').onclick = () => { if (!st.auto) return;
+  swarmCoins(Object.fromEntries(Object.keys(st.auto.coins).map(c => [c, false])), 'Zwerm op alle markten uitzetten? Open trades lopen af.'); };
+$('scanAuto').onclick = async () => { if (!st.auto) return; const on = !st.auto.auto_scan;
+  if (on && st.auto.live && !confirm('Auto top 25 aan? De zwerm kiest dan elke 5 min zelf op welke markten hij met echt geld handelt.')) return;
+  try { await autoPost('/api/desk/auto', { auto_scan: on }); } catch (err) { alert(err.message); } await pollAuto(); };
+setInterval(() => { if (st.auto && st.auto.auto_scan) loadScan(); }, 300000);
+$('scanN').onchange = async () => {
+  try { await autoPost('/api/desk/auto', { scan_n: +$('scanN').value }); } catch (err) { alert(err.message); }
+  await pollAuto(); loadScan();
+};
+$('scanBtn').onclick = loadScan; $('scanFilter').onchange = renderScan;
+$('scanBody').onclick = async e => {
+  const v = e.target.dataset.view, z = e.target.dataset.swarm;
+  if (v) { const w = watch(); if (!w.includes(v) && !BASE.includes(v)) localStorage.setItem('desk.watch', JSON.stringify([...w, v])); setCoin(v); scrollTo({ top: 0, behavior: 'smooth' }); }
+  if (z) {
+    const on = !st.auto.coins[z];
+    if (on && st.auto.live && !confirm(`Zwerm laten handelen op ${z}? Echt geld.`)) return;
+    try { await autoPost('/api/desk/auto', { coins: { [z]: on } }); } catch (err) { alert(err.message); }
+    await pollAuto(); renderScan();
+  }
+};
+// ---------- tabblad Alle tickers ----------
+const TCOL = ['#e5383b', '#2463eb', '#f08c00', '#2fbf4a', '#9b5de5', '#13b5a6', '#d6336c', '#0b7285', '#e67700', '#5c940d', '#7048e8', '#c2255c', '#1098ad', '#862e9c'];
+const tColor = c => { if (!c) return '#8a92a3'; let h = 0; for (const ch of c) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return TCOL[h % TCOL.length]; };
+const allState = { rows: [], filter: new Set(), n: 0, order: [], sortedAt: 0, by: localStorage.getItem('desk.sortBy') || 'edge' };
+// edge-kleur: groen = genoeg kans om de kosten te verslaan, rood = niet; feller = verder van 0
+const edgeCol = e => e == null ? '#8a92a3' : e >= 0 ? `rgb(${Math.round(22 + 30 * (1 - clamp(e / 10, 0, 1)))},${Math.round(150 + 60 * clamp(e / 10, 0, 1))},100)`
+  : `rgb(${Math.round(170 + 69 * clamp(-e / 20, 0, 1))},58,93)`;
+const edgeTxt = e => e == null ? '–' : e < -99 ? '< −99¢' : sgn(e, 1, '¢');
+const btCell = b => !b ? '<span class="muted">wacht op backtest</span>'
+  : `<span class="${b.trend === 'stijgend' ? 'up' : b.trend === 'zwak' ? 'down' : 'muted'}" title="beste strategie: ${b.best || '–'}${b.best_open ? ' (koopsignaal open)' : ''} · gebacktest ${b.at || ''}">${b.trend} · ${b.open}/${b.prof}</span>`;
+const sortVal = (a, c) => { const m = a.markets[c] || {}; return allState.by === 'score' ? Math.abs(m.score || 0) : ((m.model || {}).edge ?? -1e9); };
+// vertrouwen in een open trade: de huidige kans van het model dat de koers zijn kant op gaat tot het venster sluit
+function tradeConf(t) {
+  const m = st.auto && st.auto.markets && st.auto.markets[t.coin], p = m && m.model && m.model.p;
+  return p == null ? null : (t.side === 'long' ? p : 1 - p);
+}
+const confCell = t => { const c = tradeConf(t); return c == null ? '–' : `<span class="${c >= .5 ? 'up' : 'down'}" title="kans volgens het model dat de koers nu de kant van deze trade op gaat">${fmt(c * 100, 0)}%</span>`; };
+function renderTrades() {
+  const a = st.auto, pf = a.portfolio || { open: [] }, d = v => v == null ? '–' : fmt(v, v >= 100 ? 2 : v >= 1 ? 4 : 6);
+  const tk = c => `<b style="color:${tColor(c)}">${short(c)}</b>`, side = sd => `<span class="${sd === 'long' ? 'up' : 'down'}">${sd === 'long' ? '▲ long' : '▼ short'}</span>`;
+  $('trOpen').innerHTML = '<tr><th>ticker</th><th>kant</th><th>positie</th><th>instap</th><th>nu</th><th>status</th><th>vertrouwen</th><th>pnl</th></tr>'
+    + (pf.open.map(t => `<tr data-c="${t.coin}"><td>${tk(t.coin)}</td><td>${side(t.side)} ${t.lev}x</td><td>${usd(t.usd)}</td><td>${d(t.entry)}</td><td>${d(t.px)}</td>
+      <td>${{ entering: 'limiet wacht', open: 'open', exiting: 'uitstap' }[t.state] || t.state}</td><td>${confCell(t)}</td><td class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? '–' : sgn(t.upnl, 2)}</td></tr>`).join('')
+      || '<tr><td colspan="8" class="muted">geen open trades</td></tr>');
+  const hs = (a.history || []).slice().reverse();
+  $('trDone').innerHTML = '<tr><th>dicht</th><th>ticker</th><th>kant</th><th>positie</th><th>in → uit</th><th>uitstap</th><th>edge</th><th>pnl</th></tr>'
+    + (hs.map(h => `<tr data-c="${h.coin}"><td class="muted">${hhmmss(h.t).slice(0, 5)}</td><td>${tk(h.coin)}${h.paper ? '' : ' <b class="down">LIVE</b>'}</td><td>${side(h.side)} ${h.lev}x</td>
+      <td>${usd(h.usd)}</td><td>${d(h.entry)} → ${d(h.exit)}</td><td title="${exitStory(h).replace(/<[^>]+>/g, '').replace(/"/g, '').replace(/\s+/g, ' ').trim()}">${{ SL: 'stop-loss', TP: 'take-profit', venster: 'einde venster' }[h.reason] || h.reason || '–'} · ${h.maker_exit ? 'maker' : 'markt'}</td><td>${sgn(h.edge, 1, '¢')}</td>
+      <td class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">nog niets afgerekend</td></tr>');
+  const n = hs.length, w = hs.filter(h => h.pnl > 0).length, tot = hs.reduce((s, h) => s + h.pnl, 0);
+  $('trSum').innerHTML = `${pf.open.length} open · ${n} afgesloten · winrate ${n ? fmt(w / n * 100, 0) + '%' : '–'} · totaal <span class="${tot >= 0 ? 'up' : 'down'}">${sgn(tot, 2)}</span>`;
+}
+for (const id of ['trOpen', 'trDone']) $(id).onclick = e => { const r = e.target.closest('tr[data-c]'); if (!r) return;
+  document.querySelector('.tabs button[data-tab="desk"]').click(); if (r.dataset.c !== st.coin) setCoin(r.dataset.c);
+  setTimeout(() => $('chart').scrollIntoView({ behavior: 'smooth', block: 'center' }), 100); };
+function allFeed(lines) {
+  if (!lines.length) return;
+  for (const t of lines) allState.rows.unshift(t);
+  allState.rows.length = Math.min(allState.rows.length, 1500); allState.n += lines.length;
+  if ($('tabAll').style.display !== 'none') renderFeed();
+}
+function renderFeed() {
+  const f = allState.filter, rows = allState.rows.filter(t => !f.size || f.has(t.coin)).slice(0, 400);
+  $('allFeed').innerHTML = rows.map(t => { const ag = AG[t.agent] || AG.prior, txt = t.coin ? t.text.replace(t.coin + ' · ', '') : t.text;
+    return `<div class="r" style="--c:${tColor(t.coin)}"><span class="muted">${hhmmss(t.t)}</span><span class="tk">${t.coin ? short(t.coin) : 'ZWERM'}</span>
+      <span class="who" style="background:${ag.c}">${t.act}</span><span>${txt}</span><span>${t.val || ''}</span></div>`; }).join('');
+  $('allCount').textContent = allState.n + ' regels';
+}
+function renderAll() {
+  if ($('tabAll').style.display === 'none' || !st.auto) return;
+  const a = st.auto, coins = Object.keys(a.coins).filter(c => a.coins[c]);
+  $('allMode').innerHTML = a.live ? '<b style="color:var(--down)">LIVE</b>' : 'PAPIER · zet markten aan met de knoppen bovenaan of in de scanner';
+  $('allChips').innerHTML = coins.map(c => `<button style="--c:${tColor(c)}" class="${allState.filter.has(c) ? 'on' : ''}" data-c="${c}">${short(c)}</button>`).join('')
+    + (allState.filter.size ? '<button style="--c:#8a92a3" data-c="">alles tonen</button>' : '');
+  if (Date.now() - allState.sortedAt > 10000 || allState.order.length !== coins.length || coins.some(c => !allState.order.includes(c))) {
+    allState.order = coins.slice().sort((x, y) => sortVal(a, y) - sortVal(a, x));
+    allState.sortedAt = Date.now();
+  }
+  renderTrades();
+  $('sortSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.by === allState.by));
+  $('edgeList').innerHTML = '<tr><th>#</th><th>ticker</th><th>edge</th><th>kant</th><th>kans</th><th>break-even</th><th>score</th><th>verwachte beweging</th><th title="Dag-backtests op de backtestserver: hoeveel winstgevende strategieën nu een open koopsignaal hebben">dag-backtest</th><th>trade</th></tr>'
+    + allState.order.map((c, i) => { const m = a.markets[c] || {}, mo = m.model || {}, tk = m.ticket;
+      return `<tr data-c="${c}" style="cursor:pointer"><td class="muted">${i + 1}</td><td><b style="color:${tColor(c)}">${short(c)}</b></td>
+        <td style="color:${edgeCol(mo.edge)};font-weight:700">${edgeTxt(mo.edge)}</td><td>${mo.side ? (mo.side === 'long' ? '▲ long' : '▼ short') : '–'}</td>
+        <td>${mo.pDir == null ? '–' : cents(mo.pDir)}</td><td>${mo.be == null ? '–' : mo.be > 1 ? '> 100¢' : cents(mo.be)}</td>
+        <td>${m.score == null ? '–' : sgn(m.score, 2)}</td><td>${mo.eMove == null ? '–' : fmt(mo.eMove, 1) + ' bp'}</td>
+        <td>${btCell(m.bt)}</td>
+        <td>${tk ? `<span class="${tk.side === 'long' ? 'up' : 'down'}">${tk.side} ${tk.lev}x</span>` : '<span class="muted">–</span>'}</td></tr>`; }).join('');
+  $('allCards').innerHTML = allState.order.map(c => {
+    const m = a.markets[c] || {}, mo = m.model || {}, tk = m.ticket, h = a.history.filter(x => x.coin === c), pnl = h.reduce((s, x) => s + x.pnl, 0);
+    return `<div class="card" style="--c:${tColor(c)}"><div class="kv"><b class="t"><span title="${tk ? tk.side + ' ' + tk.state : 'geen trade'}" style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;background:${tk ? (tk.side === 'long' ? '#16b364' : '#ef3a5d') : '#e6e9f0'};box-shadow:${tk ? '0 0 0 3px ' + tColor(c) + '55' : 'none'}"></span>${short(c)}</b><span>${m.px ? fmt(m.px, m.px >= 100 ? 2 : 4) : '–'}</span></div>
+      <div class="kv"><span>score</span><span>${m.score == null ? '–' : sgn(m.score, 2)}</span></div>
+      <div class="kv"><span>edge</span><span class="${(mo.edge || 0) >= 0 ? 'up' : 'down'}">${mo.edge == null ? '–' : sgn(mo.edge, 1, '¢')}</span></div>
+      <div class="kv"><span>Prior</span><span>${m.prior && m.prior.n ? `β ${fmt(m.prior.beta, 2)} · ${m.prior.hit == null ? '–' : fmt(m.prior.hit * 100, 0) + '%'} · n ${m.prior.n}` : 'leert…'}</span></div>
+      <div class="kv"><span>ticket</span><span>${tk ? `${tk.side} ${tk.lev || 1}x $${tk.usd}` : '–'}</span></div>
+      <div class="kv"><span>pnl (${h.length})</span><span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 2)}</span></div></div>`; }).join('') || '<span class="muted">De zwerm volgt nog geen markten.</span>';
+}
+$('allChips').onclick = e => { const c = e.target.dataset.c; if (c === undefined) return;
+  if (!c) allState.filter.clear(); else allState.filter.has(c) ? allState.filter.delete(c) : allState.filter.add(c); renderAll(); renderFeed(); };
+// de Swarm PnL staat altijd naast de ring: op het overzicht rechts van de ticker-ring, op de Desk tussen de
+// reactor-ring en de bediening (op smalle schermen onder de reactor, naast The Tape)
+function placePnl(t = $('tabAll').style.display === 'none' ? 'desk' : 'all') {
+  const wide = innerWidth >= 1500, row2 = document.querySelector('.row2');
+  if (t === 'all') $('pfSlot').append($('pnlPanel'));
+  else if (wide) $('pfSlotDesk').append($('pnlPanel'));
+  else row2.prepend($('pnlPanel'));
+  document.querySelector('.reactor').classList.toggle('withpf', t !== 'all' && wide);
+  row2.classList.toggle('solo', !row2.contains($('pnlPanel')));
+  drawBalance(); chart.applyOptions({ width: $('chart').clientWidth });
+}
+addEventListener('resize', () => placePnl());
+document.querySelector('.tabs').onclick = e => { const t = e.target.dataset.tab; if (!t) return;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  $('tabDesk').style.display = t === 'desk' ? '' : 'none'; $('tabAll').style.display = t === 'all' ? '' : 'none';
+  $('tabPnl').style.display = t === 'pnl' ? '' : 'none';
+  if (t === 'pnl') { loadPnl(); return; }
+  placePnl(t);
+  if (t === 'all') { renderAll(); renderFeed(); } else chart.applyOptions({ width: $('chart').clientWidth }); };
+
+$('winSeg').onclick = async e => {
+  const w = +(e.target.dataset.w || 0); if (!w || !st.auto || w === st.auto.window_min) return;
+  const open = st.auto.portfolio ? st.auto.portfolio.open.length : 0;
+  if (open && !confirm(`Venster naar ${winLbl(w)}? De ${open} open positie(s) worden eerst gesloten.`)) return;
+  try { await autoPost('/api/desk/auto', { window_min: w }); } catch (err) { alert(err.message); } pollAuto();
+};
+$('hdMarg').onchange = async () => {
+  const v = +$('hdMarg').value; if (!v) return;
+  try { await autoPost('/api/desk/auto', { max_margin_pct: v }); } catch (err) { alert(err.message); } pollAuto();
+};
+$('edgeSeg').onclick = async e => {
+  const v = e.target.dataset.e; if (v === undefined || !st.auto) return;
+  try { await autoPost('/api/desk/auto', { min_edge: +v }); } catch (err) { alert(err.message); } pollAuto();
+};
+$('apYes').onclick = () => answer(true); $('apNo').onclick = () => answer(false);
+$('autoBtn').onclick = async () => {
+  const on = !st.auto.on;
+  const act = Object.keys(st.auto.coins).filter(c => st.auto.coins[c]).join(', ') || 'geen coin (zet er eerst een aan)';
+  if (on && !confirm(`Zwerm live aanzetten op ${act}? Hij handelt met echt geld op Hyperliquid, ook als deze pagina dicht is.`)) return;
+  try { await autoPost('/api/desk/auto', { on }); if (on && window.Notification && Notification.permission === 'default') Notification.requestPermission(); }
+  catch (e) { alert(e.message); } pollAuto();
+};
+$('coinAuto').onclick = async e => {
+  const c = e.target.closest('button') && e.target.closest('button').dataset.c; if (!c) return;
+  const v = !st.auto.coins[c];
+  if (v && st.auto.live && !confirm(`Zwerm ook laten handelen op ${c}? Echt geld.`)) return;
+  try { await autoPost('/api/desk/auto', { coins: { [c]: v } }); } catch (err) { alert(err.message); } pollAuto();
+};
+$('confBtn').onclick = async () => {
+  const c = !st.auto.confirm;
+  if (!c && !confirm('Bevestigen uitzetten? De agents plaatsen dan zelf echte orders, zonder jouw klik.')) return;
+  try { await autoPost('/api/desk/auto', { confirm: c }); } catch (e) { alert(e.message); } pollAuto();
+};
+$('killBtn').onclick = async () => {
+  st.paused = !st.paused; $('killBtn').textContent = st.paused ? 'Hervatten' : 'Kill switch';
+  if (st.paused) {
+    if (st.auto && st.auto.allowed && st.auto.on) { try { await autoPost('/api/desk/auto', { on: false }); } catch (e) { alert('Kill switch op de server mislukt: ' + e.message); } pollAuto(); }
+    trace('closer', null, 'KILL', 'alles gesloten, desk gepauzeerd');
+  } else trace('closer', null, 'START', 'desk hervat');
+};
+$('setBtn').onclick = () => {
+  for (const [id, k] of [['cfBal', 'bal'], ['cfToken', 'token']]) $(id).value = S[k];
+  refreshStatus(); fillModel(); $('dlg').showModal();
+};
+const MW = ['flow30', 'flow10', 'book', 'bookDeep', 'mom'];
+function fillModel() {
+  const md = st.auto && st.auto.model; if (!md) { $('mdInfo').textContent = 'server niet bereikbaar'; return; }
+  $('mdBeta').value = md.beta0; $('mdK').value = md.k; for (const k of MW) $('mdW_' + k).value = md.w[k];
+  $('mdInfo').textContent = '';
+  if (st.auto.exits) $('lvHold').value = st.auto.exits.hold;
+  if (st.auto.size) { $('lvKelly').value = st.auto.size.kelly; $('lvMarg').value = st.auto.size.max_margin_pct; }
+  if (st.auto.lev) { $('lvMax').value = st.auto.lev.max; $('lvRisk').value = st.auto.lev.risk; $('lvLive').textContent = st.auto.lev.live_max + 'x'; }
+}
+$('lvSave').onclick = async () => {
+  try { await autoPost('/api/desk/auto', { max_lev: +$('lvMax').value, risk_pct: +$('lvRisk').value, kelly_frac: +$('lvKelly').value, max_margin_pct: +$('lvMarg').value, hold_max: +$('lvHold').value }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'hefboom toegepast'; }
+  catch (e) { $('mdInfo').textContent = e.message; }
+};
+async function postModel(model) {
+  try { await autoPost('/api/desk/auto', { model }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'toegepast'; }
+  catch (e) { $('mdInfo').textContent = e.message; }
+}
+$('mdSave').onclick = () => postModel({ beta0: +$('mdBeta').value, k: +$('mdK').value, w: Object.fromEntries(MW.map(k => [k, +$('mdW_' + k).value])) });
+$('mdReset').onclick = () => postModel({ reset: true });
+$('cfClose').onclick = () => $('dlg').close();
+$('cfSave').onclick = () => {
+  S.bal = +$('cfBal').value || DEF.bal;
+  S.token = $('cfToken').value.trim();
+  saveCfg(); refreshStatus(); $('dlg').close();
+};
+$('cfReset').onclick = async () => {
+  S.bal = +$('cfBal').value || S.bal; saveCfg();
+  if (!confirm(`Papierportefeuille (alle tickers) terugzetten naar $${S.bal}? Open papierposities vervallen.`)) return;
+  try { await autoPost('/api/desk/auto', { reset_paper: S.bal }); } catch (e) { return alert(e.message); }
+  st.autoSeq = 0; await pollAuto(); renderMarks(); drawBalance();
+};
+
+renderCoinSeg(); loadScan();
+setCoin(st.coin).then(() => { setInterval(tick, 1000); requestAnimationFrame(drawRing); });
+renderLayers(); setInterval(pollHeat, 3000); placePnl('desk');
+for (const id of ['pfOpen', 'exhaust']) $(id).onclick = e => { const r = e.target.closest('[data-c]'); if (!r) return;
+  if (r.dataset.c !== st.coin) setCoin(r.dataset.c); $('chart').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+renderWinSeg(); refreshStatus(); setInterval(refreshStatus, 60000); pollAuto(); setInterval(pollAuto, 1000);
+wire('prior', 'dashboard verbonden met de server-zwerm');
+</script>
+</body>
+</html>
