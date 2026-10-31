@@ -668,7 +668,7 @@ class Swarm:
             exit_why = {"reason": t.get("exit_reason") or "venster", "maker": bool(t.get("maker_exit")),
                         "conf": round(p_up if sign > 0 else 1 - p_up, 4) if p_up is not None else None,
                         "held": round((time.time() - t.get("filled_at", t["opened"])) / 60, 1),
-                        "move": round(sign * (exit_px - t["entry"]) / t["entry"] / max(m.model.get("sd", 0.0), 1e-5), 2),
+                        "move": round(sign * (exit_px - t["entry"]) / t["entry"] / max((t.get("why") or {}).get("sd", 0) / 1e4 or m.model.get("sd", 0.0), 1e-5), 2),  # in σ bij instap
                         "window": self.window_min, "fees": round(t["usd"] * (c["maker"] + exit_fee) / 1e4, 4)}
             if t["paper"]:
                 self.paper["cash"] += pnl
