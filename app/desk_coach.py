@@ -122,7 +122,14 @@ def run(force: bool = False) -> dict:
                 raise RuntimeError("Geen lokaal taalmodel gevonden op " + ", ".join(CANDIDATES)
                                    + ". Vul de URL en het model in bij Coach-instellingen.")
             cfg = save_config(url=found["url"], model=found["model"])
-        hs = desk_learn.trades(int((time.time() - 86400) * 1000))
+        since = int((time.time() - 86400) * 1000)
+        hs = desk_learn.trades(since)
+        try:  # ook de trades van voor het trade-logboek bestond, uit de bewaarde toestand van de zwerm
+            seen = {(h["t"], h["coin"]) for h in hs}
+            old = json.loads((DATA_DIR / "desk-auto.json").read_text()).get("history", [])
+            hs = sorted(hs + [h for h in old if h.get("t", 0) >= since and (h["t"], h["coin"]) not in seen], key=lambda h: h["t"])
+        except Exception:
+            pass
         learn = next(iter(desk_learn.STATE.values()), {}) if desk_learn.STATE else {}
         t0 = time.time()
         text = _chat(cfg["url"].rstrip("/"), cfg["model"], _prompt(hs, learn))
