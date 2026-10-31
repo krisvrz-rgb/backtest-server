@@ -300,7 +300,10 @@ const AGENTS = [
 const AG = Object.fromEntries(AGENTS.map(a => [a.k, a]));
 const WIN = 300;            // venster van 5 minuten (s)
 const DECIDE_FROM = 45, DECIDE_UNTIL = 200;
-const FEATS = ['flow 10s', 'flow 30s', 'boek', 'boek diep', 'momentum', 'vol', 'trades/s', 'grootte', 'spread', 'eth mee', 'vwap afst', 'score'];
+const FEAT_INFO = ['koopdruk minus verkoopdruk, laatste 10 s', 'koopdruk minus verkoopdruk, laatste 30 s', 'meer bieden dan laten in de top 5 van het boek',
+  'idem over de top 20', 'koersbeweging sinds de opening van het venster, in σ', 'verwachte beweging over 5 min (hoger = geler)', 'aantal trades per seconde',
+  'gemiddelde grootte per trade', 'spread (smaller = geler)', 'beweegt de andere grote coin mee', 'afstand tot de VWAP van vandaag', 'eindscore van de Spotter'];
+const FEATS = ['flow 10s', 'flow 30s', 'boek', 'boek diep', 'momentum', 'vol', 'trades/s', 'grootte', 'spread', 'markt mee', 'vwap afst', 'score'];
 
 // ---------- instellingen en opslag ----------
 const DEF = { bal: 10000, lev: 5, cap: 3, edge: 2, fee: 4.5, usd: 20, token: '', live: false };
@@ -715,12 +718,16 @@ function drawDist(m) {
 
 function drawSpec() {
   const c = $('spec'), [x, w, h] = canvasCtx(c), cols = st.specCols, nF = FEATS.length;
-  const cw = w / 120, ch = h / nF;
+  const LW = 74, cw = (w - LW) / 120, ch = h / nF;  // links een kolom met de naam van elk kenmerk
   const col = v => { const t = clamp((v + 1) / 2, 0, 1); // blauw → groen → geel
     const r = Math.round(t < .5 ? 30 + t * 2 * 20 : 50 + (t - .5) * 2 * 200), g = Math.round(t < .5 ? 60 + t * 2 * 130 : 190 + (t - .5) * 2 * 40), b = Math.round(t < .5 ? 160 - t * 2 * 60 : 100 - (t - .5) * 2 * 80); return `rgb(${r},${g},${b})`; };
-  cols.forEach((cv, i) => cv.forEach((v, j) => { x.fillStyle = col(v); x.fillRect(i * cw, j * ch, Math.ceil(cw), Math.ceil(ch) - 1); }));
+  const x0 = w - cols.length * cw;  // nieuwste kolom rechts
+  cols.forEach((cv, i) => cv.forEach((v, j) => { x.fillStyle = col(v); x.fillRect(x0 + i * cw, j * ch, Math.ceil(cw), Math.ceil(ch) - 1); }));
+  x.font = '600 10px ui-monospace, monospace'; x.textBaseline = 'middle'; x.textAlign = 'left';
+  FEATS.forEach((n, j) => { x.fillStyle = j % 2 ? '#f3f5f9' : '#ffffff'; x.fillRect(0, j * ch, LW - 4, Math.ceil(ch) - 1);
+    x.fillStyle = '#15171c'; x.fillText(n, 4, j * ch + ch / 2); });
   const last = cols[cols.length - 1] || [];
-  $('feat').innerHTML = FEATS.map((n, j) => `<div><span>${n}</span><i style="width:${Math.abs(last[j] || 0) * 100}%;background:${(last[j] || 0) >= 0 ? '#16b364' : '#ef3a5d'}"></i></div>`).join('');
+  $('feat').innerHTML = `<div class="cap" style="display:block;margin-bottom:4px">nu · -1 tot +1</div>` + FEATS.map((f, j) => `<div title="${FEAT_INFO[j]}"><span>${f}</span><i style="width:${Math.abs(last[j] || 0) * 100}%;background:${(last[j] || 0) >= 0 ? '#16b364' : '#ef3a5d'}"></i></div>`).join('');
 }
 
 function drawBook() {
