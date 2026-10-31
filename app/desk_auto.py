@@ -530,7 +530,7 @@ class Swarm:
         margin = min(kelly_notional / lev, cap_margin)
         if 0 < margin * lev < 10 <= cap_margin * lev:  # Hyperliquid wil minstens $10: kleinste order
             margin = 10 / lev
-        usd = margin * lev
+        usd = min(margin * lev, pf["equity"] * .5)  # één positie nooit groter dan de helft van de portefeuille
         if live:
             usd = min(usd, desk.num(cfg, "DESK_MAX_USD", 25), desk.num(cfg, "DESK_ORDER_USD", 20) * lev)
         if usd < 10:  # Hyperliquid weigert orders onder $10
