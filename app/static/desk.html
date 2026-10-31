@@ -45,6 +45,14 @@
   button.btn.danger { color: var(--down); border-color: var(--down); }
   button.btn.go { color: #fff; background: var(--up); border-color: var(--up); }
 
+  .ctlbar { display: flex; align-items: center; gap: 8px; padding: 6px 18px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .ctlbar .cap { margin-left: 6px; }
+  .ctlbar.zw { flex-wrap: nowrap; } .ctlbar.zw .seg { overflow-x: auto; max-width: calc(100vw - 140px); flex: none; }
+  .ctlbar.zw .seg button { white-space: nowrap; }
+  .top .clock { margin-left: 8px; }
+  .alltop { display: grid; grid-template-columns: minmax(0, 1fr) 440px; gap: 12px; align-items: start; }
+  .alltop #pfSlot > .panel { border: 0; box-shadow: none; padding: 0; }
+  @media (max-width: 1250px) { .alltop { grid-template-columns: 1fr; } }
   /* statusregel + live wire */
   .strip { display: flex; gap: 26px; padding: 7px 18px; background: var(--panel); border-bottom: 1px solid var(--border); font: 600 11px var(--mono); flex-wrap: wrap; }
   .strip .pill { color: var(--down); }
@@ -209,23 +217,26 @@
   <div class="brand"><div class="logo"><i></i><i></i></div>
     <div><b>SWARM DESK</b><small>zes agents · één boek · <span id="coinLbl">BTC</span> <span id="winLbl">1u</span> · hyperliquid</small></div></div>
   <div class="nav"><a href="/">Overzicht</a><a href="/tool">Backtest</a><a href="/watchlist">Watchlist</a><a href="/aanraders">Aanraders</a></div>
-  <div class="seg" id="coinSeg"></div>
-  <div class="seg" id="edgeSeg" title="Hoeveel edge (¢ boven break-even na kosten) de zwerm wil zien voor hij instapt. Los (0¢) = instappen zodra het model break-even of beter ziet: meer trades."></div>
-  <div class="seg" id="winSeg" title="Lengte van een venster: zo lang houdt de zwerm een positie maximaal vast"></div>
   <div class="stat"><b class="num" id="hdSpot">–</b><span>spot · hyperliquid</span></div>
   <div class="stat"><b class="num" id="hdPnl">–</b><span>portefeuille pnl</span></div>
   <div class="stat"><b class="num" id="hdTickets">0</b><span>tickets</span></div>
   <div class="grow"></div>
-  <div class="clock num" id="clock">--:--:--</div><span class="cap">utc</span>
   <span class="badge paper" id="modeBadge">PAPER</span>
   <span class="badge sim" id="feedBadge" style="display:none">SIMULATIE</span>
+  <div class="clock num" id="clock">--:--:--</div><span class="cap">utc</span>
+  <button class="btn danger" id="killBtn" title="Sluit alle posities en zet de desk op pauze">Kill switch</button>
+</div>
+<div class="ctlbar">
+  <span class="cap">markt</span><div class="seg" id="coinSeg"></div>
+  <span class="cap">venster</span><div class="seg" id="winSeg" title="Lengte van een venster: zo lang houdt de zwerm een positie maximaal vast"></div>
+  <span class="cap">drempel</span><div class="seg" id="edgeSeg" title="Hoeveel edge (¢ boven break-even na kosten) de zwerm wil zien voor hij instapt. Los (0¢) = instappen zodra het model break-even of beter ziet: meer trades."></div>
+  <div class="grow"></div>
   <button class="btn" id="autoBtn" style="display:none" title="Zet de zwerm op de server aan of uit (echt geld)">Zwerm live</button>
-  <span class="seg" id="coinAuto" style="display:none" title="Op welke coins handelt de zwerm (echt geld)?"></span>
   <button class="btn" id="confBtn" style="display:none" title="Moet elke echte order eerst door jou goedgekeurd worden?">Bevestigen</button>
   <button class="btn" id="themeBtn" title="Donker of licht thema">☾</button>
   <button class="btn" id="setBtn">Instellingen</button>
-  <button class="btn danger" id="killBtn" title="Sluit alle posities en zet de desk op pauze">Kill switch</button>
 </div>
+<div class="ctlbar zw"><span class="cap">zwerm volgt</span><span class="seg" id="coinAuto" style="display:none" title="Klik om een markt aan of uit te zetten voor de zwerm"></span></div>
 <div class="strip">
   <span class="pill">● ZES AGENTS LIVE</span>
   <span>HOLDER <b id="sHolder">–</b></span>
@@ -244,7 +255,8 @@
   <div class="panel">
     <div class="ph"><h2>Alle tickers</h2><span class="sub">de zwerm op de server · elke markt in zijn eigen kleur · klik een ticker om te filteren</span>
       <span class="right" id="allMode">–</span></div>
-    <canvas id="allRing" class="fill" style="height:460px;cursor:pointer" title="Klik een ticker om hem op de Desk te openen"></canvas>
+    <div class="alltop"><canvas id="allRing" class="fill" style="height:460px;cursor:pointer" title="Klik een ticker om hem op de Desk te openen"></canvas>
+      <div id="pfSlot"></div></div>
     <div class="chips" id="allChips"></div>
     <div class="cap" style="margin:-4px 0 6px">kaartjes gesorteerd op sterkte van de score (|score|, long en short), elke 10 s opnieuw</div>
     <div class="cards" id="allCards"></div>
@@ -297,7 +309,7 @@
   </section>
 
   <div class="row2">
-    <section class="panel">
+    <section class="panel" id="pnlPanel">
       <div class="ph"><h2>Swarm PnL</h2><span class="sub">één portefeuille · alle tickers</span><span class="right" id="pnlMode">PAPER</span></div>
       <div class="cap" id="pnlWho">papierportefeuille</div>
       <div class="pnlbig num" id="balance">–</div>
@@ -1215,6 +1227,9 @@ $('allChips').onclick = e => { const c = e.target.dataset.c; if (c === undefined
 document.querySelector('.tabs').onclick = e => { const t = e.target.dataset.tab; if (!t) return;
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   $('tabDesk').style.display = t === 'desk' ? '' : 'none'; $('tabAll').style.display = t === 'all' ? '' : 'none';
+  // de Swarm PnL staat op het overzicht rechts naast de ring, op de Desk op zijn vaste plek
+  if (t === 'all') $('pfSlot').append($('pnlPanel')); else document.querySelector('.row2').prepend($('pnlPanel'));
+  drawBalance();
   if (t === 'all') { renderAll(); renderFeed(); } else chart.applyOptions({ width: $('chart').clientWidth }); };
 
 $('winSeg').onclick = async e => {
