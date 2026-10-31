@@ -173,7 +173,7 @@ def desk_status():
 
 
 @app.get("/api/desk/candles")
-def desk_candles(coin: str = "BTC", interval: str = "1m", minutes: int = Query(180, ge=10, le=1440)):
+def desk_candles(coin: str = "BTC", interval: str = "1m", minutes: int = Query(180, ge=10, le=5000)):
     try:
         return desk.candles(coin, interval, minutes)
     except ValueError as e:

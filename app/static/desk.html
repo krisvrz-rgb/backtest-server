@@ -578,10 +578,13 @@ new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, hei
 // ---------- lagen op de grafiek: 12 kenmerken + liquiditeitsheatmap (zoals Bookmap) ----------
 // Kenmerken komen per minuut uit de pagina zelf (alleen sinds de pagina open is), onderaan de grafiek op een eigen schaal -1..1.
 const FCOL = ['#ff4d6d', '#ff8c42', '#ffd166', '#06d6a0', '#4cc9f0', '#4361ee', '#b5179e', '#f72585', '#90be6d', '#43aa8b', '#c77dff', '#ffffff'];
-const layerOn = new Set(JSON.parse(localStorage.getItem('desk.layers') || '["heat","score"]'));
+const layerOn = new Set(JSON.parse(localStorage.getItem('desk.layers') || '["heat","score","sr","trend"]'));
+if (!localStorage.getItem('desk.layers.sr')) { layerOn.add('sr'); layerOn.add('trend'); localStorage.setItem('desk.layers.sr', '1'); }
 const featSeries = {}; st.featMin = {};
 function renderLayers() {
-  $('layers').innerHTML = `<button data-l="heat" style="--c:#f5a524" class="${layerOn.has('heat') ? 'on' : ''}" title="Waar staan veel kopers en verkopers in het orderboek, door de tijd: hoe feller, hoe meer volume">heatmap boek</button>`
+  $('layers').innerHTML = `<button data-l="sr" style="--c:#c77dff" class="${layerOn.has('sr') ? 'on' : ''}" title="Steun en weerstand: prijzen waar de koers de afgelopen 2 dagen meermaals keerde (dikker = vaker geraakt). De zwerm gebruikt ze ook voor stop-loss, take-profit en om niet tegen een muur in te stappen">steun/weerstand</button>`
+    + `<button data-l="trend" style="--c:#4cc9f0" class="${layerOn.has('trend') ? 'on' : ''}" title="Trendlijnen door de laatste twee toppen en de laatste twee bodems op 15 minuten">trendlijnen</button>`
+    + `<button data-l="heat" style="--c:#f5a524" class="${layerOn.has('heat') ? 'on' : ''}" title="Waar staan veel kopers en verkopers in het orderboek, door de tijd: hoe feller, hoe meer volume">heatmap boek</button>`
     + FEATS.map((f, j) => `<button data-l="${f}" style="--c:${FCOL[j]}" class="${layerOn.has(f) ? 'on' : ''}" title="${FEAT_INFO[j]}">${f}</button>`).join('');
 }
 // de kenmerken als lijnen onderin de grafiek, elke 2 s een punt (-1 onderaan, +1 bovenaan de strook)
@@ -606,7 +609,7 @@ function drawFeats() {
   if (!st.featPts.length) { x.fillStyle = TH.muted; x.font = '11px ui-monospace, monospace'; x.fillText('kenmerken verzamelen… (vanaf het openen van de pagina, elke 2 s)', 8, mid - 6); }
 }
 $('layers').onclick = e => { const l = e.target.dataset.l; if (!l) return;
-  layerOn.has(l) ? layerOn.delete(l) : layerOn.add(l); localStorage.setItem('desk.layers', JSON.stringify([...layerOn])); renderLayers(); syncFeatSeries(); drawHeat(); };
+  layerOn.has(l) ? layerOn.delete(l) : layerOn.add(l); localStorage.setItem('desk.layers', JSON.stringify([...layerOn])); renderLayers(); syncFeatSeries(); drawHeat(); drawSR(); drawTrend(); };
 function pushFeatures(vals, now) {
   st.featPts.push([now / 1000, vals]); if (st.featPts.length > 3600) st.featPts.shift();
   drawFeats();
@@ -748,6 +751,8 @@ function renderMinis() {
       title: e ? `${sgn(t.upnl, 2)} (${sgn(t.upnl / margin * 100, 1)}%)` : 'limiet' });
     miniLine(m, 'sl', e && t.sl && { price: t.sl, color: '#ff4d6d', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `SL ${sgn(pnlAt(t.sl), 2)}` });
     miniLine(m, 'tp', e && t.tp && { price: t.tp, color: '#2fbf4a', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `TP ${sgn(pnlAt(t.tp), 2)}` });
+    const sml = st.auto.markets && st.auto.markets[t.coin], lk = (layerOn.has('sr') ? 1 : 0) + JSON.stringify((sml && sml.levels) || []);
+    if (lk !== m.srKey) { m.srKey = lk; srLines(m.ser, m.sr || (m.sr = []), sml && sml.levels, layerOn.has('sr')); }
     const c = tradeConf(t);
     m.box.querySelector('.mh').innerHTML = `<b style="color:${tColor(t.coin)}">${short(t.coin)}</b><span class="${long ? 'up' : 'down'}">${long ? '▲ long' : '▼ short'} ${t.lev}x</span>
       <span class="muted">${usd(t.usd)}</span>${c == null ? '' : `<span class="muted" title="huidig vertrouwen van het model">${fmt(c * 100, 0)}%</span>`}
@@ -755,6 +760,55 @@ function renderMinis() {
     drawDepth(m.box.querySelector('canvas.depth'), m.host, m.ch, m.ser, m.book);
   });
   for (const k of Object.keys(minis)) if (!seen.has(k)) { minis[k].ch.remove(); minis[k].box.remove(); delete minis[k]; }
+}
+
+// steun en weerstand van de server (draaipunten op 5m over 2 dagen), als stippellijnen
+function srLines(ser, store, levels, on) {
+  for (const l of store.splice(0)) ser.removePriceLine(l);
+  if (!on || !levels) return;
+  for (const l of levels) store.push(ser.createPriceLine({ price: l.px, color: l.n >= 3 ? 'rgba(199,125,255,.85)' : 'rgba(199,125,255,.45)',
+    lineWidth: Math.min(3, l.n), lineStyle: 2, axisLabelVisible: false, title: l.n >= 2 ? `S/R ${l.n}x` : '' }));
+}
+st.srLines = []; st.srKey = '';
+function drawSR() {
+  const sm = srvMarket(), lv = sm && sm.levels, key = (layerOn.has('sr') ? 1 : 0) + JSON.stringify(lv || []);
+  if (key === st.srKey) return; st.srKey = key; srLines(cs, st.srLines, lv, layerOn.has('sr'));
+}
+// trendlijnen: door de laatste twee toppen (dalend) en de laatste twee bodems (stijgend) op 15m, doorgetrokken tot nu
+st.trendS = [];
+function pivots15(k = 4) {
+  const b = []; for (const c of candles) { const t = Math.floor(c.t / 9e5) * 9e5, l = b[b.length - 1];
+    if (l && l.t === t) { l.h = Math.max(l.h, c.h); l.l = Math.min(l.l, c.l); l.c = c.c; } else b.push({ t, h: c.h, l: c.l, c: c.c }); }
+  const hi = [], lo = [];
+  for (let i = k; i < b.length - k; i++) { const w = b.slice(i - k, i + k + 1);
+    if (b[i].h >= Math.max(...w.map(x => x.h))) hi.push([b[i].t, b[i].h]);
+    if (b[i].l <= Math.min(...w.map(x => x.l))) lo.push([b[i].t, b[i].l]); }
+  return { hi, lo };
+}
+function drawTrend() {
+  for (const s of st.trendS.splice(0)) chart.removeSeries(s);
+  if (!layerOn.has('trend') || candles.length < 200) return;
+  const { hi, lo } = pivots15(), end = candles[candles.length - 1].t;
+  const line = ([t1, p1], [t2, p2], col) => {
+    const slope = (p2 - p1) / (t2 - t1), s = chart.addLineSeries({ color: col, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      autoscaleInfoProvider: () => null });
+    s.setData([{ time: t1 / 1000, value: p1 }, { time: Math.floor(end / 60000) * 60, value: p1 + slope * (end - t1) }]); st.trendS.push(s);
+  };
+  if (hi.length >= 2) { const [a, b] = hi.slice(-2); if (b[1] < a[1]) line(a, b, 'rgba(239,58,93,.8)'); }   // dalende toppen: weerstandslijn
+  if (lo.length >= 2) { const [a, b] = lo.slice(-2); if (b[1] > a[1]) line(a, b, 'rgba(22,179,100,.8)'); }  // stijgende bodems: steunlijn
+}
+// afgesloten trades: lijn van instap naar uitstap, groen bij winst en rood bij verlies
+st.tradeS = [];
+function drawTradeSegs() {
+  for (const s of st.tradeS.splice(0)) chart.removeSeries(s);
+  const first = candles.length ? candles[0].t : 0, mt = ms => Math.floor(ms / 60000) * 60;
+  const hs = ((st.auto && st.auto.history) || []).filter(h => h.coin === st.coin && h.opened && h.opened >= first).slice(-40);
+  for (const h of hs) {
+    if (mt(h.t) <= mt(h.opened)) continue;
+    const s = chart.addLineSeries({ color: h.pnl >= 0 ? '#16b364' : '#ef3a5d', lineWidth: 2, lineStyle: 0, priceLineVisible: false, lastValueVisible: false,
+      crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
+    s.setData([{ time: mt(h.opened), value: h.entry }, { time: mt(h.t), value: h.exit }]); st.tradeS.push(s);
+  }
 }
 
 // ---------- trace / wire ----------
@@ -836,7 +890,7 @@ function stopSim() { if (!st.sim) return; st.sim = false; st.winStart = 0; st.la
 async function loadHistory() {
   candles = [];
   try {
-    const r = await fetch(`/api/desk/candles?coin=${st.coin}&minutes=240`);
+    const r = await fetch(`/api/desk/candles?coin=${encodeURIComponent(st.coin)}&minutes=4320`);
     if (!r.ok) throw new Error(await r.text());
     candles = await r.json();
   } catch (e) {
@@ -859,7 +913,7 @@ async function loadHistory() {
   st.vwapPV = 0; st.vwapV = 0;
   const vw = [];  // volume-gewogen gemiddelde prijs sinds 00:00 UTC, als lijn vanaf het begin van de dag
   for (const c of candles) if (c.t >= day) { const tp = (c.h + c.l + c.c) / 3; st.vwapPV += tp * c.v; st.vwapV += c.v; if (st.vwapV) vw.push({ time: c.t / 1000, value: st.vwapPV / st.vwapV }); }
-  vwapS.setData(vw);
+  vwapS.setData(vw); drawTrend();
 }
 
 // ---------- kenmerken ----------
@@ -918,13 +972,15 @@ function renderMarks() {
   const mt = ms => Math.floor(ms / 60000) * 60, out = [];
   const entry = (opened, side, live) => out.push({ time: mt(opened), position: side === 'long' ? 'belowBar' : 'aboveBar',
     color: side === 'long' ? '#16b364' : '#ef3a5d', shape: side === 'long' ? 'arrowUp' : 'arrowDown', text: (live ? 'LIVE ' : '') + side.toUpperCase() });
-  const exit = h => out.push({ time: mt(h.t), position: 'inBar', color: h.pnl >= 0 ? '#16b364' : '#ef3a5d', shape: 'circle', text: sgn(h.pnl, 2) });
+  const exit = h => out.push({ time: mt(h.t), position: h.side === 'long' ? 'aboveBar' : 'belowBar', color: h.pnl >= 0 ? '#16b364' : '#ef3a5d',
+    shape: h.side === 'long' ? 'arrowDown' : 'arrowUp', text: `DICHT ${{ SL: 'stop', TP: 'TP', venster: 'einde' }[h.reason] || h.reason || ''} ${sgn(h.pnl, 2)}` });
   if (st.auto && st.auto.history) for (const h of st.auto.history) if (h.coin === st.coin) { if (h.opened) entry(h.opened, h.side, !h.paper); exit(h); }
   const sm = srvMarket(), tk = sm && sm.ticket;
   if (tk && tk.entry) entry((tk.filled_at || tk.opened) * 1000, tk.side, !tk.paper);
   for (const t of Object.values(st.passes)) out.push({ time: mt(t), position: 'aboveBar', color: '#b8bfcc', shape: 'square', text: 'PASS' });
   const first = candles.length ? candles[0].t / 1000 : 0;
   cs.setMarkers(out.filter(m => m.time >= first).sort((a, b) => a.time - b.time));
+  drawTradeSegs();
 }
 
 // ---------- live: de zwerm op de server ----------
@@ -1209,8 +1265,21 @@ function explain(t, sm) {
       op een verwachte beweging van ${fmt(w.emove, 1)} bp was ${cents(w.be)}, dus edge <b>${sgn(w.edge, 1, '¢')}</b>.</p>
     <p>Kelly: σ ${fmt(w.sd, 0)} bp → hefboom ${w.lev}x${w.want_lev > w.lev ? ` (wilde ${w.want_lev}x, max ${w.lev_cap}x)` : ''}; ${w.kelly}×Kelly wilde ${usd(w.kelly_usd)} positie,
       ${w.capped ? `afgetopt op ${w.max_margin_pct}% marge` : 'binnen de grens'} → ${usd(w.margin, 2)} marge, ${usd(w.usd, 2)} positie.</p>
-    ${t.sl || t.tp ? `<p>Uitstap: stop ${t.sl ? fmt(t.sl, pxD()) : 'uit'}, take-profit ${t.tp ? fmt(t.tp, pxD()) : 'uit'}, anders aan het einde van het venster.</p>` : ''}
+    ${w.wall ? `<p>Ruimte: de eerste ${t.side === 'long' ? 'weerstand' : 'steun'} lag op ${fmt(w.wall, pxD())} (${w.wall_n}x geraakt), ${fmt(w.room, 2)}σ verder. Genoeg ruimte om in te stappen (minstens 0,3σ).</p>` : ''}
+    ${t.sl || t.tp ? `<p>Uitstap: stop ${t.sl ? fmt(t.sl, pxD()) : 'uit'}${t.plan ? ` (${t.plan.sl})` : ''}, take-profit ${t.tp ? fmt(t.tp, pxD()) : 'uit'}${t.plan ? ` (${t.plan.tp})` : ''}.
+      Raakt hij geen van beide, dan sluit hij aan het einde van het venster van ${(st.auto && st.auto.window_min) || '?'} min: daarvoor is de voorspelling gemaakt.</p>` : ''}
     ${now != null ? `<p>Nu: <b class="${now >= .5 ? 'up' : 'down'}">${fmt(now * 100, 0)}%</b> kans dat het zijn kant op gaat${now < .5 ? ': het model twijfelt nu aan deze trade' : ''}.</p>` : ''}`;
+}
+
+// waarom een trade dicht ging, in gewone taal
+function exitStory(h) {
+  const e = h.exit_why || {}, r = e.reason || h.reason, win = h.pnl >= 0;
+  const how = { SL: `de koers raakte de stop-loss${h.plan ? ' (' + h.plan.sl + ')' : ''}`, TP: `de koers raakte de take-profit${h.plan ? ' (' + h.plan.tp + ')' : ''}`,
+    venster: `het venster van ${e.window || '?'} min was voorbij: de voorspelling gold tot dan, dus de zwerm stapte uit ${e.maker ? 'als maker (goedkoop)' : 'met een marktorder'}`,
+    'kill switch': 'jij drukte de kill switch', daglimiet: 'de daglimiet op verlies werd geraakt', 'venster gewijzigd': 'je koos een ander venster' }[r] || r;
+  return `<p><b class="${win ? 'up' : 'down'}">${h.side.toUpperCase()} ${short(h.coin)} ${sgn(h.pnl, 2)}</b> · dicht om ${hhmmss(h.t).slice(0, 5)} omdat ${how}.
+    ${e.held != null ? `Na ${fmt(e.held, 0)} min stond de koers ${sgn(e.move, 2)}σ ${e.move >= 0 ? 'in' : 'tegen'} zijn richting` : ''}${e.conf != null ? `, en het model gaf toen nog ${fmt(e.conf * 100, 0)}% kans voor zijn kant` : ''}.
+    ${e.fees ? `Kosten ${usd(e.fees, 2)}.` : ''} ${h.why ? `Instap: ${cents(h.why.p)} kans tegen ${cents(h.why.be)} break-even, gedragen door ${h.why.parts.slice(0, 2).map(x => x[0]).join(' en ')}.` : ''}</p>`;
 }
 
 function drawLevels() {
@@ -1295,9 +1364,12 @@ function tick() {
   $('tapeStats').textContent = `${fmt(f.tps, 1)} TR/S · VWAP ${fmt(vw, d)} · FLOW ${sgn(f.flow30, 2)}`;
   drawBook(); drawDist(m);
 
-  drawLevels(); drawDepthMain(); renderMinis();
+  drawLevels(); drawDepthMain(); renderMinis(); drawSR();
   const pfT = st.auto && st.auto.portfolio && st.auto.portfolio.open.find(o => o.coin === st.coin);
-  if (now % 2000 < 1000) $('why').innerHTML = explain(pfT, srvMarket());
+  if (now % 2000 < 1000) {
+    const done = ((st.auto && st.auto.history) || []).filter(h => h.coin === st.coin).slice(-3).reverse();
+    $('why').innerHTML = explain(pfT, srvMarket()) + (done.length ? `<div class="cap" style="margin-top:8px">laatste afgesloten trades hier</div>${done.map(exitStory).join('')}` : '');
+  }
 
   // ticket van de server-zwerm voor deze markt: limiet staat, open, of maker-uitstap
   if (srvT) {
@@ -1346,7 +1418,7 @@ async function setCoin(c) {
   $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
   Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, depth: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
   for (const key of ['entryLine', 'slLine', 'tpLine']) if (st[key]) { cs.removePriceLine(st[key]); st[key] = null; }
-  st.passes = {}; st.heat = {}; st.heatStep = 0; st.featPts = [];
+  st.passes = {}; st.heat = {}; st.heatStep = 0; st.featPts = []; st.srKey = '';
   stopSim(); await loadHistory(); connect(); drawBalance(); renderMarks(); syncFeatSeries(); pollHeat();
 
 }
@@ -1429,7 +1501,7 @@ function renderTrades() {
   const hs = (a.history || []).slice().reverse();
   $('trDone').innerHTML = '<tr><th>dicht</th><th>ticker</th><th>kant</th><th>positie</th><th>in → uit</th><th>uitstap</th><th>edge</th><th>pnl</th></tr>'
     + (hs.map(h => `<tr data-c="${h.coin}"><td class="muted">${hhmmss(h.t).slice(0, 5)}</td><td>${tk(h.coin)}${h.paper ? '' : ' <b class="down">LIVE</b>'}</td><td>${side(h.side)} ${h.lev}x</td>
-      <td>${usd(h.usd)}</td><td>${d(h.entry)} → ${d(h.exit)}</td><td>${h.maker_exit ? 'maker' : 'markt'}</td><td>${sgn(h.edge, 1, '¢')}</td>
+      <td>${usd(h.usd)}</td><td>${d(h.entry)} → ${d(h.exit)}</td><td title="${exitStory(h).replace(/<[^>]+>/g, '').replace(/"/g, '').replace(/\s+/g, ' ').trim()}">${{ SL: 'stop-loss', TP: 'take-profit', venster: 'einde venster' }[h.reason] || h.reason || '–'} · ${h.maker_exit ? 'maker' : 'markt'}</td><td>${sgn(h.edge, 1, '¢')}</td>
       <td class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">nog niets afgerekend</td></tr>');
   const n = hs.length, w = hs.filter(h => h.pnl > 0).length, tot = hs.reduce((s, h) => s + h.pnl, 0);
   $('trSum').innerHTML = `${pf.open.length} open · ${n} afgesloten · winrate ${n ? fmt(w / n * 100, 0) + '%' : '–'} · totaal <span class="${tot >= 0 ? 'up' : 'down'}">${sgn(tot, 2)}</span>`;

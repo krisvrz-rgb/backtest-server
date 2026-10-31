@@ -48,6 +48,31 @@ def costs(cfg: dict) -> dict:
     return {"maker": maker, "taker": taker, "round": maker + (maker + taker) / 2}
 
 
+def sr_levels(cs: list[dict], k: int = 6) -> list[dict]:
+    """Steun en weerstand uit 5m-candles: draaipunten (hoogste/laagste van k candles links en rechts),
+    gebundeld als ze dicht bij elkaar liggen. Meer raakpunten = sterker niveau."""
+    if len(cs) < 2 * k + 5:
+        return []
+    rng = sorted(c["h"] - c["l"] for c in cs)
+    tol = max(rng[len(rng) // 2] * .8, cs[-1]["c"] * 2e-4)
+    piv = []
+    for i in range(k, len(cs) - k):
+        win = cs[i - k:i + k + 1]
+        if cs[i]["h"] >= max(c["h"] for c in win):
+            piv.append((cs[i]["h"], cs[i]["t"]))
+        if cs[i]["l"] <= min(c["l"] for c in win):
+            piv.append((cs[i]["l"], cs[i]["t"]))
+    piv.sort()
+    out: list[dict] = []
+    for px, t in piv:
+        if out and px - out[-1]["lo"] <= 1.5 * tol:  # niet laten doorketenen: een niveau is hooguit 1,5 tol breed
+            o = out[-1]
+            o["sum"] += px; o["n"] += 1; o["hi"] = px; o["last"] = max(o["last"], t)
+        else:
+            out.append({"sum": px, "n": 1, "hi": px, "lo": px, "last": t})
+    return [{"px": o["sum"] / o["n"], "n": o["n"], "last": o["last"]} for o in out]
+
+
 class Market:
     """Koersdata, venster en ticket van één markt."""
 
@@ -66,6 +91,8 @@ class Market:
         self.model: dict = {}
         self.ticket: dict | None = None
         self.last_eval = 0
+        self.levels: list[dict] = []
+        self.levels_at = 0.0
 
     def prior_file(self, window: int):
         return DATA_DIR / f"desk-prior-{self.coin.replace(':', '_')}-{window // 60}m.json"
@@ -86,8 +113,16 @@ class Market:
                 time.sleep(2 * 2 ** attempt)
         rs = [math.log(cs[i]["c"] / cs[i - 1]["c"]) for i in range(1, len(cs)) if cs[i - 1]["c"] > 0]
         self.var1 = sum(r * r for r in rs) / max(1, len(rs)) / 300
+        self.levels, self.levels_at = sr_levels(cs), time.time()
         if not self.px and cs:
             self.px = cs[-1]["c"]
+
+    def near_levels(self, px: float) -> tuple[dict | None, dict | None]:
+        """Dichtstbijzijnde steun onder en weerstand boven deze prijs."""
+        below = [l for l in self.levels if l["px"] < px]
+        above = [l for l in self.levels if l["px"] > px]
+        return (max(below, key=lambda l: l["px"]) if below else None,
+                min(above, key=lambda l: l["px"]) if above else None)
 
     def best(self) -> tuple[float, float]:
         if self.book and self.book[0] and self.book[1]:
@@ -316,6 +351,17 @@ class Swarm:
             if el + every > .67 * W:
                 m.decided = True
             return
+        # ruimte tot het volgende niveau: long tegen een weerstand aan of short op een steun koopt weinig beweging
+        sd = max(mo.get("sd", 0.0), 1e-5)
+        sup, res = m.near_levels(m.px)
+        wall = res if mo["side"] == "long" else sup
+        room = abs(wall["px"] - m.px) / m.px / sd if wall else None
+        if room is not None and room < .3:
+            self.log("edge", "PASS", f"{mo['side']} maar {'weerstand' if mo['side'] == 'long' else 'steun'} op {wall['px']:,.6g} "
+                     f"({wall['n']}x geraakt) ligt maar {room:.2f}σ verder, geen ruimte", f"{mo['edge']:+.1f}¢", m.coin)
+            if el + every > .67 * W:
+                m.decided = True
+            return
         m.decided = True
         self.log("edge", "EDGE", f"{mo['side']} {mo['pDir'] * 100:.1f}¢ vs break-even {mo['be'] * 100:.1f}¢",
                  f"{mo['edge']:+.1f}¢", m.coin)
@@ -331,7 +377,9 @@ class Swarm:
         why = {"score": round(f["score"], 3), "parts": [[n_, round(c, 3), round(v, 3)] for n_, c, v in parts],
                "p": round(mo["pDir"], 4), "be": round(mo["be"], 4), "edge": round(mo["edge"], 2), "emove": round(mo["eMove"], 1),
                "beta": round(mo["prior"]["beta"], 3), "n": mo["prior"]["n"], "hit": mo["prior"]["hit"],
-               "cost": costs(cfg)["round"], **self.kelly_info}
+               "cost": costs(cfg)["round"], **self.kelly_info,
+               "room": round(room, 2) if room is not None else None, "wall": round(wall["px"], 8) if wall else None,
+               "wall_n": wall["n"] if wall else None}
         bid, ask = m.best()
         limit = bid if mo["side"] == "long" else ask
         order = {"id": int(now * 1000), "coin": m.coin, "side": mo["side"], "usd": usd, "lev": lev, "edge": mo["edge"],
@@ -352,7 +400,7 @@ class Swarm:
 
     def exit_limits(self) -> tuple[float, float]:
         """Stop-loss en take-profit in σ (van de rest van het venster bij instap); 0 = uit."""
-        return (self.sl_sigma if self.sl_sigma is not None else 2.0, self.tp_sigma if self.tp_sigma is not None else 2.0)
+        return (self.sl_sigma if self.sl_sigma is not None else 1.0, self.tp_sigma if self.tp_sigma is not None else 1.5)
 
     def size_limits(self) -> tuple[float, float]:
         """Kelly-fractie (0,25 = kwart-Kelly) en max marge per trade in % van de portefeuille."""
@@ -445,14 +493,34 @@ class Swarm:
         t = m.ticket
         t.update(state="open", entry=px, filled_at=time.time())
         # stop-loss en take-profit in σ van de rest van het venster, vanaf de instap
-        sl_k, tp_k = self.exit_limits()
-        sd, sign = max(m.model.get("sd", 0.0), 1e-5), 1 if t["side"] == "long" else -1
-        t["sl"] = px * (1 - sign * sl_k * sd) if sl_k else None
-        t["tp"] = px * (1 + sign * tp_k * sd) if tp_k else None
+        self.plan_exits(m, t, px)
         if t["paper"]:
             self.save()
         self.log("taker", "TAKE", f"{'papier' if t['paper'] else 'LIVE'} {t['side']} gevuld als maker @ {px:,.6g}",
                  f"{t['lev']}x ${t['usd']:g}", m.coin)
+
+    def plan_exits(self, m: Market, t: dict, px: float) -> None:
+        """Stop-loss en take-profit: standaard in σ van de rest van het venster. Ligt er een steun of weerstand
+        binnen bereik, dan gaat de stop net voorbij dat niveau en de take-profit net ervoor."""
+        sl_k, tp_k = self.exit_limits()
+        sd, long = max(m.model.get("sd", 0.0), 1e-5), t["side"] == "long"
+        sign = 1 if long else -1
+        sup, res = m.near_levels(px)
+        back, front = (sup, res) if long else (res, sup)
+        plan = {}
+        t["sl"], plan["sl"] = (px * (1 - sign * sl_k * sd), f"{sl_k:g}σ") if sl_k else (None, "uit")
+        t["tp"], plan["tp"] = (px * (1 + sign * tp_k * sd), f"{tp_k:g}σ") if tp_k else (None, "uit")
+        if sl_k and back:
+            d = abs(px - back["px"]) / px / sd
+            if .3 <= d <= sl_k * 1.5:
+                t["sl"] = back["px"] * (1 - sign * .15 * sd)
+                plan["sl"] = f"net voorbij {'steun' if long else 'weerstand'} {back['px']:,.6g} ({back['n']}x geraakt)"
+        if tp_k and front:
+            d = abs(front["px"] - px) / px / sd
+            if .4 <= d <= tp_k:
+                t["tp"] = front["px"] * (1 - sign * .05 * sd)
+                plan["tp"] = f"net voor {'weerstand' if long else 'steun'} {front['px']:,.6g} ({front['n']}x geraakt)"
+        t["plan"] = plan
 
     def manage(self, m: Market, now: float, cfg: dict) -> None:
         """Volgt een open ticket: maker-instap gevuld of verlopen, maker-uitstap op tijd plaatsen."""
@@ -491,10 +559,7 @@ class Swarm:
             return
         if t["state"] in ("open", "exiting") and t.get("entry") and "sl" not in t and m.model.get("sd"):
             # trade van voor de stop-loss-versie: alsnog SL en TP zetten vanaf de instap
-            sl_k, tp_k = self.exit_limits()
-            sign = 1 if t["side"] == "long" else -1
-            t["sl"] = t["entry"] * (1 - sign * sl_k * m.model["sd"]) if sl_k else None
-            t["tp"] = t["entry"] * (1 + sign * tp_k * m.model["sd"]) if tp_k else None
+            self.plan_exits(m, t, t["entry"])
             if t["paper"]:
                 self.save()
         if t["state"] in ("open", "exiting") and m.px:  # stop-loss of take-profit geraakt: meteen dicht met een marktorder
@@ -563,13 +628,20 @@ class Swarm:
                 exit_px, exit_fee = (bid if t["side"] == "long" else ask), c["taker"]
             sign = 1 if t["side"] == "long" else -1
             pnl = t["usd"] * sign * (exit_px - t["entry"]) / t["entry"] - t["usd"] * (c["maker"] + exit_fee) / 1e4
+            p_up = m.model.get("p")
+            exit_why = {"reason": t.get("exit_reason") or "venster", "maker": bool(t.get("maker_exit")),
+                        "conf": round(p_up if sign > 0 else 1 - p_up, 4) if p_up is not None else None,
+                        "held": round((time.time() - t.get("filled_at", t["opened"])) / 60, 1),
+                        "move": round(sign * (exit_px - t["entry"]) / t["entry"] / max(m.model.get("sd", 0.0), 1e-5), 2),
+                        "window": self.window_min, "fees": round(t["usd"] * (c["maker"] + exit_fee) / 1e4, 4)}
             if t["paper"]:
                 self.paper["cash"] += pnl
                 self.paper["curve"].append([int(time.time() * 1000), round(self.paper["cash"], 4)])
             self.history.append({"t": int(time.time() * 1000), "opened": int(t.get("filled_at", t["opened"]) * 1000),
                                  "coin": t["coin"], "side": t["side"], "entry": t["entry"], "exit": exit_px, "usd": t["usd"],
                                  "lev": t["lev"], "pnl": round(pnl, 4), "edge": round(t["edge"], 2), "paper": t["paper"],
-                                 "maker_exit": bool(t.get("maker_exit")), "reason": t.get("exit_reason") or "venster"})
+                                 "maker_exit": bool(t.get("maker_exit")), "reason": t.get("exit_reason") or "venster",
+                                 "why": t.get("why"), "sl": t.get("sl"), "tp": t.get("tp"), "plan": t.get("plan"), "exit_why": exit_why})
             self.log("closer", "AFREK", f"{'papier' if t['paper'] else 'LIVE'} {t['side']} {t['entry']:,.6g} → {exit_px:,.6g} "
                                         f"({'maker' if t.get('maker_exit') else 'markt'})", f"{pnl:+.2f}", m.coin)
             self.save()
@@ -599,6 +671,7 @@ class Swarm:
             self.pending = None
             for m in self.markets.values():
                 if m.ticket and not m.ticket["paper"]:
+                    m.ticket["exit_reason"] = "daglimiet"
                     self.settle(m, cfg)
             self.save()
 
@@ -677,6 +750,19 @@ class Swarm:
             threading.Thread(target=self.feed, daemon=True, name="desk-feed").start()
             threading.Thread(target=self.loop, daemon=True, name="desk-swarm").start()
             threading.Thread(target=self.scanner, daemon=True, name="desk-scan").start()
+            threading.Thread(target=self.level_refresher, daemon=True, name="desk-levels").start()
+
+    def level_refresher(self) -> None:
+        """Steun en weerstand elk uur opnieuw berekenen, één markt per keer (anders 429 van Hyperliquid)."""
+        while True:
+            time.sleep(20)
+            stale = [m for m in list(self.markets.values()) if time.time() - m.levels_at > 3600]
+            for m in stale[:3]:
+                try:
+                    m.levels, m.levels_at = sr_levels(desk.candles(m.coin, "5m", 2 * 24 * 60)), time.time()
+                except Exception:
+                    m.levels_at = time.time() - 3000  # over 10 min opnieuw proberen
+                time.sleep(3)
 
     def add_market(self, coin: str) -> Market:
         """Nieuwe markt (uit de scanner): opwarmen en op de feed zetten, nog niet volgen."""
@@ -763,6 +849,7 @@ class Swarm:
                     raise ValueError(f"Venster moet {', '.join(map(str, WINDOWS))} minuten zijn")
                 for m in self.markets.values():
                     if m.ticket:
+                        m.ticket["exit_reason"] = "venster gewijzigd"
                         self.settle(m, cfg)
                     m.win, m.sample = 0, None  # nieuwe vensters, zonder een half venster te laten leren
                 self.window_min = int(window_min)
@@ -851,6 +938,7 @@ class Swarm:
                     self.pending = None
                     for m in self.markets.values():
                         if m.ticket and not m.ticket["paper"]:
+                            m.ticket["exit_reason"] = "kill switch"
                             self.settle(m, cfg)
                     for c in list(self.coins):  # kill switch: alles dicht
                         try:
@@ -906,13 +994,24 @@ class Swarm:
             self.enter(p, cfg)
             return {"ok": m.ticket is not None}
 
+    @staticmethod
+    def shown_levels(m: Market) -> list[dict]:
+        """Voor de grafiek: de 4 dichtste niveaus erboven en eronder die minstens 2x geraakt werden."""
+        if not m.px:
+            return []
+        lv = [l for l in m.levels if l["n"] >= 2]
+        up = sorted((l for l in lv if l["px"] > m.px), key=lambda l: l["px"])[:4]
+        dn = sorted((l for l in lv if l["px"] < m.px), key=lambda l: -l["px"])[:4]
+        return dn[::-1] + up
+
     def snapshot(self, since: int = 0) -> dict:
         st = desk.status()
         cfg = desk.config()
         with self.lock:
             markets = {c: {"on": self.coins[c], "px": m.px, "open": m.open0, "win": m.win * 1000, "ticket": m.ticket,
                            "model": {k: v for k, v in m.model.items() if k != "prior"},
-                           "prior": m.model.get("prior", {}), "score": m.feat.get("score")}
+                           "prior": m.model.get("prior", {}), "score": m.feat.get("score"),
+                           "levels": self.shown_levels(m)}
                        for c, m in self.markets.items()}
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
