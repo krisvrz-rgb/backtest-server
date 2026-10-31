@@ -866,7 +866,7 @@ function renderPnl() {
       rightPriceScale: { borderVisible: false }, leftPriceScale: { visible: true, borderVisible: false },
       timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false } });
     pnlS.bars = pnlS.chart.addHistogramSeries({ priceScaleId: 'right', priceFormat: { type: 'price', precision: 2, minMove: .01 }, title: 'per periode' });
-    pnlS.cum = pnlS.chart.addLineSeries({ priceScaleId: 'left', color: '#2463eb', lineWidth: 2, priceFormat: { type: 'price', precision: 2, minMove: .01 }, title: 'totaal' });
+    pnlS.cum = pnlS.chart.addLineSeries({ priceScaleId: 'left', color: '#16b364', lineWidth: 3, lineType: 2, priceFormat: { type: 'price', precision: 2, minMove: .01 }, title: 'totaal' });
   }
   const tz = -new Date().getTimezoneOffset() * 60;  // grafiek toont lokale tijd
   const rows = pnlS.rows.filter(r => r[2] === (pnlS.m === 'paper')), b = pnlS.b, agg = new Map();
@@ -876,7 +876,8 @@ function renderPnl() {
   const bars = [], line = [];
   for (const k of ks) { let ts = Math.floor(k / 1000) + tz; if (ts <= last) ts = last + 1; last = ts;
     const a = agg.get(k); cum += a.p;
-    bars.push({ time: ts, value: +a.p.toFixed(4), color: a.p >= 0 ? 'rgba(22,179,100,.85)' : 'rgba(239,58,93,.85)' }); line.push({ time: ts, value: +cum.toFixed(4) }); }
+    bars.push({ time: ts, value: +a.p.toFixed(4), color: a.p >= 0 ? 'rgba(22,179,100,.55)' : 'rgba(239,58,93,.55)' }); line.push({ time: ts, value: +cum.toFixed(4), color: a.p >= 0 ? '#16b364' : '#ef3a5d' }); }
+  for (let i = 0; i < line.length - 1; i++) line[i].color = line[i + 1].value >= line[i].value ? '#16b364' : '#ef3a5d';  // kleur geldt voor het stuk ná het punt
   pnlS.bars.setData(bars); pnlS.cum.setData(line); pnlS.chart.timeScale().fitContent();
   const n = rows.length, w = rows.filter(r => r[1] > 0).length, tot = rows.reduce((s, r) => s + r[1], 0);
   const pos = ks.filter(k => agg.get(k).p > 0).length, name = { h: 'uren', d: 'dagen', w: 'weken', m: 'maanden', y: 'jaren', a: 'trades' }[b];
@@ -1332,10 +1333,39 @@ function pfData() {  // gedeelde portefeuille van de server: papier, of het Hype
   if (live) { let c = 0; curve = [0, ...hs.map(h => (c += h.pnl))]; }
   return { pf, live, hs, curve };
 }
+// portefeuillewaarde als vloeiende lijn: groen waar hij stijgt, rood waar hij daalt; laatste punt = nu (met open trades)
+function drawEquity(x, w, h, d, base) {
+  const lo = Math.min(base, ...d), hi = Math.max(base, ...d), pad = (hi - lo) * .12 || 1;
+  const X = i => 4 + i / (d.length - 1) * (w - 8), Y = v => h - 6 - (v - lo + pad) / (hi - lo + 2 * pad) * (h - 12);
+  x.strokeStyle = TH.border; x.setLineDash([3, 4]); x.beginPath(); x.moveTo(0, Y(base)); x.lineTo(w, Y(base)); x.stroke(); x.setLineDash([]);
+  // zachte vulling tot de startwaarde: groen boven, rood onder
+  for (const [up, col] of [[true, '22,179,100'], [false, '239,58,93']]) {
+    x.save(); x.beginPath(); up ? x.rect(0, 0, w, Y(base)) : x.rect(0, Y(base), w, h); x.clip();
+    const g = x.createLinearGradient(0, up ? 0 : h, 0, Y(base)); g.addColorStop(0, `rgba(${col},.28)`); g.addColorStop(1, `rgba(${col},0)`);
+    x.beginPath(); x.moveTo(X(0), Y(base)); smooth(x, d, X, Y, true); x.lineTo(X(d.length - 1), Y(base)); x.closePath(); x.fillStyle = g; x.fill(); x.restore();
+  }
+  x.lineWidth = 2.2; x.lineCap = 'round';
+  if (TH.dark) { x.shadowBlur = 8; }
+  // vloeiend pad in stukken: van midden tot midden met het punt als controlepunt; kleur per stuk naar de richting
+  const n = d.length, P = i => [X(i), Y(d[i])], M = k => k < 0 ? P(0) : k >= n - 1 ? P(n - 1) : [(X(k) + X(k + 1)) / 2, (Y(d[k]) + Y(d[k + 1])) / 2];
+  const V = k => k < 0 ? d[0] : k >= n - 1 ? d[n - 1] : (d[k] + d[k + 1]) / 2;
+  for (let k = 0; k < n; k++) {
+    const col = V(k) >= V(k - 1) ? '#16b364' : '#ef3a5d'; x.strokeStyle = col; if (TH.dark) x.shadowColor = col;
+    x.beginPath(); x.moveTo(...M(k - 1)); x.quadraticCurveTo(...P(k), ...M(k)); x.stroke();
+  }
+  x.shadowBlur = 0;
+  const last = d[d.length - 1], col = last >= base ? '#16b364' : '#ef3a5d';
+  x.beginPath(); x.arc(X(d.length - 1), Y(last), 4, 0, 7); x.fillStyle = col; x.fill();
+}
+function smooth(x, d, X, Y, cont) {  // vloeiend pad door alle punten (kwadratische curves via de middens)
+  cont ? x.lineTo(X(0), Y(d[0])) : x.moveTo(X(0), Y(d[0]));
+  for (let i = 1; i < d.length - 1; i++) x.quadraticCurveTo(X(i), Y(d[i]), (X(i) + X(i + 1)) / 2, (Y(d[i]) + Y(d[i + 1])) / 2);
+  x.lineTo(X(d.length - 1), Y(d[d.length - 1]));
+}
 function drawBalance() {
   const D = pfData(), c = $('balChart'), [x, w, h] = canvasCtx(c), d = D ? D.curve : [];
   if (d.length < 2) { x.fillStyle = TH.muted; x.font = '12px system-ui'; x.fillText('Verloop verschijnt na het eerste afgerekende ticket', 8, h / 2); }
-  else spark('balChart', d, D.live ? '#ef3a5d' : '#2463eb');
+  else drawEquity(x, w, h, D.live ? d : d.concat([D.pf.equity]), D.live ? 0 : (D.pf.start || d[0]));
   const pb = $('pnlBars'), [y, w2, h2] = canvasCtx(pb), hs = D ? D.hs.slice(-120) : [];
   const mx = Math.max(1e-9, ...hs.map(t => Math.abs(t.pnl))), bw = w2 / Math.max(hs.length, 60);
   hs.forEach((t, i) => { const bh = Math.abs(t.pnl) / mx * (h2 / 2 - 2); y.fillStyle = tColor(t.coin);
