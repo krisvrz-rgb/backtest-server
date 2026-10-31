@@ -663,11 +663,11 @@ function drawHeat() {
   }
 }
 
-// orderboek als balkjes tegen de prijsas: hoe langer de balk, hoe meer volume op dat prijsniveau (rood = verkopers, groen = kopers)
+// orderboek als balkjes aan de linkerkant van de grafiek: hoe langer de balk, hoe meer volume op dat prijsniveau (rood = verkopers, groen = kopers)
 function drawDepth(c, el, ch, ser, levels) {
   c.style.width = el.clientWidth + 'px'; c.style.height = el.clientHeight + 'px';
   const [x, w, h] = canvasCtx(c); if (!levels) return;
-  const axis = ch.priceScale('right').width() || 0, right = w - axis, maxW = Math.min(90, right * .2);
+  const right = w - (ch.priceScale('right').width() || 0), maxW = Math.min(110, right * .22);
   const rows = []; for (const [i, side] of levels.entries()) for (const [p, sz] of side.slice(0, 20)) rows.push([p, sz * p, i]);
   if (!rows.length) return;
   const ps = rows.map(r => r[0]).sort((a, b) => a - b); let step = Infinity;
@@ -677,8 +677,8 @@ function drawDepth(c, el, ch, ser, levels) {
     const y = ser.priceToCoordinate(p); if (y == null || y < 0 || y > h) continue;
     const dy = isFinite(step) ? Math.abs(ser.priceToCoordinate(p - step / 2) - ser.priceToCoordinate(p + step / 2)) : 3;
     const bh = clamp(dy - 1, 1.5, 14), bw = Math.max(2, Math.sqrt(v / mx) * maxW);
-    x.fillStyle = i ? 'rgba(239,58,93,.55)' : 'rgba(22,179,100,.55)';
-    x.fillRect(right - bw, y - bh / 2, bw, bh);
+    x.fillStyle = i ? 'rgba(239,58,93,.45)' : 'rgba(22,179,100,.45)';
+    x.fillRect(0, y - bh / 2, bw, bh);
   }
 }
 function drawDepthMain() { drawDepth($('depth'), $('chart'), chart, cs, st.depth || st.bookL); }
@@ -708,11 +708,11 @@ function miniFor(t) {
 async function miniLoad(m) {
   m.loaded = Date.now();
   try {
-    const r = await fetch(`/api/desk/candles?coin=${encodeURIComponent(m.t.coin)}&minutes=90`); if (!r.ok) return;
+    const r = await fetch(`/api/desk/candles?coin=${encodeURIComponent(m.t.coin)}&minutes=90`); if (!r.ok) { m.err = await r.text(); return; }
     m.candles = (await r.json()).map(c => ({ time: c.t / 1000, open: c.o, high: c.h, low: c.l, close: c.c }));
     const lc = m.candles.length ? m.candles[m.candles.length - 1].close : m.t.px || 1, pr = pxPrec(lc);
     m.ser.applyOptions({ priceFormat: { type: 'price', precision: pr, minMove: Math.pow(10, -pr) } });
-    m.ser.setData(m.candles); m.ch.timeScale().fitContent();
+    m.ser.setData(m.candles); m.ch.timeScale().fitContent(); m.hist = m.candles.length > 0;
   } catch (e) {}
 }
 async function miniBook(m) {
@@ -732,9 +732,10 @@ function renderMinis() {
   const open = (st.auto && st.auto.portfolio && st.auto.portfolio.open) || [], now = Date.now(), seen = new Set();
   open.forEach((t, i) => {
     seen.add(t.coin); const m = miniFor(t); m.t = t; m.box.style.order = i; m.box.classList.toggle('sel', t.coin === st.coin);
-    if (now - m.loaded > 60000) miniLoad(m);
+    if (now - m.loaded > (m.hist ? 60000 : 8000)) miniLoad(m);
     if (now - m.bookAt > 5000 + i * 300) miniBook(m);
     const px = t.px, last = m.candles[m.candles.length - 1];
+    if (px && !last) { const c0 = { time: Math.floor(now / 60000) * 60, open: px, high: px, low: px, close: px }; m.candles.push(c0); m.ser.update(c0); }  // nog geen historiek: toch al de lijnen tonen
     if (px && last) {  // laatste minuut live bijwerken met de prijs van de server
       const tm = Math.floor(now / 60000) * 60;
       const c = tm > last.time ? { time: tm, open: last.close, high: Math.max(last.close, px), low: Math.min(last.close, px), close: px }
