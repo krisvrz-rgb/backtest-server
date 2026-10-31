@@ -186,7 +186,7 @@ def desk_candles(coin: str = "BTC", interval: str = "1m", minutes: int = Query(1
 def desk_scan():
     """Voorselectie van Hyperliquid-perps (ook tokenized aandelen) die het meest bewegen tegenover de kosten."""
     try:
-        return desk.scan_cached()
+        return desk.scan_cached(top=swarm.scan_n)
     except Exception as e:
         raise HTTPException(502, f"Hyperliquid niet bereikbaar: {e}")
 
@@ -232,6 +232,7 @@ class DeskAuto(BaseModel):
     model: dict | None = None
     max_lev: float | None = None
     auto_scan: bool | None = None
+    scan_n: int | None = None
     kelly_frac: float | None = None
     max_margin_pct: float | None = None
     risk_pct: float | None = None
@@ -257,7 +258,7 @@ def desk_auto_set(req: DeskAuto):
             raise PermissionError("Live handel staat uit; alleen markten volgen op papier kan")
         swarm.set(on=req.on, confirm=req.confirm, coins=req.coins,
                   window_min=req.window_min, reset_paper=req.reset_paper, min_edge=req.min_edge, model=req.model,
-                  max_lev=req.max_lev, risk_pct=req.risk_pct, auto_scan=req.auto_scan,
+                  max_lev=req.max_lev, risk_pct=req.risk_pct, auto_scan=req.auto_scan, scan_n=req.scan_n,
                   kelly_frac=req.kelly_frac, max_margin_pct=req.max_margin_pct)
         return swarm.snapshot(swarm.seq)
     except PermissionError as e:

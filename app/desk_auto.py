@@ -153,6 +153,7 @@ class Swarm:
         self.min_edge: float | None = saved.get("min_edge")
         self.auto_scan: bool = bool(saved.get("auto_scan"))  # elke 5 min de top 25 van de scanner volgen
         self.scan_at = 0.0
+        self.scan_n: int = int(saved.get("scan_n", 25))  # 25, 50 of 0 = alle liquide markten met ratio ≥ 1
         self.drop: set = set()  # uit de top 25 gevallen, maar nog een open trade: gaat uit zodra die afgerekend is
         self.max_lev: float | None = saved.get("max_lev")    # None = DESK_MAX_LEV; live nooit boven DESK_MAX_LEV
         self.risk_pct: float | None = saved.get("risk_pct")  # None = DESK_RISK_PCT
@@ -193,7 +194,7 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac,
+                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac,
                                           "max_margin_pct": self.max_margin_pct, "model": MODEL, "paper": self.paper, "history": list(self.history),
                                           "tickets": [m.ticket for m in self.markets.values() if m.ticket and m.ticket["paper"]]}))
 
@@ -655,7 +656,7 @@ class Swarm:
                 continue
             self.scan_at = time.time()
             try:
-                top = [r["coin"] for r in desk.scan_cached(max_age=290)["rows"][:25]]
+                top = [r["coin"] for r in desk.scan_cached(max_age=290, top=self.scan_n)["rows"]]
             except Exception as e:
                 self.log("spotter", "FOUT", f"scanner mislukt: {e}")
                 continue
@@ -684,7 +685,7 @@ class Swarm:
                     self.coins[c] = False
                     if self.pending and self.pending["coin"] == c:
                         self.pending = None
-                self.log("spotter", "TOP 25", f"scanner: {len(top)} markten gevolgd · {len(aan)} erbij"
+                self.log("spotter", "TOP 25", f"scanner ({'alle liquide' if not self.scan_n else 'top ' + str(self.scan_n)}): {len(top)} markten gevolgd · {len(aan)} erbij"
                          + (f" ({', '.join(aan[:8])}{'…' if len(aan) > 8 else ''})" if aan else "")
                          + f" · {len(uit)} eraf" + (f" ({', '.join(uit[:8])}{'…' if len(uit) > 8 else ''})" if uit else "")
                          + (f" · {len(later)} gaan uit na hun trade ({', '.join(later)})" if later else ""))
@@ -692,7 +693,7 @@ class Swarm:
 
     def set(self, on: bool | None = None, confirm: bool | None = None, coins: dict | None = None,
             window_min: int | None = None, reset_paper: float | None = None, min_edge: float | None = None,
-            model: dict | None = None, auto_scan: bool | None = None, max_lev: float | None = None, risk_pct: float | None = None,
+            model: dict | None = None, auto_scan: bool | None = None, scan_n: int | None = None, max_lev: float | None = None, risk_pct: float | None = None,
             kelly_frac: float | None = None, max_margin_pct: float | None = None) -> None:
         """Markten volgen, venster en papier mogen altijd; aan/uit en bevestigen vragen live-toestemming."""
         if on is not None or confirm is not None:
@@ -727,6 +728,11 @@ class Swarm:
                     raise ValueError("Drempel moet tussen 0¢ en 10¢ liggen")
                 self.min_edge = float(min_edge)
                 self.log("edge", "DREMPEL", f"edge-drempel {self.min_edge:+g}¢ boven break-even")
+            if scan_n is not None and int(scan_n) != self.scan_n:
+                if int(scan_n) not in (25, 50, 0):
+                    raise ValueError("Scanner: top 25, top 50 of 0 (alle liquide markten)")
+                self.scan_n, self.scan_at = int(scan_n), 0.0
+                self.log("spotter", "AUTO", "scanner volgt " + ("alle liquide markten met ratio ≥ 1" if not self.scan_n else f"de top {self.scan_n}"))
             if auto_scan is not None and auto_scan != self.auto_scan:
                 self.auto_scan, self.scan_at = auto_scan, 0.0
                 self.drop.clear()
@@ -834,7 +840,7 @@ class Swarm:
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
                 "coins": self.coins, "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "model": MODEL,
-                "auto_scan": self.auto_scan, "scan_at": int(self.scan_at * 1000),
+                "auto_scan": self.auto_scan, "scan_n": self.scan_n, "scan_at": int(self.scan_at * 1000),
                 "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)),
                 "size": dict(zip(("kelly", "max_margin_pct"), self.size_limits())), "windows": WINDOWS, "costs": costs(cfg),
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,

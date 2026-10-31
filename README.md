@@ -133,7 +133,8 @@ aandelen (coinnamen als `xyz:TSLA`). Voorselectie: minstens $2M dagvolume en spr
 markten meet hij de 5-minutenbeweging (σ) van de laatste 12 uur en sorteert op **ratio** = σ ÷ kosten per ronde.
 Onder 1 eten de fees de beweging op. "+ Volg" zet een markt bij de coins bovenaan, "Zwerm" laat de server-zwerm
 erop handelen. "Zwerm: top 25 aan" en "Zwerm: alles uit" zetten alles in één keer; met
-**Auto top 25** scant de server elke 5 minuten opnieuw en volgt de zwerm precies de top 25 (wie eruit valt krijgt
+**Auto** scant de server elke 5 minuten opnieuw en volgt de zwerm precies de top 25, top 50 of alle liquide markten
+waar de beweging de kosten dekt (ratio ≥ 1, keuze naast de knop) (wie eruit valt krijgt
 geen nieuwe trades, een open trade loopt af). Een markt uitzetten sluit geen open trade; de kill switch wel. Let op: HIP-3-markten kunnen hogere fees hebben dan de 4,5 bp waarmee de desk standaard rekent.
 
 Standaard is alles papier (de gedeelde papierportefeuille op de server). Echt geld loopt via de **zwerm op de server**

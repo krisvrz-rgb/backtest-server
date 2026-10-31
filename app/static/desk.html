@@ -353,9 +353,10 @@
       <span class="right"><span id="scanInfo">nog niet gescand</span>
       <select id="scanFilter" style="margin-left:8px"><option value="all">alles</option><option value="crypto">crypto</option><option value="stock">aandelen e.d. (HIP-3)</option></select>
       <button class="btn" id="scanBtn">Scannen</button>
-      <button class="btn" id="scanAllOn" title="De zwerm volgt alle markten uit deze scan">Zwerm: top 25 aan</button>
+      <button class="btn" id="scanAllOn" title="De zwerm volgt alle markten uit deze scan">Zwerm: deze lijst aan</button>
       <button class="btn" id="scanAllOff" title="De zwerm volgt geen enkele markt meer; open trades lopen af (kill switch sluit meteen)">Zwerm: alles uit</button>
-      <button class="btn" id="scanAuto" title="Elke 5 minuten scant de server opnieuw en volgt de zwerm precies de top 25; wie eruit valt krijgt geen nieuwe trades, open trades lopen af">Auto top 25: UIT</button></span></div>
+      <select id="scanN" title="Hoeveel markten de scanner kiest"><option value="25">top 25</option><option value="50">top 50</option><option value="0">alle liquide (ratio ≥ 1)</option></select>
+      <button class="btn" id="scanAuto" title="Elke 5 minuten scant de server opnieuw en volgt de zwerm precies de top 25; wie eruit valt krijgt geen nieuwe trades, open trades lopen af">Auto: UIT</button></span></div>
     <div style="overflow:auto"><table class="scan"><thead><tr><th>#</th><th>markt</th><th>prijs</th><th>24u</th><th>volume 24u</th><th>spread</th><th>σ 5m</th>
       <th title="σ 5m gedeeld door de kosten per ronde. Onder 1 eten de fees de beweging op; boven 1,5 is er ruimte.">ratio</th><th>funding/u</th><th></th></tr></thead>
       <tbody id="scanBody"></tbody></table></div>
@@ -822,7 +823,8 @@ function renderAuto() {
     $('coinAuto').innerHTML = Object.entries(a.coins).map(([c, v]) => `<button data-c="${c}" class="${v ? 'on' : ''}" title="${c}: zwerm ${v ? 'volgt' : 'volgt niet'}">${v ? '●' : '○'} ${short(c)}</button>`).join('');
     renderAll();
   } else $('coinAuto').style.display = 'none';
-  if (a) { $('scanAuto').textContent = 'Auto top 25: ' + (a.auto_scan ? 'AAN' : 'UIT'); $('scanAuto').classList.toggle('danger', !!a.auto_scan); }
+  if (a && document.activeElement !== $('scanN')) $('scanN').value = String(a.scan_n ?? 25);
+  if (a) { $('scanAuto').textContent = 'Auto: ' + (a.auto_scan ? 'AAN' : 'UIT'); $('scanAuto').classList.toggle('danger', !!a.auto_scan); }
   $('autoBtn').style.display = ok ? '' : 'none'; $('confBtn').style.display = ok ? '' : 'none';
   if (!ok) { $('approve').classList.remove('on'); return; }
   $('autoBtn').textContent = 'Zwerm live: ' + (a.on ? 'AAN' : 'UIT');
@@ -1192,6 +1194,10 @@ $('scanAuto').onclick = async () => { if (!st.auto) return; const on = !st.auto.
   if (on && st.auto.live && !confirm('Auto top 25 aan? De zwerm kiest dan elke 5 min zelf op welke markten hij met echt geld handelt.')) return;
   try { await autoPost('/api/desk/auto', { auto_scan: on }); } catch (err) { alert(err.message); } await pollAuto(); };
 setInterval(() => { if (st.auto && st.auto.auto_scan) loadScan(); }, 300000);
+$('scanN').onchange = async () => {
+  try { await autoPost('/api/desk/auto', { scan_n: +$('scanN').value }); } catch (err) { alert(err.message); }
+  await pollAuto(); loadScan();
+};
 $('scanBtn').onclick = loadScan; $('scanFilter').onchange = renderScan;
 $('scanBody').onclick = async e => {
   const v = e.target.dataset.view, z = e.target.dataset.swarm;

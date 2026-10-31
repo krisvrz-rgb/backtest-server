@@ -175,12 +175,13 @@ def universe(max_age: float = 600) -> dict:
     return _universe["assets"]
 
 
-_scan_cache: dict = {"t": 0, "rows": []}
+_scan_cache: dict = {"t": 0, "rows": [], "top": 25}
 
 
-def scan_cached(max_age: float = 300) -> dict:
-    if time.time() - _scan_cache["t"] > max_age or not _scan_cache["rows"]:
-        _scan_cache.update(t=time.time(), rows=scan())
+def scan_cached(max_age: float = 300, top: int = 25) -> dict:
+    """top = 0: alle liquide markten waar de beweging de kosten dekt (ratio ≥ 1)."""
+    if time.time() - _scan_cache["t"] > max_age or not _scan_cache["rows"] or _scan_cache["top"] != top:
+        _scan_cache.update(t=time.time(), rows=scan(top), top=top)
     return {"updated": int(_scan_cache["t"] * 1000), "rows": _scan_cache["rows"]}
 
 
@@ -192,11 +193,15 @@ def scan(top: int = 25, min_volume: float = 2e6) -> list[dict]:
     cands = [a for a in universe().values() if a["volume"] >= min_volume and (a["spread"] is None or a["spread"] < 8)]
     cands.sort(key=lambda a: a["volume"], reverse=True)
     out = []
-    for a in cands[:60]:  # alleen de 60 grootste markten krijgen een volatiliteitsmeting
+    measure = cands if top == 0 else cands[:max(60, top * 2)]  # de grootste markten krijgen een volatiliteitsmeting
+    for a in measure:
         try:
             cs = candles(a["coin"], "5m", 12 * 60)
         except Exception:
             continue
+        finally:
+            if len(measure) > 60:
+                time.sleep(.15)  # gespreid, anders 429 van Hyperliquid
         rs = [math.log(cs[i]["c"] / cs[i - 1]["c"]) for i in range(1, len(cs)) if cs[i - 1]["c"] > 0]
         if len(rs) < 24:
             continue
@@ -205,7 +210,7 @@ def scan(top: int = 25, min_volume: float = 2e6) -> list[dict]:
         out.append({**a, "sigma5m": sigma, "cost": tot_cost, "ratio": sigma / tot_cost,
                     "stock": a["dex"] != "hyperliquid"})
     out.sort(key=lambda a: a["ratio"], reverse=True)
-    return out[:top]
+    return [a for a in out if a["ratio"] >= 1] if top == 0 else out[:top]
 
 
 def _coin(coin: str) -> str:
