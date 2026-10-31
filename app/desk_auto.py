@@ -157,6 +157,7 @@ def bt_bias(coin: str) -> dict | None:
             "period": r.get("period")}
 
 
+POOL: dict = {}  # β over alle markten samen, per venster: de startwaarde waar elke markt naartoe krimpt
 LEARN = {"on": True}  # geleerde gewichten gebruiken als ze beter zijn dan de vaste (aan/uit vanaf /desk)
 
 
@@ -303,6 +304,9 @@ class Market:
     def prior(self, window: int) -> dict:
         a = self.samples(window)
         n, beta0, k = len(a), MODEL["beta0"], MODEL["k"]
+        pool = POOL.get(window)
+        if pool and pool["n"] >= 100:  # genoeg vensters over alle markten: krimp naar wat ze samen tonen, niet naar een gok
+            beta0 = pool["beta"]
         sy = sum(s["s"] * s["y"] for s in a)
         ss = sum(s["s"] ** 2 for s in a)
         hit = sum(1 for s in a if (s["s"] > 0) == (s["y"] > 0)) / n if n else None
@@ -1165,11 +1169,24 @@ class Swarm:
                 self.log("prior", "FOUT", f"strategieën op het venster mislukt: {e}")
             time.sleep(30)
 
+    def pool_beta(self) -> None:
+        """Eén β uit de LEER-vensters van alle markten samen (honderden in plaats van tien per markt)."""
+        W = self.window
+        a = [x for m in list(self.markets.values()) for x in m.samples(W)]
+        if not a:
+            return
+        sy, ss = sum(x["s"] * x["y"] for x in a), sum(x["s"] ** 2 for x in a)
+        hit = sum(1 for x in a if (x["s"] > 0) == (x["y"] > 0)) / len(a)
+        b = _clamp(sy / ss, -BETA_MAX, BETA_MAX) if ss > 1e-9 else 0.0
+        POOL[W] = {"beta": b, "n": len(a), "hit": hit}
+        self.log("prior", "POOL", f"β over alle markten {b:+.3f} uit {len(a)} vensters, {hit * 100:.1f}% juist")
+
     def trainer(self) -> None:
         """Elk uur de gewichten opnieuw leren uit de LEER-vensters van het huidige venster."""
         time.sleep(60)
         while True:
             try:
+                self.pool_beta()
                 before = desk_learn.STATE.get(str(self.window), {}).get("groups", {})
                 res = desk_learn.train(self.window)
                 for g, i in res["groups"].items():
