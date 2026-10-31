@@ -125,7 +125,9 @@ class Swarm:
         saved = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
         self.on: bool = saved.get("on", False)
         self.confirm: bool = saved.get("confirm", True)
-        self.coins: dict[str, bool] = {c: saved.get("coins", {}).get(c, c == saved.get("coin", "BTC")) for c in desk.COINS}
+        self.coins: dict[str, bool] = {c: c == "BTC" for c in desk.COINS}
+        self.coins.update(saved.get("coins", {}))
+        self.resubscribe = False
         self.day: str = saved.get("day", "")
         self.day_start: float | None = saved.get("day_start")
         self.halted: str | None = saved.get("halted") if saved.get("day") == _today() else None
@@ -133,7 +135,7 @@ class Swarm:
         self.trace: deque = deque(maxlen=300)
         self.seq = 0
         self.history: deque = deque(saved.get("history", []), maxlen=200)
-        self.markets = {c: Market(c) for c in desk.COINS}
+        self.markets = {c: Market(c) for c in self.coins}
         self.pending: dict | None = None
         self.errors = 0
         self.feed_ok = False
@@ -158,11 +160,12 @@ class Swarm:
         while True:
             try:
                 with connect(WS_URL, open_timeout=15, close_timeout=5) as ws:
-                    for coin in desk.COINS:
+                    self.resubscribe = False
+                    for coin in list(self.markets):
                         for sub in ({"type": "trades", "coin": coin}, {"type": "l2Book", "coin": coin}):
                             ws.send(json.dumps({"method": "subscribe", "subscription": sub}))
                     last_ping = time.time()
-                    while True:
+                    while not self.resubscribe:  # nieuwe coin erbij: opnieuw verbinden met de nieuwe lijst
                         if time.time() - last_ping > 30:
                             ws.send('{"method":"ping"}')
                             last_ping = time.time()
@@ -274,7 +277,7 @@ class Swarm:
             return
         self.last_account = time.time()
         try:
-            acc = desk.account()
+            acc = desk.account([desk.dex_of(c) for c in self.coins])
         except Exception:
             return
         if not acc.get("connected"):
@@ -297,9 +300,9 @@ class Swarm:
     def close_orphans(self, cfg: dict) -> None:
         """Na een herstart: open posities op het aparte sub-account horen bij de zwerm en gaan dicht."""
         try:
-            acc = desk.account()
+            acc = desk.account([desk.dex_of(c) for c in self.coins])
             for p in acc.get("positions", []):
-                if p["coin"] in desk.COINS and p["size"]:
+                if p["coin"] in self.coins and p["size"]:
                     if cfg.get("HL_SUBACCOUNT"):
                         desk.do_close(cfg, p["coin"], by="zwerm-herstart")
                         self.log("closer", "HERSTEL", "achtergebleven positie gesloten", coin=p["coin"])
@@ -371,6 +374,15 @@ class Swarm:
         with self.lock:
             for coin, val in (coins or {}).items():
                 coin = desk._coin(coin)
+                if coin not in self.markets:  # nieuwe markt uit de scanner
+                    m = Market(coin)
+                    try:
+                        m.warm_up()
+                    except Exception as e:
+                        self.log("prior", "FOUT", f"opwarmen mislukt: {e}", coin=coin)
+                    self.markets[coin] = m
+                    self.coins[coin] = False
+                    self.resubscribe = True
                 if bool(val) != self.coins[coin]:
                     self.coins[coin] = bool(val)
                     m = self.markets[coin]
@@ -390,7 +402,7 @@ class Swarm:
                     for m in self.markets.values():
                         if m.ticket:
                             self.settle(m, cfg)
-                    for c in desk.COINS:  # kill switch: alles dicht
+                    for c in list(self.coins):  # kill switch: alles dicht
                         try:
                             desk.do_close(cfg, c, by="kill")
                         except Exception as e:

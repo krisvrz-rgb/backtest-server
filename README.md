@@ -106,6 +106,12 @@ van de openbare Hyperliquid-websocket; zonder verbinding valt de pagina terug op
 - **Edge** vergelijkt de winkans met de break-even na kosten (standaard taker 4,5 bp per kant + 1 bp slippage).
 - **Kelly** bepaalt de grootte (kwart-Kelly, afgetopt), **Taker** voert uit, **Closer** rekent af bij sluiting.
 
+**Scanner.** Onderaan `/desk` staat een scanner over alle Hyperliquid-perps, ook de HIP-3-beurzen met tokenized
+aandelen (coinnamen als `xyz:TSLA`). Voorselectie: minstens $2M dagvolume en spread onder 8 bp; van de 60 grootste
+markten meet hij de 5-minutenbeweging (σ) van de laatste 12 uur en sorteert op **ratio** = σ ÷ kosten per ronde.
+Onder 1 eten de fees de beweging op. "+ Volg" zet een markt bij de coins bovenaan, "Zwerm" laat de server-zwerm
+erop handelen. Let op: HIP-3-markten kunnen hogere fees hebben dan de 4,5 bp waarmee de desk standaard rekent.
+
 Standaard is alles papier (saldo per coin in de browser). Echt geld loopt via de **zwerm op de server**
 (`app/desk_auto.py`): die handelt door als de pagina dicht is.
 

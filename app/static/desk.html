@@ -137,6 +137,10 @@
   .feat div { display: grid; grid-template-columns: 60px 1fr; gap: 5px; align-items: center; }
   .feat i { height: 5px; border-radius: 2px; display: block; }
 
+  table.scan { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.scan th { text-align: left; font: 600 10px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  table.scan td { padding: 4px 8px; border-bottom: 1px dashed var(--border); white-space: nowrap; }
+  table.scan .btn { padding: 3px 8px; font-size: 11px; }
   .foot { position: sticky; bottom: 0; background: #15171c; color: #cfd3db; font: 11px var(--mono); padding: 6px 18px; display: flex; gap: 26px; flex-wrap: wrap; }
   .foot b { color: #fff; }
 
@@ -156,7 +160,7 @@
   <div class="brand"><div class="logo"><i></i><i></i></div>
     <div><b>SWARM DESK</b><small>zes agents · één boek · <span id="coinLbl">BTC</span> 5m · hyperliquid</small></div></div>
   <div class="nav"><a href="/">Overzicht</a><a href="/tool">Backtest</a><a href="/watchlist">Watchlist</a><a href="/aanraders">Aanraders</a></div>
-  <div class="seg" id="coinSeg"><button data-c="BTC" class="on">BTC</button><button data-c="ETH">ETH</button><button data-c="SOL">SOL</button></div>
+  <div class="seg" id="coinSeg"></div>
   <div class="stat"><b class="num" id="hdSpot">–</b><span>spot · hyperliquid</span></div>
   <div class="stat"><b class="num" id="hdPnl">–</b><span>swarm pnl</span></div>
   <div class="stat"><b class="num" id="hdTickets">0</b><span>tickets</span></div>
@@ -243,6 +247,17 @@
       </div>
     </section>
   </div>
+
+  <section class="panel">
+    <div class="ph"><h2>The Scanner</h2><span class="sub">alle Hyperliquid-perps · ook tokenized aandelen · gesorteerd op beweging tegenover kosten</span>
+      <span class="right"><span id="scanInfo">nog niet gescand</span>
+      <select id="scanFilter" style="margin-left:8px"><option value="all">alles</option><option value="crypto">crypto</option><option value="stock">aandelen e.d. (HIP-3)</option></select>
+      <button class="btn" id="scanBtn">Scannen</button></span></div>
+    <div style="overflow:auto"><table class="scan"><thead><tr><th>#</th><th>markt</th><th>prijs</th><th>24u</th><th>volume 24u</th><th>spread</th><th>σ 5m</th>
+      <th title="σ 5m gedeeld door de kosten per ronde. Onder 1 eten de fees de beweging op; boven 1,5 is er ruimte.">ratio</th><th>funding/u</th><th></th></tr></thead>
+      <tbody id="scanBody"></tbody></table></div>
+    <p class="muted" style="font-size:11px;margin:6px 0 0">Voorselectie: minstens $2M volume per dag en spread onder 8 bp; van de 60 grootste markten wordt de 5-minutenbeweging van de laatste 12 uur gemeten. <b>ratio</b> = σ 5m ÷ kosten per ronde: hoe hoger, hoe minder de fees de edge opeten. "+ Volg" zet de markt bovenaan bij de coins, "Zwerm" laat de server-zwerm erop handelen.</p>
+  </section>
 
   <div class="row3">
     <section class="panel">
@@ -339,8 +354,11 @@ const fmt = (v, d = 2) => v == null || !isFinite(v) ? '–' : v.toLocaleString('
 const usd = (v, d = 0) => (v < 0 ? '-$' : '$') + fmt(Math.abs(v), d);
 const sgn = (v, d = 2, suf = '') => (v >= 0 ? '+' : '') + fmt(v, d) + suf;
 const cents = p => (p * 100).toFixed(1) + '¢';
-const pxD = () => st.coin === 'BTC' ? 0 : 2;
-const SIM_PX = { BTC: 81500, ETH: 3900, SOL: 190 };
+const pxD = () => st.px >= 10000 ? 0 : st.px >= 100 ? 2 : st.px >= 1 ? 3 : 5;
+const SIM_PX = new Proxy({ BTC: 81500, ETH: 3900, SOL: 97 }, { get: (o, k) => o[k] || 100 });
+const BASE = ['BTC', 'ETH', 'SOL'];
+const watch = () => JSON.parse(localStorage.getItem('desk.watch') || '[]');
+const short = c => c.includes(':') ? c.split(':')[1] : c;
 const chainCoin = () => st.coin === 'ETH' ? 'BTC' : 'ETH';  // CHAIN: beweegt de rest van de markt mee?
 const hhmmss = t => new Date(t).toISOString().slice(11, 19);
 function erf(x) { const t = 1 / (1 + .3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - .284496736) * t + .254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; }
@@ -440,7 +458,7 @@ function startSim() {
     const n = 1 + Math.floor(Math.random() * 6);
     for (let i = 0; i < n; i++) {
       const r = drift / n + (Math.random() - .5) * 2.4e-4 / Math.sqrt(n), px = st.px * Math.exp(r);
-      onTrade(px, Math.random() ** 3 * (st.coin === 'BTC' ? 2 : st.coin === 'ETH' ? 30 : 600), r > 0 || Math.random() < .3, Date.now());
+      onTrade(px, Math.random() ** 3 * (st.coin === 'BTC' ? 2 : st.coin === 'ETH' ? 30 : 600 / Math.max(1, SIM_PX[st.coin] / 100)), r > 0 || Math.random() < .3, Date.now());
     }
     st.eth *= Math.exp(drift / 2 + (Math.random() - .5) * 2e-4);
     const step = st.px * 1e-5, bids = [], asks = [];
@@ -616,7 +634,8 @@ async function pollAuto() {
       if (['TAKE', 'AFREK', 'STOP', 'AAN', 'UIT'].includes(t.act)) wire(ag, 'live: ' + t.text, t.val || null);
     }
     const changed = a.trace.some(t => ['TAKE', 'AFREK'].includes(t.act));
-    st.autoSeq = a.seq; st.auto = a; if (changed) renderMarks();
+    const coinsChanged = JSON.stringify(a.coins) !== JSON.stringify(st.auto && st.auto.coins);
+    st.autoSeq = a.seq; st.auto = a; if (changed) renderMarks(); if (coinsChanged && scanRows.length) renderScan();
   } catch (e) { st.auto = null; }
   renderAuto();
 }
@@ -860,14 +879,55 @@ async function setCoin(c) {
   if (st.ticket && st.ticket.live) return alert('Er staat een live positie open; wacht tot die gesloten is.');
   if (st.ticket) settle(Date.now());
   st.coin = c; localStorage.setItem('desk.coin', c);
-  document.querySelectorAll('#coinSeg button').forEach(b => b.classList.toggle('on', b.dataset.c === c));
+  renderCoinSeg();
   $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
   Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
   st.passes = [];
   stopSim(); await loadHistory(); connect(); drawBalance(); renderMarks();
 
 }
+function renderCoinSeg() {
+  const list = [...new Set([...BASE, ...watch(), st.coin])];
+  $('coinSeg').innerHTML = list.map(c => `<button data-c="${c}" class="${c === st.coin ? 'on' : ''}" title="${c}">${short(c)}</button>`).join('');
+}
 $('coinSeg').onclick = e => e.target.dataset.c && e.target.dataset.c !== st.coin && setCoin(e.target.dataset.c);
+
+// ---------- scanner: alle Hyperliquid-perps, ook tokenized aandelen ----------
+let scanRows = [];
+async function loadScan() {
+  $('scanInfo').textContent = 'scannen… (kan 20 s duren)';
+  try {
+    const r = await fetch('/api/desk/scan'); const j = await r.json(); if (!r.ok) throw new Error(j.detail);
+    scanRows = j.rows; $('scanInfo').textContent = `bijgewerkt ${hhmmss(j.updated)} UTC · ${scanRows.length} markten`;
+  } catch (e) { $('scanInfo').textContent = 'scanner mislukt: ' + e.message; }
+  renderScan();
+}
+function renderScan() {
+  const live = st.auto && st.auto.allowed, w = watch(), filt = $('scanFilter').value;
+  const rows = scanRows.filter(a => filt === 'all' || (filt === 'stock') === a.stock);
+  const big = v => v >= 1e9 ? fmt(v / 1e9, 1) + 'B' : v >= 1e6 ? fmt(v / 1e6, 1) + 'M' : fmt(v / 1e3, 0) + 'K';
+  $('scanBody').innerHTML = rows.map((a, i) => {
+    const sw = live && st.auto.coins[a.coin];
+    return `<tr><td class="muted">${i + 1}</td><td><b>${short(a.coin)}</b> <span class="muted">${a.stock ? a.dex : ''}</span></td>
+      <td class="num">${fmt(a.px, a.px >= 100 ? 2 : 4)}</td><td class="num ${a.change >= 0 ? 'up' : 'down'}">${sgn(a.change, 1, '%')}</td>
+      <td class="num">$${big(a.volume)}</td><td class="num">${a.spread == null ? '–' : fmt(a.spread, 1) + 'bp'}</td>
+      <td class="num">${fmt(a.sigma5m, 1)}bp</td><td class="num"><b class="${a.ratio >= 1.5 ? 'up' : a.ratio < 1 ? 'down' : ''}">${fmt(a.ratio, 2)}</b></td>
+      <td class="num">${fmt(a.funding * 100, 4)}%</td>
+      <td><button class="btn" data-view="${a.coin}">${w.includes(a.coin) || BASE.includes(a.coin) ? 'Bekijk' : '+ Volg'}</button>
+      ${live ? `<button class="btn ${sw ? 'danger' : ''}" data-swarm="${a.coin}">${sw ? 'Zwerm ●' : 'Zwerm ○'}</button>` : ''}</td></tr>`;
+  }).join('') || '<tr><td colspan="10" class="muted">Nog geen scan.</td></tr>';
+}
+$('scanBtn').onclick = loadScan; $('scanFilter').onchange = renderScan;
+$('scanBody').onclick = async e => {
+  const v = e.target.dataset.view, z = e.target.dataset.swarm;
+  if (v) { const w = watch(); if (!w.includes(v) && !BASE.includes(v)) localStorage.setItem('desk.watch', JSON.stringify([...w, v])); setCoin(v); scrollTo({ top: 0, behavior: 'smooth' }); }
+  if (z) {
+    const on = !st.auto.coins[z];
+    if (on && !confirm(`Zwerm laten handelen op ${z}? Echt geld zodra de zwerm live staat.`)) return;
+    try { await autoPost('/api/desk/auto', { coins: { [z]: on } }); } catch (err) { alert(err.message); }
+    await pollAuto(); renderScan();
+  }
+};
 $('apYes').onclick = () => answer(true); $('apNo').onclick = () => answer(false);
 $('autoBtn').onclick = async () => {
   const on = !st.auto.on;
@@ -910,6 +970,7 @@ $('cfReset').onclick = () => {
   localStorage.removeItem('desk.book.' + st.coin); delete st.books['desk.book.' + st.coin]; drawBalance();
 };
 
+renderCoinSeg(); loadScan();
 setCoin(st.coin).then(() => { setInterval(tick, 1000); requestAnimationFrame(drawRing); });
 refreshStatus(); setInterval(refreshStatus, 60000); pollAuto(); setInterval(pollAuto, 1000);
 wire('prior', 'zwerm gestart, eerste venster verzamelt data');

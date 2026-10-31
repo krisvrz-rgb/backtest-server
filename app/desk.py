@@ -20,6 +20,7 @@ data/desk.env, één sleutel=waarde per regel:
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
@@ -33,7 +34,7 @@ from .data import DATA_DIR
 HL_INFO = "https://api.hyperliquid.xyz/info"
 ENV_FILE = DATA_DIR / "desk.env"
 LOG_FILE = DATA_DIR / "desk-orders.jsonl"
-COINS = ("BTC", "ETH", "SOL")
+COINS = ("BTC", "ETH", "SOL")   # standaardlijst; via de scanner kan elke Hyperliquid-perp erbij
 _lock = threading.Lock()
 
 
@@ -107,26 +108,109 @@ def candles(coin: str, interval: str = "1m", minutes: int = 180) -> list[dict]:
              "c": float(r["c"]), "v": float(r["v"])} for r in rows]
 
 
-def account() -> dict:
+def account(dexes: list[str] | None = None) -> dict:
+    """Accountwaarde en posities, opgeteld over de hoofdbeurs en de HIP-3-beurzen (aandelen enz.) die in gebruik zijn."""
     cfg = config()
     addr = trading_address(cfg)
     if not addr:
         return {"connected": False}
-    state = _info({"type": "clearinghouseState", "user": addr})
-    positions = []
-    for p in state.get("assetPositions", []):
-        pos = p.get("position", {})
-        positions.append({"coin": pos.get("coin"), "size": float(pos.get("szi", 0)),
-                          "entry": float(pos.get("entryPx") or 0), "pnl": float(pos.get("unrealizedPnl") or 0)})
-    summary = state.get("marginSummary", {})
-    return {"connected": True, "value": float(summary.get("accountValue", 0)),
-            "withdrawable": float(state.get("withdrawable", 0)), "positions": positions}
+    value, withdrawable, positions = 0.0, 0.0, []
+    for dex in [""] + sorted(set(d for d in (dexes or []) if d)):
+        state = _info({"type": "clearinghouseState", "user": addr, **({"dex": dex} if dex else {})})
+        for p in state.get("assetPositions", []):
+            pos = p.get("position", {})
+            positions.append({"coin": pos.get("coin"), "size": float(pos.get("szi", 0)),
+                              "entry": float(pos.get("entryPx") or 0), "pnl": float(pos.get("unrealizedPnl") or 0)})
+        value += float(state.get("marginSummary", {}).get("accountValue", 0))
+        withdrawable += float(state.get("withdrawable", 0))
+    return {"connected": True, "value": value, "withdrawable": withdrawable, "positions": positions}
+
+
+# ---------- universum: alle perps van Hyperliquid, ook de HIP-3-beurzen met tokenized aandelen ----------
+_universe: dict = {"t": 0, "assets": {}}
+
+
+def dex_of(coin: str) -> str:
+    return coin.split(":", 1)[0] if ":" in coin else ""
+
+
+def universe(max_age: float = 600) -> dict:
+    """{coin: {...}} met volume, prijs, spread en funding per markt. Gecachet."""
+    if time.time() - _universe["t"] < max_age and _universe["assets"]:
+        return _universe["assets"]
+    assets: dict = {}
+    dexes = [""]
+    try:
+        dexes += [d["name"] for d in _info({"type": "perpDexs"}) if d and d.get("name")]
+    except Exception:
+        pass
+    for dex in dexes:
+        try:
+            meta, ctxs = _info({"type": "metaAndAssetCtxs", **({"dex": dex} if dex else {})})
+        except Exception:
+            continue
+        for a, c in zip(meta["universe"], ctxs):
+            if a.get("isDelisted"):
+                continue
+            name = a["name"]
+            mark = float(c.get("markPx") or c.get("midPx") or 0)
+            if mark <= 0:
+                continue
+            imp = c.get("impactPxs") or []
+            spread = (float(imp[1]) - float(imp[0])) / mark * 1e4 if len(imp) == 2 else None
+            prev = float(c.get("prevDayPx") or mark)
+            assets[name] = {"coin": name, "dex": dex or "hyperliquid", "szDecimals": a["szDecimals"],
+                            "maxLeverage": a.get("maxLeverage"), "px": mark,
+                            "volume": float(c.get("dayNtlVlm") or 0), "oi": float(c.get("openInterest") or 0) * mark,
+                            "funding": float(c.get("funding") or 0), "change": (mark / prev - 1) * 100 if prev else 0,
+                            "spread": spread}
+    if assets:
+        _universe.update(t=time.time(), assets=assets)
+    return _universe["assets"]
+
+
+_scan_cache: dict = {"t": 0, "rows": []}
+
+
+def scan_cached(max_age: float = 300) -> dict:
+    if time.time() - _scan_cache["t"] > max_age or not _scan_cache["rows"]:
+        _scan_cache.update(t=time.time(), rows=scan())
+    return {"updated": int(_scan_cache["t"] * 1000), "rows": _scan_cache["rows"]}
+
+
+def scan(top: int = 25, min_volume: float = 2e6) -> list[dict]:
+    """Voorselectie voor de zwerm: genoeg volume, kleine spread en vooral veel beweging per 5 minuten
+    tegenover de kosten (σ5m / kosten per ronde). Hoe hoger 'ratio', hoe minder de fees de edge opeten."""
+    cfg = config()
+    cost = 2 * num(cfg, "DESK_FEE_BPS", 4.5) + 1
+    cands = [a for a in universe().values() if a["volume"] >= min_volume and (a["spread"] is None or a["spread"] < 8)]
+    cands.sort(key=lambda a: a["volume"], reverse=True)
+    out = []
+    for a in cands[:60]:  # alleen de 60 grootste markten krijgen een volatiliteitsmeting
+        try:
+            cs = candles(a["coin"], "5m", 12 * 60)
+        except Exception:
+            continue
+        rs = [math.log(cs[i]["c"] / cs[i - 1]["c"]) for i in range(1, len(cs)) if cs[i - 1]["c"] > 0]
+        if len(rs) < 24:
+            continue
+        sigma = math.sqrt(sum(r * r for r in rs) / len(rs)) * 1e4
+        tot_cost = cost + (a["spread"] or 0)
+        out.append({**a, "sigma5m": sigma, "cost": tot_cost, "ratio": sigma / tot_cost,
+                    "stock": a["dex"] != "hyperliquid"})
+    out.sort(key=lambda a: a["ratio"], reverse=True)
+    return out[:top]
 
 
 def _coin(coin: str) -> str:
-    coin = coin.upper()
-    if coin not in COINS:
-        raise ValueError(f"Alleen {', '.join(COINS)} toegestaan")
+    """Normaliseer een coinnaam en controleer dat Hyperliquid hem verhandelt (HIP-3: 'dex:TICKER')."""
+    coin = coin.strip()
+    dex, _, name = coin.rpartition(":")
+    coin = f"{dex.lower()}:{name.upper()}" if dex else name.upper()
+    if coin in COINS:
+        return coin
+    if coin not in universe():
+        raise ValueError(f"{coin} is geen markt op Hyperliquid")
     return coin
 
 
@@ -136,8 +220,9 @@ def _exchange(cfg: dict):
     from hyperliquid.utils import constants
 
     wallet = eth_account.Account.from_key(cfg["HL_SECRET_KEY"])
+    dexes = [""] + sorted({a["dex"] for a in universe().values() if a["dex"] != "hyperliquid"})
     return Exchange(wallet, constants.MAINNET_API_URL, account_address=cfg["HL_ACCOUNT_ADDRESS"],
-                    vault_address=cfg.get("HL_SUBACCOUNT") or None)
+                    vault_address=cfg.get("HL_SUBACCOUNT") or None, perp_dexs=dexes)
 
 
 def live_config() -> dict:
@@ -176,24 +261,44 @@ def do_open(cfg: dict, coin: str, side: str, usd: float, slippage: float = 0.003
         raise ValueError("side moet long of short zijn")
     if usd <= 0 or usd > _max_usd(cfg):
         raise ValueError(f"Grootte moet tussen 0 en {_max_usd(cfg):.0f} dollar liggen")
-    meta = _info({"type": "meta"})
+    dex = dex_of(coin)
+    meta = _info({"type": "meta", **({"dex": dex} if dex else {})})
     decimals = next(a["szDecimals"] for a in meta["universe"] if a["name"] == coin)
-    mid = float(_info({"type": "allMids"})[coin])
+    mid = float(_info({"type": "allMids", **({"dex": dex} if dex else {})})[coin])
     size = round(usd / mid, decimals)
     if size <= 0:
         raise ValueError("Grootte te klein voor de minimale stap van Hyperliquid")
     with _lock:
-        res = _exchange(cfg).market_open(coin, side == "long", size, None, slippage)
+        is_buy = side == "long"
+        res = _exchange(cfg).order(coin, is_buy, size, _limit_px(coin, is_buy, slippage, mid), {"limit": {"tif": "Ioc"}})
     _log({"action": "open", "by": by, "coin": coin, "side": side, "usd": usd, "size": size, "mid": mid, "result": res})
     return {"ok": res.get("status") == "ok", "size": size, "mid": mid, "result": res}
+
+
+def _limit_px(coin: str, is_buy: bool, slippage: float, mid: float | None = None) -> float:
+    """Grensprijs voor een IOC-'marktorder': mid ± slippage, afgerond zoals Hyperliquid eist
+    (max. 5 significante cijfers en max. 6 - szDecimals decimalen). Werkt ook voor HIP-3-markten."""
+    dex = dex_of(coin)
+    if mid is None:
+        mid = float(_info({"type": "allMids", **({"dex": dex} if dex else {})})[coin])
+    px = mid * (1 + slippage if is_buy else 1 - slippage)
+    decimals = 6 - universe().get(coin, {}).get("szDecimals", 0)
+    return round(float(f"{px:.5g}"), max(0, decimals))
 
 
 def do_close(cfg: dict, coin: str, by: str = "zwerm") -> dict:
     """Sluit de volledige positie in deze coin (reduce-only)."""
     coin = _coin(coin)
-    with _lock:
-        res = _exchange(cfg).market_close(coin)
-    _log({"action": "close", "by": by, "coin": coin, "result": res})
-    if res is None:  # geen open positie
+    # Positie zelf opzoeken (ook op HIP-3-beurzen) en met een reduce-only IOC-order sluiten.
+    dex = dex_of(coin)
+    state = _info({"type": "clearinghouseState", "user": trading_address(cfg), **({"dex": dex} if dex else {})})
+    size = next((float(p["position"]["szi"]) for p in state.get("assetPositions", []) if p["position"]["coin"] == coin), 0.0)
+    if not size:
         return {"ok": True, "result": None}
+    with _lock:
+        ex = _exchange(cfg)
+        is_buy = size < 0
+        px = _limit_px(coin, is_buy, 0.01)
+        res = ex.order(coin, is_buy, abs(size), px, {"limit": {"tif": "Ioc"}}, reduce_only=True)
+    _log({"action": "close", "by": by, "coin": coin, "size": size, "result": res})
     return {"ok": res.get("status") == "ok", "result": res}

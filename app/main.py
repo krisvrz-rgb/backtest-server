@@ -182,6 +182,15 @@ def desk_candles(coin: str = "BTC", interval: str = "1m", minutes: int = Query(1
         raise HTTPException(502, f"Hyperliquid niet bereikbaar: {e}")
 
 
+@app.get("/api/desk/scan")
+def desk_scan():
+    """Voorselectie van Hyperliquid-perps (ook tokenized aandelen) die het meest bewegen tegenover de kosten."""
+    try:
+        return desk.scan_cached()
+    except Exception as e:
+        raise HTTPException(502, f"Hyperliquid niet bereikbaar: {e}")
+
+
 @app.get("/api/desk/account")
 def desk_account():
     try:
