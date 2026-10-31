@@ -16,7 +16,11 @@ data/desk.env, één sleutel=waarde per regel:
     DESK_MAX_LEV=3             hoogste hefboom die de Kelly-agent mag kiezen (isolated margin)
     DESK_RISK_PCT=10           hefboom zo dat een tegenvaller van 2σ hooguit zoveel % van de marge kost
     DESK_DAILY_LOSS=10         autonome handel stopt voor de rest van de UTC-dag na zoveel verlies
-    DESK_FEE_BPS=4.5           kosten per kant waarmee de zwerm rekent
+    DESK_FEE_BPS=4.5           taker-fee per kant (marktorder)
+    DESK_MAKER_BPS=1.5         maker-fee per kant (limietorder)
+    DESK_WINDOW_MIN=60         vensterlengte in minuten (15, 60 of 240; ook op /desk te kiezen)
+    DESK_PAPER_START=1000      startsaldo van de papierportefeuille
+    DESK_MAX_OPEN=5            hoogstens zoveel posities tegelijk, over alle markten samen
     DESK_MIN_EDGE=2            minimale edge in centen boven break-even
 """
 from __future__ import annotations
@@ -49,7 +53,7 @@ def config() -> dict:
                 k, v = line.split("=", 1)
                 cfg[k.strip()] = v.strip()
     for k in list(cfg) + ["HL_SECRET_KEY", "HL_ACCOUNT_ADDRESS", "HL_SUBACCOUNT", "DESK_TOKEN", "DESK_LIVE", "DESK_MAX_USD",
-                          "DESK_AUTO", "DESK_ORDER_USD", "DESK_MAX_LEV", "DESK_RISK_PCT", "DESK_DAILY_LOSS", "DESK_FEE_BPS", "DESK_MIN_EDGE"]:
+                          "DESK_AUTO", "DESK_ORDER_USD", "DESK_MAX_LEV", "DESK_RISK_PCT", "DESK_MAKER_BPS", "DESK_WINDOW_MIN", "DESK_PAPER_START", "DESK_MAX_OPEN", "DESK_DAILY_LOSS", "DESK_FEE_BPS", "DESK_MIN_EDGE"]:
         if os.environ.get(k):
             cfg[k] = os.environ[k]
     return cfg
@@ -286,6 +290,56 @@ def set_leverage(cfg: dict, coin: str, lev: int) -> dict:
     return {"ok": res.get("status") == "ok", "result": res}
 
 
+def _round_px(coin: str, px: float) -> float:
+    """Prijs zoals Hyperliquid hem aanvaardt: max. 5 significante cijfers en max. 6 - szDecimals decimalen."""
+    decimals = 6 - universe().get(coin, {}).get("szDecimals", 0)
+    return round(float(f"{px:.5g}"), max(0, decimals))
+
+
+def size_for(coin: str, usd: float, px: float) -> float:
+    dec = universe().get(coin, {}).get("szDecimals")
+    if dec is None:
+        dex = dex_of(coin)
+        meta = _info({"type": "meta", **({"dex": dex} if dex else {})})
+        dec = next(a["szDecimals"] for a in meta["universe"] if a["name"] == coin)
+    return round(usd / px, dec)
+
+
+def position_size(cfg: dict, coin: str) -> float:
+    dex = dex_of(coin)
+    state = _info({"type": "clearinghouseState", "user": trading_address(cfg), **({"dex": dex} if dex else {})})
+    return next((float(p["position"]["szi"]) for p in state.get("assetPositions", []) if p["position"]["coin"] == coin), 0.0)
+
+
+def place_maker(cfg: dict, coin: str, is_buy: bool, size: float, px: float, reduce_only: bool = False, by: str = "zwerm") -> dict:
+    """Post-only limietorder (ALO): betaalt de maker-fee, of wordt geweigerd als hij meteen zou matchen.
+    Antwoord: {"oid": ..., "filled": bool, "error": str|None}."""
+    coin = _coin(coin)
+    px = _round_px(coin, px)
+    with _lock:
+        res = _exchange(cfg).order(coin, is_buy, size, px, {"limit": {"tif": "Alo"}}, reduce_only=reduce_only)
+    _log({"action": "maker", "by": by, "coin": coin, "buy": is_buy, "size": size, "px": px, "reduce": reduce_only, "result": res})
+    if res.get("status") != "ok":
+        return {"oid": None, "filled": False, "error": json.dumps(res)[:200], "px": px}
+    st = res["response"]["data"]["statuses"][0]
+    if "resting" in st:
+        return {"oid": st["resting"]["oid"], "filled": False, "error": None, "px": px}
+    if "filled" in st:
+        return {"oid": st["filled"]["oid"], "filled": True, "error": None, "px": float(st["filled"]["avgPx"])}
+    return {"oid": None, "filled": False, "error": st.get("error", json.dumps(st))[:200], "px": px}
+
+
+def order_filled(cfg: dict, oid: int) -> bool:
+    res = _info({"type": "orderStatus", "user": trading_address(cfg), "oid": oid})
+    return res.get("status") == "order" and res["order"].get("status") == "filled"
+
+
+def cancel(cfg: dict, coin: str, oid: int) -> None:
+    with _lock:
+        res = _exchange(cfg).cancel(coin, oid)
+    _log({"action": "cancel", "coin": coin, "oid": oid, "result": res})
+
+
 def _limit_px(coin: str, is_buy: bool, slippage: float, mid: float | None = None) -> float:
     """Grensprijs voor een IOC-'marktorder': mid ± slippage, afgerond zoals Hyperliquid eist
     (max. 5 significante cijfers en max. 6 - szDecimals decimalen). Werkt ook voor HIP-3-markten."""
@@ -301,9 +355,7 @@ def do_close(cfg: dict, coin: str, by: str = "zwerm") -> dict:
     """Sluit de volledige positie in deze coin (reduce-only)."""
     coin = _coin(coin)
     # Positie zelf opzoeken (ook op HIP-3-beurzen) en met een reduce-only IOC-order sluiten.
-    dex = dex_of(coin)
-    state = _info({"type": "clearinghouseState", "user": trading_address(cfg), **({"dex": dex} if dex else {})})
-    size = next((float(p["position"]["szi"]) for p in state.get("assetPositions", []) if p["position"]["coin"] == coin), 0.0)
+    size = position_size(cfg, coin)
     if not size:
         return {"ok": True, "result": None}
     with _lock:

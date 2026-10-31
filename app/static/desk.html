@@ -168,16 +168,22 @@
     .reactor { grid-template-columns: 1fr; } .bank { grid-template-columns: repeat(3, 1fr); }
     .row2, .row3, .tape { grid-template-columns: 1fr; } .agents { grid-template-columns: repeat(3, 1fr); }
   }
+  .pfm{display:flex;height:8px;border-radius:4px;overflow:hidden;background:#eef1f6;margin:8px 0 2px}
+  .pfm i{display:block;height:100%}
+  .pfo{font:11px var(--mono);margin:4px 0 6px}
+  .pfo div{display:grid;grid-template-columns:70px 64px 1fr 70px 70px;gap:6px;align-items:center;padding:2px 0}
+  .pfo .bar{height:6px;border-radius:3px;background:#eef1f6;overflow:hidden}.pfo .bar i{display:block;height:100%}
 </style>
 </head>
 <body>
 <div class="top">
   <div class="brand"><div class="logo"><i></i><i></i></div>
-    <div><b>SWARM DESK</b><small>zes agents · één boek · <span id="coinLbl">BTC</span> 5m · hyperliquid</small></div></div>
+    <div><b>SWARM DESK</b><small>zes agents · één boek · <span id="coinLbl">BTC</span> <span id="winLbl">1u</span> · hyperliquid</small></div></div>
   <div class="nav"><a href="/">Overzicht</a><a href="/tool">Backtest</a><a href="/watchlist">Watchlist</a><a href="/aanraders">Aanraders</a></div>
   <div class="seg" id="coinSeg"></div>
+  <div class="seg" id="winSeg" title="Lengte van een venster: zo lang houdt de zwerm een positie maximaal vast"></div>
   <div class="stat"><b class="num" id="hdSpot">–</b><span>spot · hyperliquid</span></div>
-  <div class="stat"><b class="num" id="hdPnl">–</b><span>swarm pnl</span></div>
+  <div class="stat"><b class="num" id="hdPnl">–</b><span>portefeuille pnl</span></div>
   <div class="stat"><b class="num" id="hdTickets">0</b><span>tickets</span></div>
   <div class="grow"></div>
   <div class="clock num" id="clock">--:--:--</div><span class="cap">utc</span>
@@ -231,7 +237,7 @@
             <div class="cap">break-even <span class="num" id="ringBe">–</span></div></div>
         </div>
         <div class="bar">
-          <div id="barCoin">BTC UP 5M</div><div class="num" id="barSpot">–</div><div class="num" id="barMove">–</div>
+          <div id="barCoin">BTC UP</div><div class="num" id="barSpot">–</div><div class="num" id="barMove">–</div>
           <div class="num" id="barVol">–</div><div class="num" id="barP">–</div><div class="num" id="barEdge">–</div>
         </div>
       </div>
@@ -252,10 +258,12 @@
 
   <div class="row2">
     <section class="panel">
-      <div class="ph"><h2>Swarm PnL</h2><span class="sub">één boek · saldo</span><span class="right" id="pnlMode">PAPER</span></div>
-      <div class="cap" id="pnlWho">papiersaldo</div>
+      <div class="ph"><h2>Swarm PnL</h2><span class="sub">één portefeuille · alle tickers</span><span class="right" id="pnlMode">PAPER</span></div>
+      <div class="cap" id="pnlWho">papierportefeuille</div>
       <div class="pnlbig num" id="balance">–</div>
       <div class="num muted" id="lastSettle">nog niets afgerekend</div>
+      <div id="pfMargin" class="pfm"></div>
+      <div id="pfOpen" class="pfo"></div>
       <div class="stats4">
         <div><b id="stTickets">0</b><span>tickets</span></div>
         <div><b id="stWin">–</b><span>win rate</span></div>
@@ -297,7 +305,7 @@
       <canvas id="dist" class="fill" height="190"></canvas>
       <div class="prc4">
         <div><span>spot</span><b id="pSpot">–</b></div>
-        <div><span>σ 5m</span><b id="pVol">–</b></div>
+        <div><span>σ venster</span><b id="pVol">–</b></div>
         <div><span>tijd</span><b id="pLeft">–</b></div>
         <div><span>p(stijgt)</span><b id="pP">–</b></div>
         <div><span>edge</span><b id="pEdge">–</b></div>
@@ -321,11 +329,8 @@
 <dialog id="dlg">
   <h3 style="margin-top:0">Instellingen</h3>
   <p>Deze instellingen gelden voor het papierboek in deze browser. Echt geld loopt via de zwerm op de server: grootte, daglimiet en kosten staan in data/desk.env. Met het desk-token hieronder kan deze browser de zwerm aan/uit zetten en orders goedkeuren.</p>
-  <label>Startsaldo papier ($)<input id="cfBal" type="number" step="100"></label>
-  <label>Hefboom (notional = saldo × fractie × hefboom)<input id="cfLev" type="number" step="1" min="1" max="20"></label>
-  <label>Max Kelly-fractie van het saldo (%)<input id="cfCap" type="number" step="0.5" min="0.5" max="10"></label>
-  <label>Minimale edge (¢ boven break-even)<input id="cfEdge" type="number" step="0.5" min="0"></label>
-  <label>Kosten per kant (bps, Hyperliquid taker = 4.5, maker = 1.5)<input id="cfFee" type="number" step="0.5" min="0"></label>
+  <label>Startsaldo papierportefeuille ($, geldt bij "Papier resetten")<input id="cfBal" type="number" step="100"></label>
+  <p class="muted" style="font-size:11px">Hefboom, grootte, minimale edge en kosten stelt de server zelf in (Kelly, DESK_MIN_EDGE, DESK_MAKER_BPS en DESK_FEE_BPS in data/desk.env).</p>
   <label>Desk-token (DESK_TOKEN uit data/desk.env)<input id="cfToken" type="password" autocomplete="off"></label>
   <p id="liveInfo" class="mono"></p>
   <div style="display:flex;gap:8px;justify-content:flex-end">
@@ -346,27 +351,19 @@ const AGENTS = [
   { k: 'prior',   n: 'PRIOR',   role: '06 · prijsmodel', c: '#2463eb' },
 ];
 const AG = Object.fromEntries(AGENTS.map(a => [a.k, a]));
-const WIN = 300;            // venster van 5 minuten (s)
-const DECIDE_FROM = 45, DECIDE_UNTIL = 200;
+// vensterlengte komt van de server (15 min, 1 u of 4 u); de zwerm beslist tussen 15% en 67% van het venster
+const WIN = () => ((st.auto && st.auto.window_min) || 60) * 60;
+const DECIDE_FROM = () => .15 * WIN(), DECIDE_UNTIL = () => .67 * WIN();
+const winLbl = (m = WIN() / 60) => m >= 60 ? m / 60 + 'u' : m + 'm';
 const FEAT_INFO = ['koopdruk minus verkoopdruk, laatste 10 s', 'koopdruk minus verkoopdruk, laatste 30 s', 'meer bieden dan laten in de top 5 van het boek',
   'idem over de top 20', 'koersbeweging sinds de opening van het venster, in σ', 'verwachte beweging over 5 min (hoger = geler)', 'aantal trades per seconde',
   'gemiddelde grootte per trade', 'spread (smaller = geler)', 'beweegt de andere grote coin mee', 'afstand tot de VWAP van vandaag', 'eindscore van de Spotter'];
 const FEATS = ['flow 10s', 'flow 30s', 'boek', 'boek diep', 'momentum', 'vol', 'trades/s', 'grootte', 'spread', 'markt mee', 'vwap afst', 'score'];
 
 // ---------- instellingen en opslag ----------
-const DEF = { bal: 10000, lev: 5, cap: 3, edge: 2, fee: 4.5, usd: 20, token: '', live: false };
+const DEF = { bal: 1000, fee: 4.5, token: '' };
 const S = Object.assign({}, DEF, JSON.parse(localStorage.getItem('desk.cfg') || '{}'));
 const saveCfg = () => localStorage.setItem('desk.cfg', JSON.stringify(S));
-function book() {  // papierboek per coin
-  const key = 'desk.book.' + st.coin;
-  return st.books[key] || (st.books[key] = JSON.parse(localStorage.getItem(key) || 'null') || { bal: S.bal, hist: [], curve: [[Date.now(), S.bal]] });
-}
-function saveBook() { localStorage.setItem('desk.book.' + st.coin, JSON.stringify(book())); }
-function priorSamples() {
-  const key = 'desk.prior.' + st.coin;
-  return st.priors[key] || (st.priors[key] = JSON.parse(localStorage.getItem(key) || '[]'));
-}
-function savePrior() { const a = priorSamples(); if (a.length > 2000) a.splice(0, a.length - 2000); localStorage.setItem('desk.prior.' + st.coin, JSON.stringify(a)); }
 
 // ---------- toestand ----------
 const st = {
@@ -421,10 +418,10 @@ let candles = [];
 new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, height: 400 })).observe($('chart'));
 
 // ---------- trace / wire ----------
-function trace(from, to, act, text, val = '') {
+function trace(from, to, act, text, val = '', at = Date.now()) {
   st.traceN++; st.hand.push(Date.now());
   const a = AG[from], el = document.createElement('div'); el.className = 't';
-  el.innerHTML = `<span class="dot" style="background:${a.c}"></span><span class="muted">${hhmmss(Date.now())}</span>
+  el.innerHTML = `<span class="dot" style="background:${a.c}"></span><span class="muted">${hhmmss(at)}</span>
     <span class="who" style="background:${a.c}">${act}</span><span>${text}</span>
     <span class="hand">${to ? a.n + '→' + AG[to].n : val}</span>`;
   const t = $('trace'); t.prepend(el); while (t.children.length > 120) t.lastChild.remove();
@@ -535,7 +532,7 @@ function features(now) {
   } else { f.book = f.bookDeep = f.spread = 0; }
   const el = Math.max(1, (now - st.winStart) / 1000);
   f.mom = st.open0 ? Math.log(st.px / st.open0) / Math.sqrt(st.var1 * el) : 0;
-  f.vol5 = Math.sqrt(st.var1 * WIN);
+  f.vol5 = Math.sqrt(st.var1 * WIN());
   f.chain = st.ethOpen && st.eth ? Math.log(st.eth / st.ethOpen) / Math.sqrt(st.var1 * el) : 0;
   const vwap = st.vwapV ? st.vwapPV / st.vwapV : st.px;
   f.vwap = vwap; f.vwapDist = (st.px - vwap) / st.px * 1e4;
@@ -544,20 +541,15 @@ function features(now) {
   return f;
 }
 
-// ---------- Prior: leert uit afgelopen vensters hoeveel de score echt voorspelt ----------
-function prior() {
-  const a = priorSamples(), n = a.length, beta0 = .25, k = 30;
-  let sy = 0, ss = 0, hit = 0;
-  for (const s of a) { sy += s.s * s.y; ss += s.s * s.s; if (Math.sign(s.s) === Math.sign(s.y)) hit++; }
-  const bhat = ss > 1e-9 ? sy / ss : 0;
-  return { beta: (n * bhat + k * beta0) / (n + k), n, hit: n ? hit / n : null, bhat };
-}
-
-// ---------- de zwerm ----------
-function costBps() { return 2 * S.fee + 1; }  // twee kanten + 1 bp slippage
+// ---------- model: de server rekent, de pagina toont ----------
+// De zwerm draait op de server (app/desk_auto.py). Zonder server-model rekent de pagina zelf met een vaste β als terugval.
+function costBps() { return st.auto && st.auto.costs ? st.auto.costs.round : 2 * S.fee + 1; }
+const srvMarket = () => st.auto && st.auto.markets && st.auto.markets[st.coin];
 function model(f, now) {
-  const left = Math.max(1, WIN - (now - st.winStart) / 1000), sd = Math.sqrt(st.var1 * left);
-  const pr = prior(), z = pr.beta * f.score, p = Phi(z);
+  const sm = srvMarket();
+  if (sm && sm.model && sm.model.sd) return { ...sm.model, pr: sm.prior || { beta: .25, n: 0, hit: null } };
+  const left = Math.max(1, WIN() - (now - st.winStart) / 1000), sd = Math.sqrt(st.var1 * left);
+  const pr = { beta: .25, n: 0, hit: null }, p = Phi(pr.beta * f.score);
   const eMove = sd * Math.sqrt(2 / Math.PI) * 1e4;            // verwachte absolute beweging in bps
   const be = .5 + costBps() / (2 * Math.max(eMove, .01));     // winkans nodig om kosten terug te verdienen
   const side = p >= .5 ? 'long' : 'short', pDir = Math.max(p, 1 - p);
@@ -565,81 +557,28 @@ function model(f, now) {
 }
 
 function newWindow(now) {
-  const ws = Math.floor(now / (WIN * 1000)) * WIN * 1000;
+  const W = WIN(), ws = Math.floor(now / (W * 1000)) * W * 1000;
   if (ws === st.winStart) return false;
-  if (st.winStart) settle(now);
-  if (st.sample && st.px) {  // Prior-steekproef afsluiten
-    const y = Math.log(st.px / st.sample.px) / Math.max(1e-9, st.sample.sd);
-    priorSamples().push({ s: +st.sample.s.toFixed(4), y: +y.toFixed(4), t: st.winStart }); savePrior();
-    trace('prior', null, 'LEER', `venster gesloten: score ${sgn(st.sample.s, 2)} → uitkomst ${sgn(y, 2)}σ`, `n=${priorSamples().length}`);
-  }
-  st.winStart = ws; st.open0 = st.px; st.ethOpen = st.eth; st.decided = false; st.sample = null;
+  st.winStart = ws; st.open0 = st.px; st.ethOpen = st.eth;
   openLine.applyOptions({ price: st.px });
-  trace('closer', 'spotter', 'OPEN', `nieuw venster ${hhmmss(ws)}, open ${fmt(st.px, pxD())}`);
+  trace('closer', 'spotter', 'OPEN', `nieuw venster ${hhmmss(ws).slice(0, 5)} (${winLbl()}), open ${fmt(st.px, pxD())}`);
   return true;
-}
-
-function decide(f, m, now) {
-  const el = (now - st.winStart) / 1000;
-  if (!st.sample && el >= DECIDE_FROM) st.sample = { s: f.score, px: st.px, sd: m.sd };
-  if (st.decided || st.ticket || st.pending || st.paused || el < DECIDE_FROM || el > DECIDE_UNTIL) return;
-  if (Math.floor(el) % 15 !== 0) return;   // elke 15 s een evaluatieronde
-  trace('spotter', 'prior', 'SCAN', `flow ${sgn(f.flow30, 2)} · boek ${sgn(f.book, 2)} · score ${sgn(f.score, 2)}`);
-  trace('prior', 'edge', 'PRIJS', `β ${fmt(m.pr.beta, 3)} · P(stijgt) ${cents(m.p)} · σ rest ${fmt(m.sd * 1e4, 1)}bp`);
-  if (m.edge < S.edge) {
-    trace('edge', null, 'PASS', `${m.side} ${cents(m.pDir)} < break-even ${cents(m.be)} + ${S.edge}¢`, sgn(m.edge, 1, '¢'));
-    if (el >= DECIDE_UNTIL - 15) { st.decided = true; st.passes.push({ t: now, edge: m.edge }); renderMarks(); wire('edge', `geen edge dit venster (${sgn(m.edge, 1, '¢')})`); }
-    return;
-  }
-  trace('edge', 'kelly', 'EDGE', `${m.side} ${cents(m.pDir)} vs break-even ${cents(m.be)}`, sgn(m.edge, 1, '¢'));
-  // Kelly voor een symmetrische uitbetaling na kosten: f = 2p - 1, kwart-Kelly, afgetopt
-  const kelly = clamp((2 * m.pDir - 1) / 4, 0, S.cap / 100);
-  const bk = book(), notional = bk.bal * kelly * S.lev;
-  trace('kelly', 'taker', 'SIZE', `kwart-Kelly ${fmt(kelly * 100, 2)}% × ${S.lev}x → ${usd(notional)}`);
-  st.decided = true;
-  const ticket = { id: Date.now(), coin: st.coin, side: m.side, entry: st.px, notional, p: m.pDir, be: m.be, edge: m.edge, opened: now, win: st.winStart, live: false };
-  fill(ticket);
 }
 
 // ---------- signalen op de grafiek ----------
 // pijl = instap (long onder de candle, short erboven), bolletje = afgerekend met pnl, grijs vierkant = PASS-venster
-st.passes = [];
+st.passes = {};  // per venster de laatste PASS van de server, weg zodra er toch een EDGE kwam
 function renderMarks() {
   const mt = ms => Math.floor(ms / 60000) * 60, out = [];
   const entry = (opened, side, live) => out.push({ time: mt(opened), position: side === 'long' ? 'belowBar' : 'aboveBar',
     color: side === 'long' ? '#16b364' : '#ef3a5d', shape: side === 'long' ? 'arrowUp' : 'arrowDown', text: (live ? 'LIVE ' : '') + side.toUpperCase() });
   const exit = h => out.push({ time: mt(h.t), position: 'inBar', color: h.pnl >= 0 ? '#16b364' : '#ef3a5d', shape: 'circle', text: sgn(h.pnl, 2) });
-  for (const h of book().hist) { if (h.opened) entry(h.opened, h.side, false); exit(h); }
-  if (st.ticket) entry(st.ticket.opened, st.ticket.side, false);
-  if (st.auto && st.auto.history) for (const h of st.auto.history) if (h.coin === st.coin) { if (h.opened) entry(h.opened, h.side, true); exit(h); }
-  const sm = st.auto && st.auto.markets && st.auto.markets[st.coin];
-  if (sm && sm.ticket) entry(sm.ticket.opened * 1000, sm.ticket.side, true);
-  for (const p of st.passes) out.push({ time: mt(p.t), position: 'aboveBar', color: '#b8bfcc', shape: 'square', text: 'PASS' });
+  if (st.auto && st.auto.history) for (const h of st.auto.history) if (h.coin === st.coin) { if (h.opened) entry(h.opened, h.side, !h.paper); exit(h); }
+  const sm = srvMarket(), tk = sm && sm.ticket;
+  if (tk && tk.entry) entry((tk.filled_at || tk.opened) * 1000, tk.side, !tk.paper);
+  for (const t of Object.values(st.passes)) out.push({ time: mt(t), position: 'aboveBar', color: '#b8bfcc', shape: 'square', text: 'PASS' });
   const first = candles.length ? candles[0].t / 1000 : 0;
   cs.setMarkers(out.filter(m => m.time >= first).sort((a, b) => a.time - b.time));
-}
-
-function fill(t) {
-  const slip = 1e-4 * (t.side === 'long' ? 1 : -1);
-  t.entry = t.entry * (1 + slip); st.ticket = t;
-  trace('taker', 'closer', 'TAKE', `${t.live ? 'LIVE' : 'papier'} ${t.side} ${usd(t.notional)} @ ${fmt(t.entry, pxD())}`);
-  wire('taker', `${t.side} ${t.coin} ${usd(t.notional)} @ ${fmt(t.entry, pxD())}`, sgn(t.edge, 1, '¢'));
-  renderMarks();
-}
-
-function settle(now) {
-  const t = st.ticket; if (!t) return;
-  const exit = st.px * (1 + 1e-4 * (t.side === 'long' ? -1 : 1));
-  const ret = (exit - t.entry) / t.entry * (t.side === 'long' ? 1 : -1);
-  const pnl = t.notional * ret - t.notional * 2 * S.fee / 1e4;
-  const bk = book();
-  if (!t.live) { bk.bal += pnl; bk.curve.push([now, bk.bal]); if (bk.curve.length > 3000) bk.curve.shift(); }
-  bk.hist.push({ t: now, opened: t.opened, side: t.side, entry: t.entry, exit, notional: t.notional, pnl, edge: t.edge, live: t.live });
-  if (bk.hist.length > 3000) bk.hist.shift();
-  saveBook(); st.ticket = null;
-  trace('closer', null, 'AFREK', `${t.side} ${fmt(t.entry, pxD())} → ${fmt(exit, pxD())}`, `<span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 2)}</span>`);
-  wire('closer', `afgerekend ${t.side} ${t.coin}`, sgn(pnl, 2));
-  renderMarks();
 }
 
 // ---------- live: de zwerm op de server ----------
@@ -656,17 +595,28 @@ async function autoPost(url, body) {
 async function pollAuto() {
   try {
     const a = await (await fetch('/api/desk/auto?since=' + st.autoSeq)).json();
+    const tag = a.live ? '<b style="color:var(--down)">LIVE</b>' : '<span class="muted">papier</span>', W = (a.window_min || 60) * 60000;
     for (const t of a.trace) {
       const ag = AG[t.agent] ? t.agent : 'prior';
-      if (a.live && (!t.coin || t.coin === st.coin)) trace(ag, null, t.act, `<b style="color:var(--down)">LIVE</b> ${t.text}`, t.val);
-      if (['TAKE', 'AFREK', 'STOP', 'AAN', 'UIT'].includes(t.act)) wire(ag, (a.live ? 'live: ' : 'zwerm: ') + t.text, t.val || null);
+      const txt = t.coin ? t.text.replace(t.coin + ' · ', '') : t.text;
+      if (!t.coin || t.coin === st.coin) trace(ag, null, t.act, /^(papier|LIVE) /.test(txt) ? txt.replace(/^LIVE /, tag + ' ') : `${tag} ${txt}`, t.val, t.t);
+      if (['TAKE', 'AFREK', 'STOP', 'AAN', 'UIT', 'VENSTER', 'RESET'].includes(t.act)) wire(ag, (a.live ? 'live: ' : 'papier: ') + t.text, t.val || null);
+      if (t.coin === st.coin && t.act === 'PASS') st.passes[Math.floor(t.t / W)] = t.t;
+      if (t.coin === st.coin && t.act === 'EDGE') delete st.passes[Math.floor(t.t / W)];
     }
     allFeed(a.trace);
-    const changed = a.trace.some(t => ['TAKE', 'AFREK'].includes(t.act));
+    const changed = a.trace.some(t => ['TAKE', 'AFREK', 'PASS', 'EDGE'].includes(t.act));
     const coinsChanged = JSON.stringify(a.coins) !== JSON.stringify(st.auto && st.auto.coins);
+    const winChanged = !st.auto || st.auto.window_min !== a.window_min;
     st.autoSeq = a.seq; st.auto = a; if (changed) renderMarks(); if (coinsChanged && scanRows.length) renderScan();
+    if (winChanged) renderWinSeg();
   } catch (e) { st.auto = null; }
   renderAuto();
+}
+function renderWinSeg() {
+  const a = st.auto, ws = (a && a.windows) || [15, 60, 240];
+  $('winSeg').innerHTML = ws.map(m => `<button data-w="${m}" class="${a && a.window_min === m ? 'on' : ''}">${winLbl(m)}</button>`).join('');
+  $('winLbl').textContent = winLbl();
 }
 let notified = 0;
 function renderAuto() {
@@ -751,11 +701,12 @@ function drawRing(time) {
     x.fillText(a.n, px, py + r + 14);
   });
   // ticket dat over de ring rijdt
-  if (st.ticket) {
-    const el = (Date.now() - st.ticket.opened) / 1000, ang = -Math.PI / 2 + el / 20 * Math.PI * 2;
-    const px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang), col = st.ticket.side === 'long' ? '#16b364' : '#ef3a5d';
-    x.beginPath(); x.arc(px, py, 9, 0, 7); x.fillStyle = col; x.fill();
-    x.font = '700 10px ui-monospace, monospace'; x.fillText(st.ticket.side.toUpperCase(), px, py - 14);
+  const rt = srvMarket() && srvMarket().ticket;
+  if (rt) {
+    const el = Date.now() / 1000 - rt.opened, ang = -Math.PI / 2 + el / 20 * Math.PI * 2;
+    const px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang), col = rt.side === 'long' ? '#16b364' : '#ef3a5d';
+    x.beginPath(); x.arc(px, py, 9, 0, 7); x.fillStyle = col; x.globalAlpha = rt.state === 'entering' ? .45 : 1; x.fill(); x.globalAlpha = 1;
+    x.font = '700 10px ui-monospace, monospace'; x.fillText(rt.side.toUpperCase(), px, py - 14);
   }
   // kern
   const pr = 48 + (st.feat.score ? Math.abs(st.feat.score) * 14 : 0) + Math.sin(tm * 2) * 2;
@@ -766,13 +717,20 @@ function drawRing(time) {
   requestAnimationFrame(drawRing);
 }
 
+function pfData() {  // gedeelde portefeuille van de server: papier, of het Hyperliquid-account als live aan staat
+  const a = st.auto, pf = a && a.portfolio; if (!pf) return null;
+  const live = pf.mode === 'live', hs = (a.history || []).filter(h => !h.paper === live);
+  let curve = pf.curve.map(p => p[1]);
+  if (live) { let c = 0; curve = [0, ...hs.map(h => (c += h.pnl))]; }
+  return { pf, live, hs, curve };
+}
 function drawBalance() {
-  const bk = book(), c = $('balChart'), [x, w, h] = canvasCtx(c), d = bk.curve.map(p => p[1]);
-  if (d.length < 2) { x.fillStyle = '#8a92a3'; x.font = '12px system-ui'; x.fillText('Saldoverloop verschijnt na het eerste afgerekende ticket', 8, h / 2); }
-  else spark('balChart', d, '#ef3a5d');
-  const pb = $('pnlBars'), [y, w2, h2] = canvasCtx(pb), hs = bk.hist.slice(-120);
+  const D = pfData(), c = $('balChart'), [x, w, h] = canvasCtx(c), d = D ? D.curve : [];
+  if (d.length < 2) { x.fillStyle = '#8a92a3'; x.font = '12px system-ui'; x.fillText('Verloop verschijnt na het eerste afgerekende ticket', 8, h / 2); }
+  else spark('balChart', d, D.live ? '#ef3a5d' : '#2463eb');
+  const pb = $('pnlBars'), [y, w2, h2] = canvasCtx(pb), hs = D ? D.hs.slice(-120) : [];
   const mx = Math.max(1e-9, ...hs.map(t => Math.abs(t.pnl))), bw = w2 / Math.max(hs.length, 60);
-  hs.forEach((t, i) => { const bh = Math.abs(t.pnl) / mx * (h2 / 2 - 2); y.fillStyle = t.pnl >= 0 ? '#16b364' : '#ef3a5d';
+  hs.forEach((t, i) => { const bh = Math.abs(t.pnl) / mx * (h2 / 2 - 2); y.fillStyle = tColor(t.coin);
     y.fillRect(i * bw, t.pnl >= 0 ? h2 / 2 - bh : h2 / 2, Math.max(1, bw - 1), bh); });
 }
 
@@ -829,7 +787,7 @@ function tick() {
   if (st.lastPx) { const r = Math.log(st.px / st.lastPx); st.var1 = .985 * st.var1 + .015 * r * r; }
   st.lastPx = st.px;
   const f = features(now), m = model(f, now); st.feat = f;
-  decide(f, m, now);
+  const sm = srvMarket(), srvT = sm && sm.ticket;
 
   // series
   push('tps', f.tps); push('bookImb', f.book); push('fair', m.p); push('flow', f.flow30); push('vol', f.vol5 * 1e4); push('chain', f.chain); push('plasma', f.flow10, 120);
@@ -846,26 +804,29 @@ function tick() {
 
   // vertrouwen per agent
   st.conf = { spotter: Math.abs(f.score), prior: m.pr.n / (m.pr.n + 30), edge: clamp((m.edge + 10) / 20, 0, 1), kelly: clamp((2 * m.pDir - 1) * 4, 0, 1),
-              taker: st.ticket ? 1 : st.pending ? .6 : .1, closer: st.ticket ? clamp(1 - m.left / WIN, 0, 1) : 0 };
+              taker: srvT ? 1 : st.auto && st.auto.pending ? .6 : .1, closer: srvT ? clamp(1 - m.left / WIN(), 0, 1) : 0 };
   AGENTS.forEach(a => { $('cf-' + a.k).style.width = (st.conf[a.k] * 100) + '%'; $('cv-' + a.k).textContent = Math.round(st.conf[a.k] * 100);
     const work = now - (st.work[a.k] || 0) < 1500; $('ag-' + a.k).classList.toggle('work', work);
-    $('as-' + a.k).textContent = work ? '● bezig' : (a.k === 'taker' && st.ticket ? 'holder' : 'idle'); });
+    $('as-' + a.k).textContent = work ? '● bezig' : (a.k === 'taker' && srvT ? 'holder' : 'idle'); });
 
   // koppen en getallen
   const el = (now - st.winStart) / 1000, d = pxD(), move = st.open0 ? (st.px / st.open0 - 1) * 1e4 : 0;
   $('hdSpot').textContent = fmt(st.px, d); $('ringSpot').textContent = '$' + fmt(st.px, d); $('tapePx').textContent = '$' + fmt(st.px, d);
   $('ringOpen').textContent = fmt(st.open0, d); $('ringFair').textContent = cents(m.p); $('ringBe').textContent = cents(m.be);
-  $('ringWin').textContent = `VENSTER ${hhmmss(st.winStart).slice(0, 5)} · ${st.coin} 5M`;
-  $('ringLeft').textContent = `sluit over ${Math.floor(m.left / 60)}:${String(Math.floor(m.left % 60)).padStart(2, '0')} · ${el < DECIDE_FROM ? 'zwerm verzamelt' : el <= DECIDE_UNTIL ? 'zwerm beslist' : 'uitrijden'}`;
-  $('stage').textContent = `FASE ${el < DECIDE_FROM ? 'VERZAMELEN' : el <= DECIDE_UNTIL ? 'BESLISSEN' : 'UITRIJDEN'} · VENSTER ${hhmmss(st.winStart).slice(0, 5)}`;
-  $('barCoin').textContent = `${st.coin} ${m.side === 'long' ? 'UP' : 'DOWN'} 5M`; $('barSpot').textContent = '$' + fmt(st.px, d);
+  const left = Math.max(0, WIN() - el), mmss = s => `${s >= 3600 ? Math.floor(s / 3600) + ':' : ''}${String(Math.floor(s % 3600 / 60)).padStart(s >= 3600 ? 2 : 1, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  const phase = el < DECIDE_FROM() ? 0 : el <= DECIDE_UNTIL() ? 1 : 2;
+  $('ringWin').textContent = `VENSTER ${hhmmss(st.winStart).slice(0, 5)} · ${short(st.coin)} ${winLbl().toUpperCase()}`;
+  $('ringLeft').textContent = `sluit over ${mmss(left)} · ${['zwerm verzamelt', 'zwerm beslist', 'uitrijden'][phase]}`;
+  $('stage').textContent = `FASE ${['VERZAMELEN', 'BESLISSEN', 'UITRIJDEN'][phase]} · VENSTER ${hhmmss(st.winStart).slice(0, 5)} · ${winLbl()}`;
+  $('barCoin').textContent = `${short(st.coin)} ${m.side === 'long' ? 'UP' : 'DOWN'} ${winLbl().toUpperCase()}`; $('barSpot').textContent = '$' + fmt(st.px, d);
   $('barMove').innerHTML = `<span class="${move >= 0 ? 'up' : 'down'}">${sgn(move, 1, 'bp')}</span>`; $('barVol').textContent = 'σ ' + fmt(m.sd * 1e4, 1) + 'bp';
   $('barP').textContent = cents(m.pDir); $('barEdge').innerHTML = `<span class="${m.edge >= 0 ? 'up' : 'down'}">${sgn(m.edge, 1, '¢')}</span>`;
   $('sFair').textContent = cents(m.pDir); $('sBe').textContent = cents(m.be); $('sEdge').textContent = sgn(m.edge, 1, '¢');
-  $('sOpen').textContent = st.ticket ? 1 : 0; $('sHolder').textContent = st.ticket ? 'TAKER' : st.pending ? 'MENS' : '–';
+  const D = pfData();
+  $('sOpen').textContent = D ? D.pf.open.length : 0; $('sHolder').textContent = srvT ? 'TAKER' : st.auto && st.auto.pending ? 'MENS' : '–';
   st.hand = st.hand.filter(t => t > now - 60000); $('sHand').textContent = st.hand.length;
   $('pSpot').textContent = fmt(st.px, d); $('pVol').textContent = fmt(f.vol5 * 1e4, 1) + 'bp';
-  $('pLeft').textContent = `${Math.floor(m.left / 60)}:${String(Math.floor(m.left % 60)).padStart(2, '0')}`; $('pP').textContent = cents(m.p);
+  $('pLeft').textContent = mmss(left); $('pP').textContent = cents(m.p);
   $('pEdge').innerHTML = `<span class="${m.edge >= 0 ? 'up' : 'down'}">${sgn(m.edge, 1, '¢')}</span>`;
   $('fCost').textContent = fmt(costBps(), 1) + 'bp'; $('fBeta').textContent = fmt(m.pr.beta, 3) + (m.pr.hit != null ? ` · treffers ${fmt(m.pr.hit * 100, 0)}%` : ''); $('fN').textContent = m.pr.n;
   if (!st.sim) $('fFeed').textContent = 'hyperliquid live';
@@ -873,48 +834,53 @@ function tick() {
   $('tapeStats').textContent = `${fmt(f.tps, 1)} TR/S · VWAP ${fmt(vw, d)} · FLOW ${sgn(f.flow30, 2)}`;
   drawBook(); drawDist(m);
 
-  // ticket: een live ticket van de server-zwerm gaat voor het papierticket
-  const sm = st.auto && st.auto.markets && st.auto.markets[st.coin], srvT = sm && sm.ticket;
-  const t = srvT ? { coin: srvT.coin, side: srvT.side, notional: srvT.usd, entry: srvT.entry, p: srvT.p, be: srvT.be || 0, live: true } : st.ticket;
-  const tpx = srvT ? sm.px : st.px;
-  if (t) {
-    const ret = (tpx - t.entry) / t.entry * (t.side === 'long' ? 1 : -1), upnl = t.notional * ret;
-    $('ticket').innerHTML = `<div class="kv"><span>${t.coin} ${t.side.toUpperCase()} 5M ${t.live ? '· LIVE' : '· papier'}</span><span>${usd(t.notional)}</span></div>
-      <div class="kv"><span>instap</span><span>${fmt(t.entry, d)}</span></div><div class="kv"><span>nu</span><span>${fmt(tpx, d)}</span></div>
-      <div class="kv"><span>p / break-even</span><span>${cents(t.p)} / ${cents(t.be)}</span></div>
+  // ticket van de server-zwerm voor deze markt: limiet staat, open, of maker-uitstap
+  if (srvT) {
+    const tpx = sm.px, e = srvT.entry, upnl = e ? srvT.usd * (tpx - e) / e * (srvT.side === 'long' ? 1 : -1) : 0;
+    const stLbl = { entering: 'limiet wacht op vulling', open: 'open', exiting: 'uitstap als maker' }[srvT.state] || srvT.state;
+    $('ticket').innerHTML = `<div class="kv"><span>${short(srvT.coin)} ${srvT.side.toUpperCase()} ${srvT.lev}x ${srvT.paper ? '· papier' : '· LIVE'}</span><span>${usd(srvT.usd)}</span></div>
+      <div class="kv"><span>status</span><span>${stLbl}</span></div>
+      <div class="kv"><span>${e ? 'instap' : 'limiet'}</span><span>${fmt(e || srvT.limit, d)}</span></div><div class="kv"><span>nu</span><span>${fmt(tpx, d)}</span></div>
+      <div class="kv"><span>marge</span><span>${usd(srvT.usd / srvT.lev, 2)}</span></div>
+      <div class="kv"><span>p / break-even</span><span>${cents(srvT.p)} / ${cents(srvT.be || 0)}</span></div>
       <div class="kv"><span>open pnl</span><span class="${upnl >= 0 ? 'up' : 'down'}">${sgn(upnl, 2)}</span></div>`;
-  } else $('ticket').innerHTML = `<span class="muted">Geen open ticket${st.paused ? ' · desk gepauzeerd' : ''}</span>`;
+  } else $('ticket').innerHTML = `<span class="muted">Geen open ticket op ${short(st.coin)}</span>`;
 
-  // pnl
-  const bk = book(), hs = bk.hist, n = hs.length, wins = hs.filter(h => h.pnl > 0).length;
-  let peak = -Infinity, dd = 0; for (const [, v] of bk.curve) { peak = Math.max(peak, v); dd = Math.max(dd, (peak - v) / peak); }
-  const pnl = bk.bal - S.bal, live = isLive() && st.account && st.account.connected;
-  $('balance').innerHTML = live ? `<sup>$</sup>${fmt(st.account.value, 2)}` : `<sup>$</sup>${fmt(bk.bal, 0)}`;
-  $('balance').classList.toggle('pos', pnl >= 0);
-  $('pnlWho').textContent = live ? 'hyperliquid accountwaarde' : 'papiersaldo ' + st.coin;
-  $('pnlMode').textContent = live ? 'LIVE' : 'PAPER';
-  const lt = hs[n - 1]; $('lastSettle').innerHTML = lt ? `laatste: ${lt.side} <span class="${lt.pnl >= 0 ? 'up' : 'down'}">${sgn(lt.pnl, 2)}</span> · totaal ${sgn(pnl, 2)}` : 'nog niets afgerekend';
-  $('stTickets').textContent = n; $('stWin').textContent = n ? fmt(wins / n * 100, 1) + '%' : '–';
-  $('stAvg').textContent = n ? sgn(hs.reduce((a, h) => a + h.pnl, 0) / n, 2) : '–'; $('stDd').textContent = fmt(dd * 100, 1) + '%';
-  $('hdPnl').innerHTML = `<span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 0)}</span>`; $('hdTickets').textContent = n;
-  $('fBal').textContent = usd(bk.bal); $('fDd').textContent = fmt(dd * 100, 1) + '%';
-  const longs = hs.filter(h => h.side === 'long').length, lw = hs.filter(h => h.side === 'long' && h.pnl > 0).length, sw = wins - lw;
-  $('split').innerHTML = `<div class="conf" style="grid-template-columns:90px 1fr 90px"><span>LONG / SHORT</span><div class="track"><div style="width:${n ? longs / n * 100 : 50}%;background:#16b364"></div></div><span class="num">${longs} / ${n - longs}</span></div>
-    <div class="conf" style="grid-template-columns:90px 1fr 90px"><span>WIN L / S</span><div class="track"><div style="width:${n ? (lw / Math.max(1, longs)) * 100 : 0}%;background:#2463eb"></div></div><span class="num">${longs ? fmt(lw / longs * 100, 0) : '–'}% / ${n - longs ? fmt(sw / (n - longs) * 100, 0) : '–'}%</span></div>`;
-  const exh = isLive() ? st.auto.history.map(h => ({ ...h, live: true })) : hs;
-  $('exhaust').innerHTML = exh.slice(-12).reverse().map(h => `<div><span class="muted">${hhmmss(h.t).slice(0, 5)}</span><span>${h.side}${h.live ? ' ●' : ''}</span><span class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</span></div>`).join('') || '<span class="muted">leeg</span>';
+  // portefeuille: één pot voor alle tickers
+  if (D) {
+    const { pf, live, hs, curve } = D, n = pf.n, pnl = live ? pf.pnl : pf.equity - pf.start;
+    let peak = -Infinity, dd = 0; for (const v of curve) { peak = Math.max(peak, v); if (peak > 0) dd = Math.max(dd, (peak - v) / peak); }
+    $('balance').innerHTML = `<sup>$</sup>${fmt(pf.equity, 2)}`; $('balance').classList.toggle('pos', pnl >= 0);
+    $('pnlWho').textContent = live ? 'hyperliquid accountwaarde · alle tickers' : `papierportefeuille · start ${usd(pf.start)} · alle tickers`;
+    $('pnlMode').textContent = live ? 'LIVE' : 'PAPER';
+    const lt = hs[hs.length - 1];
+    $('lastSettle').innerHTML = (lt ? `laatste: ${short(lt.coin)} ${lt.side} <span class="${lt.pnl >= 0 ? 'up' : 'down'}">${sgn(lt.pnl, 2)}</span> · ` : '')
+      + `gerealiseerd ${sgn(pf.pnl, 2)} · open ${sgn(pf.upnl, 2)}`;
+    const eq = Math.max(pf.equity, 1e-9);
+    $('pfMargin').innerHTML = pf.open.map(t => `<i title="${t.coin} marge ${usd(t.margin, 2)}" style="width:${t.margin / eq * 100}%;background:${tColor(t.coin)}"></i>`).join('');
+    $('pfOpen').innerHTML = `<div class="muted"><span>vrij</span><span>${usd(pf.free, 0)}</span><span>in gebruik ${usd(pf.used, 2)}</span><span></span><span></span></div>`
+      + pf.open.map(t => `<div><b style="color:${tColor(t.coin)}">${short(t.coin)}</b><span>${t.side} ${t.lev}x</span>
+        <span class="bar"><i style="width:${Math.min(100, t.margin / eq * 400)}%;background:${tColor(t.coin)}"></i></span>
+        <span>${usd(t.margin, 2)}</span><span class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}</span></div>`).join('');
+    $('stTickets').textContent = n; $('stWin').textContent = n ? fmt(pf.wins / n * 100, 1) + '%' : '–';
+    $('stAvg').textContent = n ? sgn(pf.pnl / n, 2) : '–'; $('stDd').textContent = fmt(dd * 100, 1) + '%';
+    $('hdPnl').innerHTML = `<span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 2)}</span>`; $('hdTickets').textContent = n;
+    $('fBal').textContent = usd(pf.equity, 2); $('fDd').textContent = fmt(dd * 100, 1) + '%';
+    const hn = hs.length, longs = hs.filter(h => h.side === 'long').length, lw = hs.filter(h => h.side === 'long' && h.pnl > 0).length, sw = hs.filter(h => h.side === 'short' && h.pnl > 0).length;
+    $('split').innerHTML = `<div class="conf" style="grid-template-columns:90px 1fr 90px"><span>LONG / SHORT</span><div class="track"><div style="width:${hn ? longs / hn * 100 : 50}%;background:#16b364"></div></div><span class="num">${longs} / ${hn - longs}</span></div>
+      <div class="conf" style="grid-template-columns:90px 1fr 90px"><span>WIN L / S</span><div class="track"><div style="width:${longs ? lw / longs * 100 : 0}%;background:#2463eb"></div></div><span class="num">${longs ? fmt(lw / longs * 100, 0) : '–'}% / ${hn - longs ? fmt(sw / (hn - longs) * 100, 0) : '–'}%</span></div>`;
+    $('exhaust').innerHTML = hs.slice(-12).reverse().map(h => `<div><span class="muted">${hhmmss(h.t).slice(0, 5)}</span><span><b style="color:${tColor(h.coin)}">${short(h.coin)}</b> ${h.side}${h.paper ? '' : ' ●'}</span><span class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</span></div>`).join('') || '<span class="muted">leeg</span>';
+  }
   if (now % 10000 < 1000) drawBalance();
 }
 
 // ---------- bediening ----------
 async function setCoin(c) {
-  if (st.ticket && st.ticket.live) return alert('Er staat een live positie open; wacht tot die gesloten is.');
-  if (st.ticket) settle(Date.now());
   st.coin = c; localStorage.setItem('desk.coin', c);
   renderCoinSeg();
   $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
   Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
-  st.passes = [];
+  st.passes = {};
   stopSim(); await loadHistory(); connect(); drawBalance(); renderMarks();
 
 }
@@ -999,6 +965,12 @@ document.querySelector('.tabs').onclick = e => { const t = e.target.dataset.tab;
   $('tabDesk').style.display = t === 'desk' ? '' : 'none'; $('tabAll').style.display = t === 'all' ? '' : 'none';
   if (t === 'all') { renderAll(); renderFeed(); } else chart.applyOptions({ width: $('chart').clientWidth }); };
 
+$('winSeg').onclick = async e => {
+  const w = +(e.target.dataset.w || 0); if (!w || !st.auto || w === st.auto.window_min) return;
+  const open = st.auto.portfolio ? st.auto.portfolio.open.length : 0;
+  if (open && !confirm(`Venster naar ${winLbl(w)}? De ${open} open positie(s) worden eerst gesloten.`)) return;
+  try { await autoPost('/api/desk/auto', { window_min: w }); } catch (err) { alert(err.message); } pollAuto();
+};
 $('apYes').onclick = () => answer(true); $('apNo').onclick = () => answer(false);
 $('autoBtn').onclick = async () => {
   const on = !st.auto.on;
@@ -1021,30 +993,31 @@ $('confBtn').onclick = async () => {
 $('killBtn').onclick = async () => {
   st.paused = !st.paused; $('killBtn').textContent = st.paused ? 'Hervatten' : 'Kill switch';
   if (st.paused) {
-    if (st.ticket) settle(Date.now());
     if (st.auto && st.auto.allowed && st.auto.on) { try { await autoPost('/api/desk/auto', { on: false }); } catch (e) { alert('Kill switch op de server mislukt: ' + e.message); } pollAuto(); }
     trace('closer', null, 'KILL', 'alles gesloten, desk gepauzeerd');
   } else trace('closer', null, 'START', 'desk hervat');
 };
 $('setBtn').onclick = () => {
-  for (const [id, k] of [['cfBal', 'bal'], ['cfLev', 'lev'], ['cfCap', 'cap'], ['cfEdge', 'edge'], ['cfFee', 'fee'], ['cfToken', 'token']]) $(id).value = S[k];
+  for (const [id, k] of [['cfBal', 'bal'], ['cfToken', 'token']]) $(id).value = S[k];
   refreshStatus(); $('dlg').showModal();
 };
 $('cfClose').onclick = () => $('dlg').close();
 $('cfSave').onclick = () => {
-  for (const [id, k] of [['cfBal', 'bal'], ['cfLev', 'lev'], ['cfCap', 'cap'], ['cfEdge', 'edge'], ['cfFee', 'fee']]) S[k] = +$(id).value || DEF[k];
+  S.bal = +$('cfBal').value || DEF.bal;
   S.token = $('cfToken').value.trim();
   saveCfg(); refreshStatus(); $('dlg').close();
 };
-$('cfReset').onclick = () => {
-  if (!confirm(`Papierboek ${st.coin} terugzetten naar $${S.bal}?`)) return;
-  localStorage.removeItem('desk.book.' + st.coin); delete st.books['desk.book.' + st.coin]; drawBalance();
+$('cfReset').onclick = async () => {
+  S.bal = +$('cfBal').value || S.bal; saveCfg();
+  if (!confirm(`Papierportefeuille (alle tickers) terugzetten naar $${S.bal}? Open papierposities vervallen.`)) return;
+  try { await autoPost('/api/desk/auto', { reset_paper: S.bal }); } catch (e) { return alert(e.message); }
+  st.autoSeq = 0; await pollAuto(); renderMarks(); drawBalance();
 };
 
 renderCoinSeg(); loadScan();
 setCoin(st.coin).then(() => { setInterval(tick, 1000); requestAnimationFrame(drawRing); });
-refreshStatus(); setInterval(refreshStatus, 60000); pollAuto(); setInterval(pollAuto, 1000);
-wire('prior', 'zwerm gestart, eerste venster verzamelt data');
+renderWinSeg(); refreshStatus(); setInterval(refreshStatus, 60000); pollAuto(); setInterval(pollAuto, 1000);
+wire('prior', 'dashboard verbonden met de server-zwerm');
 </script>
 </body>
 </html>
