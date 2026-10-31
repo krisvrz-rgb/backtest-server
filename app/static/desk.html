@@ -1136,6 +1136,14 @@ function spark(id, data, color, opts = {}) {
 const strands = Array.from({ length: 140 }, (_, i) => ({ ph: Math.random() * 6.28, amp: 4 + Math.random() * 26, f: 2 + Math.floor(Math.random() * 5), sp: (Math.random() - .5) * .6, col: i }));
 function hue(a) { const cols = AGENTS.map(g => g.c); const t = ((a / (2 * Math.PI)) % 1 + 1) % 1 * 6, i = Math.floor(t); return cols[(i + 1) % 6]; }
 let ringSpots = [];
+// snelheid van een trade-bol: stil bij een wachtende limiet, traag bij verlies, sneller naarmate de winst (in % van de marge) groeit
+const spins = {};
+function spinPhase(key, t, base) {
+  const now = performance.now() / 1000, s = spins[key] || (spins[key] = { ph: Math.random(), t: now });
+  const pct = t.state === 'entering' ? 0 : (t.upnl || 0) / Math.max(1e-9, t.usd / t.lev) * 100;
+  const mult = t.state === 'entering' ? .1 : clamp(1 + pct * 1.5, .15, 8);  // +1% winst = 2,5x zo snel, +5% = 8,5x (max 8x)
+  s.ph += Math.min(.1, now - s.t) * base * mult; s.t = now; return s.ph;
+}
 $('ring').onclick = e => { const b = $('ring').getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
   const hit = ringSpots.find(p => Math.hypot(p.px - mx, p.py - my) < 22); if (hit && hit.coin !== st.coin) setCoin(hit.coin); };
 function drawRing(time) {
@@ -1169,7 +1177,7 @@ function drawRing(time) {
   const open = (st.auto && st.auto.portfolio && st.auto.portfolio.open) || [];
   ringSpots = [];
   open.forEach((rt, i) => {
-    const ang = -Math.PI / 2 + (i / Math.max(1, open.length) + tm / 40) * Math.PI * 2;
+    const ang = -Math.PI / 2 + (i / Math.max(1, open.length) + spinPhase('ring:' + rt.coin, rt, 1 / 40)) * Math.PI * 2;  // winst = sneller rond
     const px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang), col = rt.side === 'long' ? '#16b364' : '#ef3a5d';
     ringSpots.push({ coin: rt.coin, px, py });
     const focus = rt.coin === st.coin, r = focus ? 13 : 10;
@@ -1214,7 +1222,12 @@ function drawAllRing(tm) {
     const [px, py] = at(i / coins.length);
     const t = open[coin], m = a.markets[coin] || {}, col = tColor(coin), r = t ? 26 + Math.sin(tm * 4) * 2 : 20;
     if (TH.dark) { x.shadowColor = col; x.shadowBlur = t ? 30 : 10; }
-    if (t) { x.beginPath(); x.arc(px, py, r + 9, 0, 7); x.strokeStyle = col; x.lineWidth = 3; x.globalAlpha = .35; x.stroke(); x.globalAlpha = 1; }
+    if (t) {  // draaiende boog rond de bol: hoe meer winst, hoe sneller; verlies draait traag en rood
+      x.beginPath(); x.arc(px, py, r + 9, 0, 7); x.strokeStyle = col; x.lineWidth = 3; x.globalAlpha = .25; x.stroke(); x.globalAlpha = 1;
+      const a0 = spinPhase('all:' + coin, t, 1) * Math.PI * 2, win = (t.upnl || 0) >= 0;
+      x.beginPath(); x.arc(px, py, r + 9, a0, a0 + Math.PI * .7); x.strokeStyle = win ? '#16b364' : '#ef3a5d'; x.lineWidth = 4; x.stroke();
+      x.beginPath(); x.arc(px, py, r + 9, a0 + Math.PI, a0 + Math.PI * 1.7); x.stroke();
+    }
     x.beginPath(); x.arc(px, py, r, 0, 7);
     x.fillStyle = t ? (t.side === 'long' ? '#16b364' : '#ef3a5d') : TH.panel; x.globalAlpha = t && t.state === 'entering' ? .5 : 1; x.fill(); x.globalAlpha = 1;
     x.lineWidth = 3; x.strokeStyle = col; x.stroke(); x.shadowBlur = 0;
