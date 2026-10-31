@@ -24,6 +24,7 @@ from .watchlist import (PORTFOLIO_LIST, default_periods, PORTFOLIO_URL, SCANNER,
                         scan_cached, ticker_detail, watchlist_view)
 from .robust import cross_ticker
 from . import desk
+from .desk_auto import swarm
 from .picks import picks, strategy_scores
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
 from .strategies.plot import indicators
@@ -205,6 +206,47 @@ def desk_open(req: DeskOrder):
 def desk_close(req: DeskOrder):
     try:
         return desk.close_position(req.coin, req.token)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class DeskAuto(BaseModel):
+    token: str | None = None
+    on: bool | None = None
+    confirm: bool | None = None
+    coin: str | None = None
+
+
+class DeskApproval(BaseModel):
+    token: str | None = None
+    id: int
+    yes: bool
+
+
+@app.get("/api/desk/auto")
+def desk_auto_state(since: int = 0):
+    return swarm.snapshot(since)
+
+
+@app.post("/api/desk/auto")
+def desk_auto_set(req: DeskAuto):
+    try:
+        desk.check_token(req.token)
+        swarm.set(on=req.on, confirm=req.confirm, coin=req.coin)
+        return swarm.snapshot(swarm.seq)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/desk/auto/approve")
+def desk_auto_approve(req: DeskApproval):
+    try:
+        desk.check_token(req.token)
+        return swarm.approve(req.id, req.yes)
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:
@@ -537,6 +579,8 @@ def stop_scan():
 @app.on_event("startup")
 def _start_scheduler():
     start_scheduler()
+    if desk.status()["auto_allowed"]:
+        swarm.start()
 
 
 class ScheduleSettings(BaseModel):

@@ -160,6 +160,8 @@
   <div class="clock num" id="clock">--:--:--</div><span class="cap">utc</span>
   <span class="badge paper" id="modeBadge">PAPER</span>
   <span class="badge sim" id="feedBadge" style="display:none">SIMULATIE</span>
+  <button class="btn" id="autoBtn" style="display:none" title="Zet de zwerm op de server aan of uit (echt geld)">Zwerm live</button>
+  <button class="btn" id="confBtn" style="display:none" title="Moet elke echte order eerst door jou goedgekeurd worden?">Bevestigen</button>
   <button class="btn" id="setBtn">Instellingen</button>
   <button class="btn danger" id="killBtn" title="Sluit alle posities en zet de desk op pauze">Kill switch</button>
 </div>
@@ -270,15 +272,13 @@
 
 <dialog id="dlg">
   <h3 style="margin-top:0">Instellingen</h3>
-  <p>Papier is de standaard. Echte orders vragen data/desk.env op de server (zie uitleg onderaan) én dat je hieronder live aanzet met het desk-token. Elke nieuwe positie vraagt jouw klik; sluiten aan het einde van het venster gebeurt automatisch (reduce-only).</p>
+  <p>Deze instellingen gelden voor het papierboek in deze browser. Echt geld loopt via de zwerm op de server: grootte, daglimiet en kosten staan in data/desk.env. Met het desk-token hieronder kan deze browser de zwerm aan/uit zetten en orders goedkeuren.</p>
   <label>Startsaldo papier ($)<input id="cfBal" type="number" step="100"></label>
   <label>Hefboom (notional = saldo × fractie × hefboom)<input id="cfLev" type="number" step="1" min="1" max="20"></label>
   <label>Max Kelly-fractie van het saldo (%)<input id="cfCap" type="number" step="0.5" min="0.5" max="10"></label>
   <label>Minimale edge (¢ boven break-even)<input id="cfEdge" type="number" step="0.5" min="0"></label>
   <label>Kosten per kant (bps, Hyperliquid taker = 4.5, maker = 1.5)<input id="cfFee" type="number" step="0.5" min="0"></label>
-  <label>Live: grootte per order ($, de server kapt af op DESK_MAX_USD)<input id="cfUsd" type="number" step="5" min="1"></label>
   <label>Desk-token (DESK_TOKEN uit data/desk.env)<input id="cfToken" type="password" autocomplete="off"></label>
-  <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input id="cfLive" type="checkbox"> Live handel aan (echt geld op Hyperliquid)</label>
   <p id="liveInfo" class="mono"></p>
   <div style="display:flex;gap:8px;justify-content:flex-end">
     <button class="btn danger" id="cfReset">Papier resetten</button>
@@ -542,7 +542,7 @@ function decide(f, m, now) {
   trace('kelly', 'taker', 'SIZE', `kwart-Kelly ${fmt(kelly * 100, 2)}% × ${S.lev}x → ${usd(notional)}`);
   st.decided = true;
   const ticket = { id: Date.now(), coin: st.coin, side: m.side, entry: st.px, notional, p: m.pDir, be: m.be, edge: m.edge, opened: now, win: st.winStart, live: false };
-  if (S.live && st.server && st.server.live) requestApproval(ticket); else fill(ticket);
+  fill(ticket);
 }
 
 function fill(t) {
@@ -557,7 +557,6 @@ function settle(now) {
   const exit = st.px * (1 + 1e-4 * (t.side === 'long' ? -1 : 1));
   const ret = (exit - t.entry) / t.entry * (t.side === 'long' ? 1 : -1);
   const pnl = t.notional * ret - t.notional * 2 * S.fee / 1e4;
-  if (t.live) closeLive(t.coin);
   const bk = book();
   if (!t.live) { bk.bal += pnl; bk.curve.push([now, bk.bal]); if (bk.curve.length > 3000) bk.curve.shift(); }
   bk.hist.push({ t: now, side: t.side, entry: t.entry, exit, notional: t.notional, pnl, edge: t.edge, live: t.live });
@@ -567,51 +566,61 @@ function settle(now) {
   wire('closer', `afgerekend ${t.side} ${t.coin}`, sgn(pnl, 2));
 }
 
-// ---------- live: goedkeuring en server ----------
-let apTimer = null;
-function requestApproval(t) {
-  const usdLive = Math.min(S.usd, st.server.max_usd);
-  t.notional = usdLive; t.live = true; st.pending = t;
-  $('apText').textContent = `${t.side.toUpperCase()} ${t.coin} $${usdLive} · edge ${sgn(t.edge, 1, '¢')}`;
-  $('approve').classList.add('on');
-  trace('taker', null, 'WACHT', 'echte order wacht op jouw goedkeuring', 'mens');
-  let left = 20; $('apTimer').textContent = left + 's';
-  clearInterval(apTimer);
-  apTimer = setInterval(() => { left--; $('apTimer').textContent = left + 's'; if (left <= 0) reject('verlopen'); }, 1000);
-  if (window.Notification && Notification.permission === 'granted') new Notification('Swarm Desk: order wacht', { body: $('apText').textContent });
+// ---------- live: de zwerm op de server ----------
+// Echte orders plaatst alleen de server-zwerm (app/desk_auto.py), ook als deze pagina dicht is.
+// De pagina toont zijn toestand, keurt orders goed en zet hem aan of uit.
+st.auto = null; st.autoSeq = 0;
+const isLive = () => !!(st.auto && st.auto.allowed && st.auto.on);
+async function autoPost(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: S.token, ...body }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
 }
-function reject(why) {
-  clearInterval(apTimer); $('approve').classList.remove('on');
-  if (st.pending) trace('taker', null, 'NEE', `order ${why}`); st.pending = null;
-}
-async function approve() {
-  const t = st.pending; if (!t) return;
-  clearInterval(apTimer); $('approve').classList.remove('on'); st.pending = null;
-  if (t.win !== st.winStart) return trace('taker', null, 'NEE', 'venster al voorbij');
+async function pollAuto() {
   try {
-    const r = await fetch('/api/desk/open', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ coin: t.coin, side: t.side, usd: t.notional, token: S.token }) });
-    const j = await r.json();
-    if (!r.ok || !j.ok) throw new Error(j.detail || JSON.stringify(j.result));
-    t.entry = j.mid; fill(t); refreshAccount();
-  } catch (e) { trace('taker', null, 'FOUT', 'order geweigerd: ' + e.message); wire('taker', 'order mislukt'); }
+    const a = await (await fetch('/api/desk/auto?since=' + st.autoSeq)).json();
+    for (const t of a.trace) {
+      const ag = AG[t.agent] ? t.agent : 'prior';
+      trace(ag, null, t.act, `<b style="color:var(--down)">LIVE</b> ${t.text}`, t.val);
+      if (['TAKE', 'AFREK', 'STOP', 'AAN', 'UIT'].includes(t.act)) wire(ag, 'live: ' + t.text, t.val || null);
+    }
+    st.autoSeq = a.seq; st.auto = a;
+  } catch (e) { st.auto = null; }
+  renderAuto();
 }
-async function closeLive(coin) {
-  try {
-    const r = await fetch('/api/desk/close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ coin, token: S.token }) });
-    const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j.detail || 'onbekend');
-    trace('closer', null, 'LIVE', `${coin} positie gesloten op Hyperliquid`);
-  } catch (e) { trace('closer', null, 'FOUT', `sluiten mislukt: ${e.message}. Sluit handmatig!`); }
-  refreshAccount();
+let notified = 0;
+function renderAuto() {
+  const a = st.auto, ok = a && a.allowed;
+  $('autoBtn').style.display = ok ? '' : 'none'; $('confBtn').style.display = ok ? '' : 'none';
+  if (!ok) { $('approve').classList.remove('on'); return; }
+  $('autoBtn').textContent = 'Zwerm live: ' + (a.on ? 'AAN' : 'UIT') + ' · ' + a.coin;
+  $('autoBtn').className = 'btn ' + (a.on ? 'danger' : '');
+  $('confBtn').textContent = 'Bevestigen: ' + (a.confirm ? 'AAN' : 'UIT');
+  $('confBtn').className = 'btn ' + (a.confirm ? '' : 'danger');
+  $('modeBadge').textContent = a.on ? (a.halted ? 'LIVE · GESTOPT' : 'LIVE') : 'PAPER';
+  $('modeBadge').className = 'badge ' + (a.on ? 'live' : 'paper');
+  $('sAppr').textContent = a.on ? (a.confirm ? 'ELKE ORDER' : 'UIT · AGENTS AUTONOOM') : 'ZWERM UIT';
+  $('fLive').innerHTML = a.on ? `<b style="color:#ff6b81">LIVE ${a.coin}</b> · max $${st.server ? st.server.max_usd : '?'}/order · ${st.server ? st.server.account : ''}${st.server && st.server.subaccount ? ' (sub-account)' : ''}`
+    + (a.halted ? ` · <b style="color:#ff6b81">${a.halted}</b>` : '') + (a.feed ? '' : ' · <b style="color:#ff6b81">server zonder koersfeed</b>') : 'LIVE UIT · papier';
+  const p = a.pending;
+  if (p) {
+    const left = Math.max(0, Math.round(p.expires - Date.now() / 1000));
+    $('apText').textContent = `${p.side.toUpperCase()} ${p.coin} $${p.usd} · edge ${sgn(p.edge, 1, '¢')}`;
+    $('apTimer').textContent = left + 's'; $('approve').classList.add('on');
+    if (notified !== p.id && window.Notification && Notification.permission === 'granted') { notified = p.id; new Notification('Swarm Desk: order wacht', { body: $('apText').textContent }); }
+  } else $('approve').classList.remove('on');
+}
+async function answer(yes) {
+  const p = st.auto && st.auto.pending; if (!p) return;
+  try { await autoPost('/api/desk/auto/approve', { id: p.id, yes }); } catch (e) { trace('taker', null, 'FOUT', e.message); }
+  pollAuto();
 }
 async function refreshStatus() {
-  try { st.server = await (await fetch('/api/desk/status')).json(); } catch (e) { st.server = { live: false, reasons: ['server niet bereikbaar'] }; }
-  const live = S.live && st.server.live;
-  $('modeBadge').textContent = live ? 'LIVE' : 'PAPER'; $('modeBadge').className = 'badge ' + (live ? 'live' : 'paper');
-  $('fLive').innerHTML = live ? `<b style="color:#ff6b81">LIVE AAN</b> · max $${st.server.max_usd}/order · ${st.server.account}` : 'LIVE UIT · papier';
-  $('sAppr').textContent = live ? 'ELKE ORDER' : 'ALLEEN LIVE';
-  $('liveInfo').textContent = st.server.live ? `Server klaar voor live (${st.server.account}, max $${st.server.max_usd}/order).` : 'Server niet klaar voor live: ' + st.server.reasons.join('; ');
-  if (live) refreshAccount();
+  try { st.server = await (await fetch('/api/desk/status')).json(); } catch (e) { st.server = { live: false, auto_allowed: false, reasons: ['server niet bereikbaar'] }; }
+  $('liveInfo').textContent = st.server.auto_allowed ? `Server klaar voor live (${st.server.account}${st.server.subaccount ? ', sub-account' : ''}, max $${st.server.max_usd}/order). Zet de zwerm aan met de knop bovenaan.`
+    : st.server.live ? 'Live is ingesteld, maar DESK_AUTO=1 ontbreekt in data/desk.env.' : 'Server niet klaar voor live: ' + st.server.reasons.join('; ');
+  if (isLive()) refreshAccount();
 }
 async function refreshAccount() {
   try { const r = await fetch('/api/desk/account'); if (r.ok) st.account = await r.json(); } catch (e) {}
@@ -776,12 +785,14 @@ function tick() {
   $('tapeStats').textContent = `${fmt(f.tps, 1)} TR/S · VWAP ${fmt(vw, d)} · FLOW ${sgn(f.flow30, 2)}`;
   drawBook(); drawDist(m);
 
-  // ticket
-  const t = st.ticket;
+  // ticket: een live ticket van de server-zwerm gaat voor het papierticket
+  const srvT = st.auto && st.auto.ticket;
+  const t = srvT ? { coin: srvT.coin, side: srvT.side, notional: srvT.usd, entry: srvT.entry, p: srvT.p, be: st.auto.model.be || 0, live: true } : st.ticket;
+  const tpx = srvT ? st.auto.px : st.px;
   if (t) {
-    const ret = (st.px - t.entry) / t.entry * (t.side === 'long' ? 1 : -1), upnl = t.notional * ret;
+    const ret = (tpx - t.entry) / t.entry * (t.side === 'long' ? 1 : -1), upnl = t.notional * ret;
     $('ticket').innerHTML = `<div class="kv"><span>${t.coin} ${t.side.toUpperCase()} 5M ${t.live ? '· LIVE' : '· papier'}</span><span>${usd(t.notional)}</span></div>
-      <div class="kv"><span>instap</span><span>${fmt(t.entry, d)}</span></div><div class="kv"><span>nu</span><span>${fmt(st.px, d)}</span></div>
+      <div class="kv"><span>instap</span><span>${fmt(t.entry, d)}</span></div><div class="kv"><span>nu</span><span>${fmt(tpx, d)}</span></div>
       <div class="kv"><span>p / break-even</span><span>${cents(t.p)} / ${cents(t.be)}</span></div>
       <div class="kv"><span>open pnl</span><span class="${upnl >= 0 ? 'up' : 'down'}">${sgn(upnl, 2)}</span></div>`;
   } else $('ticket').innerHTML = `<span class="muted">Geen open ticket${st.paused ? ' · desk gepauzeerd' : ''}</span>`;
@@ -789,7 +800,7 @@ function tick() {
   // pnl
   const bk = book(), hs = bk.hist, n = hs.length, wins = hs.filter(h => h.pnl > 0).length;
   let peak = -Infinity, dd = 0; for (const [, v] of bk.curve) { peak = Math.max(peak, v); dd = Math.max(dd, (peak - v) / peak); }
-  const pnl = bk.bal - S.bal, live = S.live && st.server && st.server.live && st.account && st.account.connected;
+  const pnl = bk.bal - S.bal, live = isLive() && st.account && st.account.connected;
   $('balance').innerHTML = live ? `<sup>$</sup>${fmt(st.account.value, 2)}` : `<sup>$</sup>${fmt(bk.bal, 0)}`;
   $('balance').classList.toggle('pos', pnl >= 0);
   $('pnlWho').textContent = live ? 'hyperliquid accountwaarde' : 'papiersaldo ' + st.coin;
@@ -802,7 +813,8 @@ function tick() {
   const longs = hs.filter(h => h.side === 'long').length, lw = hs.filter(h => h.side === 'long' && h.pnl > 0).length, sw = wins - lw;
   $('split').innerHTML = `<div class="conf" style="grid-template-columns:90px 1fr 90px"><span>LONG / SHORT</span><div class="track"><div style="width:${n ? longs / n * 100 : 50}%;background:#16b364"></div></div><span class="num">${longs} / ${n - longs}</span></div>
     <div class="conf" style="grid-template-columns:90px 1fr 90px"><span>WIN L / S</span><div class="track"><div style="width:${n ? (lw / Math.max(1, longs)) * 100 : 0}%;background:#2463eb"></div></div><span class="num">${longs ? fmt(lw / longs * 100, 0) : '–'}% / ${n - longs ? fmt(sw / (n - longs) * 100, 0) : '–'}%</span></div>`;
-  $('exhaust').innerHTML = hs.slice(-12).reverse().map(h => `<div><span class="muted">${hhmmss(h.t).slice(0, 5)}</span><span>${h.side}${h.live ? ' ●' : ''}</span><span class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</span></div>`).join('') || '<span class="muted">leeg</span>';
+  const exh = isLive() ? st.auto.history.map(h => ({ ...h, live: true })) : hs;
+  $('exhaust').innerHTML = exh.slice(-12).reverse().map(h => `<div><span class="muted">${hhmmss(h.t).slice(0, 5)}</span><span>${h.side}${h.live ? ' ●' : ''}</span><span class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</span></div>`).join('') || '<span class="muted">leeg</span>';
   if (now % 10000 < 1000) drawBalance();
 }
 
@@ -817,27 +829,34 @@ async function setCoin(c) {
   stopSim(); await loadHistory(); connect(); drawBalance();
 }
 $('coinSeg').onclick = e => e.target.dataset.c && e.target.dataset.c !== st.coin && setCoin(e.target.dataset.c);
-$('apYes').onclick = approve; $('apNo').onclick = () => reject('geweigerd door jou');
+$('apYes').onclick = () => answer(true); $('apNo').onclick = () => answer(false);
+$('autoBtn').onclick = async () => {
+  const on = !st.auto.on;
+  if (on && !confirm(`Zwerm live aanzetten op ${st.auto.coin}? Hij handelt met echt geld op Hyperliquid, ook als deze pagina dicht is.`)) return;
+  try { await autoPost('/api/desk/auto', { on }); if (on && window.Notification && Notification.permission === 'default') Notification.requestPermission(); }
+  catch (e) { alert(e.message); } pollAuto();
+};
+$('confBtn').onclick = async () => {
+  const c = !st.auto.confirm;
+  if (!c && !confirm('Bevestigen uitzetten? De agents plaatsen dan zelf echte orders, zonder jouw klik.')) return;
+  try { await autoPost('/api/desk/auto', { confirm: c }); } catch (e) { alert(e.message); } pollAuto();
+};
 $('killBtn').onclick = async () => {
   st.paused = !st.paused; $('killBtn').textContent = st.paused ? 'Hervatten' : 'Kill switch';
   if (st.paused) {
-    reject('kill switch');
     if (st.ticket) settle(Date.now());
-    if (S.live && st.server && st.server.live) for (const c of ['BTC', 'ETH']) await closeLive(c);
+    if (st.auto && st.auto.allowed && st.auto.on) { try { await autoPost('/api/desk/auto', { on: false }); } catch (e) { alert('Kill switch op de server mislukt: ' + e.message); } pollAuto(); }
     trace('closer', null, 'KILL', 'alles gesloten, desk gepauzeerd');
   } else trace('closer', null, 'START', 'desk hervat');
 };
 $('setBtn').onclick = () => {
-  for (const [id, k] of [['cfBal', 'bal'], ['cfLev', 'lev'], ['cfCap', 'cap'], ['cfEdge', 'edge'], ['cfFee', 'fee'], ['cfUsd', 'usd'], ['cfToken', 'token']]) $(id).value = S[k];
-  $('cfLive').checked = S.live; refreshStatus(); $('dlg').showModal();
+  for (const [id, k] of [['cfBal', 'bal'], ['cfLev', 'lev'], ['cfCap', 'cap'], ['cfEdge', 'edge'], ['cfFee', 'fee'], ['cfToken', 'token']]) $(id).value = S[k];
+  refreshStatus(); $('dlg').showModal();
 };
 $('cfClose').onclick = () => $('dlg').close();
 $('cfSave').onclick = () => {
-  for (const [id, k] of [['cfBal', 'bal'], ['cfLev', 'lev'], ['cfCap', 'cap'], ['cfEdge', 'edge'], ['cfFee', 'fee'], ['cfUsd', 'usd']]) S[k] = +$(id).value || DEF[k];
+  for (const [id, k] of [['cfBal', 'bal'], ['cfLev', 'lev'], ['cfCap', 'cap'], ['cfEdge', 'edge'], ['cfFee', 'fee']]) S[k] = +$(id).value || DEF[k];
   S.token = $('cfToken').value.trim();
-  if ($('cfLive').checked && !S.live && !confirm('Live handel aanzetten? Goedgekeurde orders gebruiken echt geld op Hyperliquid.')) $('cfLive').checked = false;
-  S.live = $('cfLive').checked;
-  if (S.live && window.Notification && Notification.permission === 'default') Notification.requestPermission();
   saveCfg(); refreshStatus(); $('dlg').close();
 };
 $('cfReset').onclick = () => {
@@ -846,7 +865,7 @@ $('cfReset').onclick = () => {
 };
 
 setCoin(st.coin).then(() => { setInterval(tick, 1000); requestAnimationFrame(drawRing); });
-refreshStatus(); setInterval(refreshStatus, 60000);
+refreshStatus(); setInterval(refreshStatus, 60000); pollAuto(); setInterval(pollAuto, 1000);
 wire('prior', 'zwerm gestart, eerste venster verzamelt data');
 </script>
 </body>

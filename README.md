@@ -106,15 +106,35 @@ van de openbare Hyperliquid-websocket; zonder verbinding valt de pagina terug op
 - **Edge** vergelijkt de winkans met de break-even na kosten (standaard taker 4,5 bp per kant + 1 bp slippage).
 - **Kelly** bepaalt de grootte (kwart-Kelly, afgetopt), **Taker** voert uit, **Closer** rekent af bij sluiting.
 
-Standaard is alles papier (saldo per coin in de browser). Voor echte orders:
+Standaard is alles papier (saldo per coin in de browser). Echt geld loopt via de **zwerm op de server**
+(`app/desk_auto.py`): die handelt door als de pagina dicht is.
 
-1. `pip install hyperliquid-python-sdk` in de venv.
-2. Maak op Hyperliquid een API-wallet aan (kan handelen, niet opnemen) en zet in `data/desk.env`:
-   `HL_SECRET_KEY`, `HL_ACCOUNT_ADDRESS`, `DESK_TOKEN`, `DESK_LIVE=1`, `DESK_MAX_USD=25`.
-3. Herstart de server, open `/desk` → Instellingen, vul het token in en zet live aan.
+1. `pip install -r requirements.txt` in de venv (hyperliquid-python-sdk en websockets).
+2. Stort USDC op Hyperliquid en maak via More → API een API-wallet aan (kan handelen, niet opnemen).
+3. Zet in `data/desk.env`:
 
-Elke nieuwe positie vraagt een klik binnen 20 seconden; sluiten bij het einde van het venster en de kill switch
-gebeuren automatisch (reduce-only). Sluit je de pagina met een open live positie, dan blijft die open op Hyperliquid.
+   ```
+   HL_SECRET_KEY=0x...          private key van de API-wallet
+   HL_ACCOUNT_ADDRESS=0x...     je hoofdaccount
+   HL_SUBACCOUNT=0x...          optioneel: handel op een apart sub-account
+   DESK_TOKEN=iets-geheims
+   DESK_LIVE=1
+   DESK_AUTO=1
+   DESK_MAX_USD=25              maximum per order
+   DESK_ORDER_USD=20            grootte per order
+   DESK_DAILY_LOSS=10           stopt voor de rest van de UTC-dag na zoveel verlies
+   DESK_FEE_BPS=4.5
+   DESK_MIN_EDGE=2
+   ```
+4. Herstart de server, vul op `/desk` → Instellingen het token in en zet met **Zwerm live** de zwerm aan.
+
+Met **Bevestigen: AAN** wacht elke nieuwe positie 20 seconden op jouw klik; met **UIT** handelt de zwerm zelf.
+Posities gaan altijd dicht aan het einde van het venster (reduce-only). Na 3 mislukte orders op rij of bij het
+raken van de daglimiet stopt hij. De kill switch zet de zwerm uit en sluit BTC en ETH.
+
+**Privacy.** Hyperliquid vraagt geen KYC, maar alles staat openbaar on-chain onder je adres. Wil je de
+zwerm los van jezelf: gebruik een nieuwe wallet die je nergens anders voor gebruikt, of minstens een sub-account.
+Wie stort vanaf een exchange met KYC is via die storting te herleiden. Winst blijft gewoon aangifteplichtig.
 Alle live orders komen in `data/desk-orders.jsonl`.
 
 ## Tests
