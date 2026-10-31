@@ -55,6 +55,24 @@ def costs(cfg: dict) -> dict:
     return {"maker": maker, "taker": taker, "round": maker + sh * maker + (1 - sh) * taker, "maker_share": sh}
 
 
+MAS = ((20, "EMA 20"), (50, "EMA 50"), (200, "EMA 200"))  # op 5m-candles: ±1u40, ±4u, ±17u
+
+
+def ema_state(cs: list[dict]) -> dict:
+    """Voortschrijdende gemiddelden (EMA) op de 5m-slotkoersen, met het tijdstip van de laatste candle."""
+    if len(cs) < 30:
+        return {}
+    out = {"t": cs[-1]["t"] / 1000, "v": {}}
+    for n, name in MAS:
+        if len(cs) < n:
+            continue
+        a, e = 2 / (n + 1), sum(c["c"] for c in cs[:n]) / n
+        for c in cs[n:]:
+            e += a * (c["c"] - e)
+        out["v"][name] = e
+    return out
+
+
 def sr_levels(cs: list[dict], k: int = 6) -> list[dict]:
     """Steun en weerstand uit 5m-candles: draaipunten (hoogste/laagste van k candles links en rechts),
     gebundeld als ze dicht bij elkaar liggen. Meer raakpunten = sterker niveau."""
@@ -157,6 +175,7 @@ class Market:
         self.levels: list[dict] = []
         self.trends: list[dict] = []
         self.levels_at = 0.0
+        self.ema: dict = {}
 
     def prior_file(self, window: int):
         return DATA_DIR / f"desk-prior-{self.coin.replace(':', '_')}-{window // 60}m.json"
@@ -178,13 +197,30 @@ class Market:
         rs = [math.log(cs[i]["c"] / cs[i - 1]["c"]) for i in range(1, len(cs)) if cs[i - 1]["c"] > 0]
         self.var1 = sum(r * r for r in rs) / max(1, len(rs)) / 300
         self.levels, self.trends, self.levels_at = sr_levels(cs), trend_lines(cs), time.time()
+        self.ema = ema_state(cs)
         if not self.px and cs:
             self.px = cs[-1]["c"]
 
+    def mas(self) -> list[dict]:
+        """De EMA's nu: vanaf de laatste candle doorgerold met de huidige koers, één stap per verstreken 5 min."""
+        if not self.ema or not self.px:
+            return []
+        steps = max(0, int((time.time() - self.ema["t"]) // 300))
+        out = []
+        for n, name in MAS:
+            e = self.ema["v"].get(name)
+            if e is None:
+                continue
+            a = 2 / (n + 1)
+            e = self.px + (e - self.px) * (1 - a) ** steps  # zo vaak een stap naar de huidige koers
+            out.append({"px": e, "n": 2, "name": name, "kind": "ma"})
+        return out
+
     def near_levels(self, px: float) -> tuple[dict | None, dict | None]:
-        """Dichtstbijzijnde steun onder en weerstand boven deze prijs."""
-        below = [l for l in self.levels if l["px"] < px]
-        above = [l for l in self.levels if l["px"] > px]
+        """Dichtstbijzijnde steun onder en weerstand boven deze prijs: horizontale niveaus én de EMA's."""
+        lv = self.levels + self.mas()
+        below = [l for l in lv if l["px"] < px]
+        above = [l for l in lv if l["px"] > px]
         return (max(below, key=lambda l: l["px"]) if below else None,
                 min(above, key=lambda l: l["px"]) if above else None)
 
@@ -446,7 +482,7 @@ class Swarm:
         room = abs(wall["px"] - m.px) / m.px / sd if wall else None
         if room is not None and room < .3:
             self.log("edge", "PASS", f"{mo['side']} maar {'weerstand' if mo['side'] == 'long' else 'steun'} op {wall['px']:,.6g} "
-                     f"({wall['n']}x geraakt) ligt maar {room:.2f}σ verder, geen ruimte", f"{mo['edge']:+.1f}¢", m.coin)
+                     f"({wall.get('name') or str(wall['n']) + 'x geraakt'}) ligt maar {room:.2f}σ verder, geen ruimte", f"{mo['edge']:+.1f}¢", m.coin)
             if el + every > .67 * W:
                 m.decided = True
             return
@@ -477,7 +513,7 @@ class Swarm:
                "beta": round(mo["prior"]["beta"], 3), "n": mo["prior"]["n"], "hit": mo["prior"]["hit"],
                "cost": costs(cfg)["round"], "src": mo.get("src"), **self.kelly_info,
                "room": round(room, 2) if room is not None else None, "wall": round(wall["px"], 8) if wall else None,
-               "wall_n": wall["n"] if wall else None, "bt": bt, "bt_against": against_bt}
+               "wall_n": wall["n"] if wall else None, "wall_name": wall.get("name") if wall else None, "bt": bt, "bt_against": against_bt}
         bid, ask = m.best()
         limit = bid if mo["side"] == "long" else ask
         order = {"id": int(now * 1000), "coin": m.coin, "side": mo["side"], "usd": usd, "lev": lev, "edge": mo["edge"],
@@ -643,6 +679,7 @@ class Swarm:
         sign = 1 if long else -1
         now_ms = time.time() * 1000
         cand = [(l["px"], f"{'steun' if l['px'] < px else 'weerstand'} {l['px']:,.6g} ({l['n']}x geraakt)", l["n"]) for l in m.levels]
+        cand += [(a["px"], f"{a['name']} ({a['px']:,.6g})", 2) for a in m.mas()]
         cand += [(trend_at(tl, now_ms), f"{'stijgende steunlijn' if tl['kind'] == 'sup' else 'dalende weerstandslijn'} "
                   f"(nu {trend_at(tl, now_ms):,.6g})", 2) for tl in m.trends]
         d = lambda p: sign * (p - px) / px / sd  # >0 = in de richting van de trade, in σ
@@ -847,7 +884,7 @@ class Swarm:
         if not ok:
             reason = ("model wijst nu de andere kant op" if not same else
                       f"edge {mo['edge']:+.1f}¢ te klein" if mo["edge"] < self.edge_floor(cfg, live) else
-                      f"{'weerstand' if t['side'] == 'long' else 'steun'} op {wall['px']:,.6g} te dichtbij")
+                      f"{wall.get('name') or ('weerstand' if t['side'] == 'long' else 'steun')} op {wall['px']:,.6g} te dichtbij")
             self.log("closer", "SLUIT", f"niet doorlopen: {reason}", coin=m.coin)
             return False
         t["holds"], t["hold_win"] = n + 1, m.win + W
@@ -1073,6 +1110,7 @@ class Swarm:
                 try:
                     cs = desk.candles(m.coin, "5m", 2 * 24 * 60)
                     m.levels, m.trends, m.levels_at = sr_levels(cs), trend_lines(cs), time.time()
+                    m.ema = ema_state(cs)
                 except Exception:
                     m.levels_at = time.time() - 3000  # over 10 min opnieuw proberen
                 time.sleep(3)
@@ -1332,7 +1370,8 @@ class Swarm:
             markets = {c: {"on": self.coins[c], "px": m.px, "open": m.open0, "win": m.win * 1000, "ticket": m.ticket,
                            "model": {k: v for k, v in m.model.items() if k != "prior"},
                            "prior": m.model.get("prior", {}), "score": m.feat.get("score"),
-                           "levels": self.shown_levels(m), "trends": m.trends, "bt": bt_bias(c)}
+                           "levels": self.shown_levels(m), "trends": m.trends,
+                           "mas": [{"name": a["name"], "px": a["px"]} for a in m.mas()], "bt": bt_bias(c)}
                        for c, m in self.markets.items()}
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,

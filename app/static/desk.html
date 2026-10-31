@@ -604,11 +604,13 @@ new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, hei
 // ---------- lagen op de grafiek: 12 kenmerken + liquiditeitsheatmap (zoals Bookmap) ----------
 // Kenmerken komen per minuut uit de pagina zelf (alleen sinds de pagina open is), onderaan de grafiek op een eigen schaal -1..1.
 const FCOL = ['#ff4d6d', '#ff8c42', '#ffd166', '#06d6a0', '#4cc9f0', '#4361ee', '#b5179e', '#f72585', '#90be6d', '#43aa8b', '#c77dff', '#ffffff'];
-const layerOn = new Set(JSON.parse(localStorage.getItem('desk.layers') || '["heat","score","sr","trend"]'));
+const layerOn = new Set(JSON.parse(localStorage.getItem('desk.layers') || '["heat","score","sr","trend","ma"]'));
+if (!localStorage.getItem('desk.layers.ma')) { layerOn.add('ma'); localStorage.setItem('desk.layers.ma', '1'); }
 if (!localStorage.getItem('desk.layers.sr')) { layerOn.add('sr'); layerOn.add('trend'); localStorage.setItem('desk.layers.sr', '1'); }
 const featSeries = {}; st.featMin = {};
 function renderLayers() {
   $('layers').innerHTML = `<button data-l="sr" style="--c:#c77dff" class="${layerOn.has('sr') ? 'on' : ''}" title="Steun en weerstand: prijzen waar de koers de afgelopen 2 dagen meermaals keerde (dikker = vaker geraakt). De zwerm gebruikt ze ook voor stop-loss, take-profit en om niet tegen een muur in te stappen">steun/weerstand</button>`
+    + `<button data-l="ma" style="--c:#f72585" class="${layerOn.has('ma') ? 'on' : ''}" title="Voortschrijdende gemiddelden EMA 20, 50 en 200 op 5 minuten. De zwerm telt ze mee als steun of weerstand: niet instappen vlak voor een EMA, en stop-loss en take-profit erop afstemmen">EMA 20/50/200</button>`
     + `<button data-l="trend" style="--c:#4cc9f0" class="${layerOn.has('trend') ? 'on' : ''}" title="Trendlijnen door de laatste twee toppen en de laatste twee bodems op 15 minuten">trendlijnen</button>`
     + `<button data-l="heat" style="--c:#f5a524" class="${layerOn.has('heat') ? 'on' : ''}" title="Waar staan veel kopers en verkopers in het orderboek, door de tijd: hoe feller, hoe meer volume">heatmap boek</button>`
     + FEATS.map((f, j) => `<button data-l="${f}" style="--c:${FCOL[j]}" class="${layerOn.has(f) ? 'on' : ''}" title="${FEAT_INFO[j]}">${f}</button>`).join('');
@@ -635,7 +637,7 @@ function drawFeats() {
   if (!st.featPts.length) { x.fillStyle = TH.muted; x.font = '11px ui-monospace, monospace'; x.fillText('kenmerken verzamelen… (vanaf het openen van de pagina, elke 2 s)', 8, mid - 6); }
 }
 $('layers').onclick = e => { const l = e.target.dataset.l; if (!l) return;
-  layerOn.has(l) ? layerOn.delete(l) : layerOn.add(l); localStorage.setItem('desk.layers', JSON.stringify([...layerOn])); renderLayers(); syncFeatSeries(); drawHeat(); drawSR(); drawTrend(); };
+  layerOn.has(l) ? layerOn.delete(l) : layerOn.add(l); localStorage.setItem('desk.layers', JSON.stringify([...layerOn])); renderLayers(); syncFeatSeries(); drawHeat(); drawSR(); drawTrend(); drawMA(); };
 function pushFeatures(vals, now) {
   st.featPts.push([now / 1000, vals]); if (st.featPts.length > 3600) st.featPts.shift();
   drawFeats();
@@ -822,6 +824,23 @@ function drawTrend() {
   };
   if (hi.length >= 2) { const [a, b] = hi.slice(-2); if (b[1] < a[1]) line(a, b, 'rgba(239,58,93,.8)'); }   // dalende toppen: weerstandslijn
   if (lo.length >= 2) { const [a, b] = lo.slice(-2); if (b[1] > a[1]) line(a, b, 'rgba(22,179,100,.8)'); }  // stijgende bodems: steunlijn
+}
+// EMA 20/50/200 op 5m, uit de 1m-candles (laatste prijs per 5 min), zoals de zwerm ze gebruikt
+st.maS = [];
+const MA_COL = ['rgba(247,37,133,.9)', 'rgba(255,183,3,.9)', 'rgba(220,220,255,.85)'];
+function drawMA() {
+  for (const s of st.maS.splice(0)) chart.removeSeries(s);
+  if (!layerOn.has('ma') || candles.length < 120) return;
+  const b = []; for (const c of candles) { const t = Math.floor(c.t / 3e5) * 3e5, l = b[b.length - 1];
+    if (l && l.t === t) l.c = c.c; else b.push({ t, c: c.c }); }
+  [20, 50, 200].forEach((n, j) => {
+    if (b.length < n + 2) return;
+    const a = 2 / (n + 1); let e = b.slice(0, n).reduce((s, x) => s + x.c, 0) / n; const d = [];
+    for (let i = n; i < b.length; i++) { e += a * (b[i].c - e); d.push({ time: b[i].t / 1000, value: e }); }
+    const s = chart.addLineSeries({ color: MA_COL[j], lineWidth: j === 2 ? 2 : 1, priceLineVisible: false, lastValueVisible: true, title: 'EMA ' + n,
+      crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
+    s.setData(d); st.maS.push(s);
+  });
 }
 // afgesloten trades: lijn van instap naar uitstap, groen bij winst en rood bij verlies
 st.tradeS = [];
@@ -1037,7 +1056,7 @@ async function loadHistory() {
   st.vwapPV = 0; st.vwapV = 0;
   const vw = [];  // volume-gewogen gemiddelde prijs sinds 00:00 UTC, als lijn vanaf het begin van de dag
   for (const c of candles) if (c.t >= day) { const tp = (c.h + c.l + c.c) / 3; st.vwapPV += tp * c.v; st.vwapV += c.v; if (st.vwapV) vw.push({ time: c.t / 1000, value: st.vwapPV / st.vwapV }); }
-  vwapS.setData(vw); drawTrend();
+  vwapS.setData(vw); drawTrend(); drawMA();
 }
 
 // ---------- kenmerken ----------
@@ -1444,7 +1463,7 @@ function explain(t, sm) {
       ${w.capped ? `afgetopt op ${w.max_margin_pct}% marge` : 'binnen de grens'} → ${usd(w.margin, 2)} marge, ${usd(w.usd, 2)} positie.</p>
     ${w.bt ? `<p>Dag-backtests: ${w.bt.open} van de ${w.bt.prof} winstgevende strategieën hebben nu een open koopsignaal (${w.bt.trend}), beste is ${w.bt.best || '–'}.
       ${w.bt_against ? 'De trade ging daartegenin, dus vroeg de zwerm 1¢ extra edge.' : 'Geen tegenwind van de dagtrend.'}</p>` : ''}
-    ${w.wall ? `<p>Ruimte: de eerste ${t.side === 'long' ? 'weerstand' : 'steun'} lag op ${fmt(w.wall, pxD())} (${w.wall_n}x geraakt), ${fmt(w.room, 2)}σ verder. Genoeg ruimte om in te stappen (minstens 0,3σ).</p>` : ''}
+    ${w.wall ? `<p>Ruimte: de eerste ${t.side === 'long' ? 'weerstand' : 'steun'} lag op ${fmt(w.wall, pxD())} (${w.wall_name || w.wall_n + 'x geraakt'}), ${fmt(w.room, 2)}σ verder. Genoeg ruimte om in te stappen (minstens 0,3σ).</p>` : ''}
     ${t.sl || t.tp ? `<p>Uitstap: stop ${t.sl ? fmt(t.sl, pxD()) : 'uit'}${t.plan ? ` (${t.plan.sl})` : ''}, take-profit ${t.tp ? fmt(t.tp, pxD()) : 'uit'}${t.plan ? ` (${t.plan.tp})` : ''}${t.plan && t.plan.rr ? `, winst/risico ${fmt(t.plan.rr, 2)}` : ''}.
       Draait het model tijdens de trade om (de andere kant krijgt edge), dan sluit hij meteen.
       Raakt hij geen van beide, dan kijkt hij op het einde van het venster van ${(st.auto && st.auto.window_min) || '?'} min of hij opnieuw dezelfde kant op zou gaan: zo ja, dan loopt de trade door${st.auto && st.auto.exits ? ` (max ${st.auto.exits.hold} vensters)` : ''}, zo nee, dan sluit hij.</p>` : ''}
