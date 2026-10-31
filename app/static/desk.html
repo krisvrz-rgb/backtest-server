@@ -210,7 +210,7 @@
   .pfm{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--panel-2);margin:8px 0 2px}
   .pfm i{display:block;height:100%}
   .pfo{font:11px var(--mono);margin:4px 0 6px}
-  .pfo div{display:grid;grid-template-columns:70px 64px 1fr 70px 70px;gap:6px;align-items:center;padding:2px 0}
+  .pfo div{display:grid;grid-template-columns:70px 64px 1fr 60px 64px 64px;gap:6px;align-items:center;padding:2px 0}
   .pfo div[data-c], .exhaust div[data-c] { cursor: pointer; } .pfo div[data-c]:hover, .exhaust div[data-c]:hover { background: var(--panel-2); }
   .layers { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; font: 600 10px var(--mono); }
   .layers button { border: 1px solid var(--border); background: var(--panel); color: var(--muted); border-radius: 10px; padding: 2px 8px; cursor: pointer; font: inherit; }
@@ -685,6 +685,10 @@ async function loadHistory() {
     let p = SIM_PX[st.coin], t = Math.floor(Date.now() / 60000) * 60000 - 240 * 60000;
     for (let i = 0; i < 240; i++) { const o = p; p *= Math.exp((Math.random() - .5) * .003); candles.push({ t: t + i * 60000, o, h: Math.max(o, p) * 1.0004, l: Math.min(o, p) * .9996, c: p, v: Math.random() * 50 }); }
   }
+  const lastC = candles.length ? candles[candles.length - 1].c : SIM_PX[st.coin];  // goedkope coins (XLM, PUMP) hebben meer decimalen nodig
+  const prec = lastC >= 1000 ? 1 : lastC >= 10 ? 2 : lastC >= 1 ? 4 : lastC >= .01 ? 5 : 7;
+  cs.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: Math.pow(10, -prec) } });
+  vwapS.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: Math.pow(10, -prec) } });
   cs.setData(candles.map(c => ({ time: c.t / 1000, open: c.o, high: c.h, low: c.l, close: c.c })));
   const last = candles[candles.length - 1]; if (last && !st.px) st.px = last.c;
   // σ per seconde uit de 1m-candles
@@ -868,6 +872,9 @@ function spark(id, data, color, opts = {}) {
 // reactor: ring van gekleurde draden, zes agents erop, kern in het midden
 const strands = Array.from({ length: 140 }, (_, i) => ({ ph: Math.random() * 6.28, amp: 4 + Math.random() * 26, f: 2 + Math.floor(Math.random() * 5), sp: (Math.random() - .5) * .6, col: i }));
 function hue(a) { const cols = AGENTS.map(g => g.c); const t = ((a / (2 * Math.PI)) % 1 + 1) % 1 * 6, i = Math.floor(t); return cols[(i + 1) % 6]; }
+let ringSpots = [];
+$('ring').onclick = e => { const b = $('ring').getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
+  const hit = ringSpots.find(p => Math.hypot(p.px - mx, p.py - my) < 22); if (hit && hit.coin !== st.coin) setCoin(hit.coin); };
 function drawRing(time) {
   const c = $('ring'), [x, w, h] = canvasCtx(c), cx = w / 2, cy = h / 2 + 62, R = Math.min(w * .42, h * .5), ry = Math.min(R * .62, h / 2 - 90);
   const tm = time / 1000, energy = .4 + Math.min(1.5, Math.abs(st.feat.score || 0) * 3);
@@ -897,9 +904,11 @@ function drawRing(time) {
   // ticket dat over de ring rijdt
   // elke open trade van de gedeelde portefeuille rijdt als cirkel over de ring, met de ticker erbij
   const open = (st.auto && st.auto.portfolio && st.auto.portfolio.open) || [];
+  ringSpots = [];
   open.forEach((rt, i) => {
     const ang = -Math.PI / 2 + (i / Math.max(1, open.length) + tm / 40) * Math.PI * 2;
     const px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang), col = rt.side === 'long' ? '#16b364' : '#ef3a5d';
+    ringSpots.push({ coin: rt.coin, px, py });
     const focus = rt.coin === st.coin, r = focus ? 13 : 10;
     x.globalAlpha = rt.state === 'entering' ? .45 : 1;
     x.beginPath(); x.arc(px, py, r + 3, 0, 7); x.fillStyle = tColor(rt.coin); x.fill();
@@ -1077,6 +1086,16 @@ function tick() {
   $('tapeStats').textContent = `${fmt(f.tps, 1)} TR/S · VWAP ${fmt(vw, d)} · FLOW ${sgn(f.flow30, 2)}`;
   drawBook(); drawDist(m);
 
+  // instaplijn: groen voor long, rood voor short, met de lopende winst of verlies
+  const lp = srvT ? (srvT.entry || srvT.limit) : null;
+  if (lp) {
+    const col = srvT.side === 'long' ? '#16b364' : '#ef3a5d', e = srvT.entry;
+    const up = e ? srvT.usd * (sm.px - e) / e * (srvT.side === 'long' ? 1 : -1) : 0;
+    const title = `${srvT.side.toUpperCase()} ${srvT.lev}x ${usd(srvT.usd)} · ${e ? (up >= 0 ? 'WINST ' : 'VERLIES ') + sgn(up, 2) + ' (' + sgn(up / (srvT.usd / srvT.lev) * 100, 1) + '%)' : 'limiet wacht'}`;
+    const opt = { price: lp, color: col, lineWidth: 2, lineStyle: e ? 0 : 2, axisLabelVisible: true, title };
+    if (st.entryLine) st.entryLine.applyOptions(opt); else st.entryLine = cs.createPriceLine(opt);
+  } else if (st.entryLine) { cs.removePriceLine(st.entryLine); st.entryLine = null; }
+
   // ticket van de server-zwerm voor deze markt: limiet staat, open, of maker-uitstap
   if (srvT) {
     const tpx = sm.px, e = srvT.entry, upnl = e ? srvT.usd * (tpx - e) / e * (srvT.side === 'long' ? 1 : -1) : 0;
@@ -1101,10 +1120,10 @@ function tick() {
       + `gerealiseerd ${sgn(pf.pnl, 2)} · open ${sgn(pf.upnl, 2)}`;
     const eq = Math.max(pf.equity, 1e-9);
     $('pfMargin').innerHTML = pf.open.map(t => `<i title="${t.coin} marge ${usd(t.margin, 2)}" style="width:${t.margin / eq * 100}%;background:${tColor(t.coin)}"></i>`).join('');
-    $('pfOpen').innerHTML = `<div class="muted"><span>vrij</span><span>${usd(pf.free, 0)}</span><span>in gebruik ${usd(pf.used, 2)}</span><span></span><span></span></div>`
+    $('pfOpen').innerHTML = `<div class="muted"><span>vrij</span><span>${usd(pf.free, 0)}</span><span>in gebruik ${usd(pf.used, 2)}</span><span>marge</span><span>vertrouwen</span><span>pnl</span></div>`
       + pf.open.map(t => `<div data-c="${t.coin}" title="Open ${t.coin} op de grafiek"><b style="color:${tColor(t.coin)}">${short(t.coin)}</b><span>${t.side} ${t.lev}x</span>
         <span class="bar"><i style="width:${Math.min(100, t.margin / eq * 400)}%;background:${tColor(t.coin)}"></i></span>
-        <span>${usd(t.margin, 2)}</span><span class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}</span></div>`).join('');
+        <span>${usd(t.margin, 2)}</span><span>${confCell(t)}</span><span class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}</span></div>`).join('');
     $('stTickets').textContent = n; $('stWin').textContent = n ? fmt(pf.wins / n * 100, 1) + '%' : '–';
     $('stAvg').textContent = n ? sgn(pf.pnl / n, 2) : '–'; $('stDd').textContent = fmt(dd * 100, 1) + '%';
     $('hdPnl').innerHTML = `<span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 2)}</span>`; $('hdTickets').textContent = n;
@@ -1123,6 +1142,7 @@ async function setCoin(c) {
   renderCoinSeg();
   $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
   Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
+  if (st.entryLine) { cs.removePriceLine(st.entryLine); st.entryLine = null; }
   st.passes = {}; st.heat = {}; st.heatStep = 0; st.featMin = {};
   for (const f of Object.keys(featSeries)) { chart.removeSeries(featSeries[f]); delete featSeries[f]; }
   stopSim(); await loadHistory(); connect(); drawBalance(); renderMarks(); syncFeatSeries(); pollHeat();
@@ -1187,13 +1207,19 @@ $('scanBody').onclick = async e => {
 const TCOL = ['#e5383b', '#2463eb', '#f08c00', '#2fbf4a', '#9b5de5', '#13b5a6', '#d6336c', '#0b7285', '#e67700', '#5c940d', '#7048e8', '#c2255c', '#1098ad', '#862e9c'];
 const tColor = c => { if (!c) return '#8a92a3'; let h = 0; for (const ch of c) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return TCOL[h % TCOL.length]; };
 const allState = { rows: [], filter: new Set(), n: 0, order: [], sortedAt: 0 };
+// vertrouwen in een open trade: de huidige kans van het model dat de koers zijn kant op gaat tot het venster sluit
+function tradeConf(t) {
+  const m = st.auto && st.auto.markets && st.auto.markets[t.coin], p = m && m.model && m.model.p;
+  return p == null ? null : (t.side === 'long' ? p : 1 - p);
+}
+const confCell = t => { const c = tradeConf(t); return c == null ? '–' : `<span class="${c >= .5 ? 'up' : 'down'}" title="kans volgens het model dat de koers nu de kant van deze trade op gaat">${fmt(c * 100, 0)}%</span>`; };
 function renderTrades() {
   const a = st.auto, pf = a.portfolio || { open: [] }, d = v => v == null ? '–' : fmt(v, v >= 100 ? 2 : v >= 1 ? 4 : 6);
   const tk = c => `<b style="color:${tColor(c)}">${short(c)}</b>`, side = sd => `<span class="${sd === 'long' ? 'up' : 'down'}">${sd === 'long' ? '▲ long' : '▼ short'}</span>`;
-  $('trOpen').innerHTML = '<tr><th>ticker</th><th>kant</th><th>positie</th><th>instap</th><th>nu</th><th>status</th><th>pnl</th></tr>'
+  $('trOpen').innerHTML = '<tr><th>ticker</th><th>kant</th><th>positie</th><th>instap</th><th>nu</th><th>status</th><th>vertrouwen</th><th>pnl</th></tr>'
     + (pf.open.map(t => `<tr data-c="${t.coin}"><td>${tk(t.coin)}</td><td>${side(t.side)} ${t.lev}x</td><td>${usd(t.usd)}</td><td>${d(t.entry)}</td><td>${d(t.px)}</td>
-      <td>${{ entering: 'limiet wacht', open: 'open', exiting: 'uitstap' }[t.state] || t.state}</td><td class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? '–' : sgn(t.upnl, 2)}</td></tr>`).join('')
-      || '<tr><td colspan="7" class="muted">geen open trades</td></tr>');
+      <td>${{ entering: 'limiet wacht', open: 'open', exiting: 'uitstap' }[t.state] || t.state}</td><td>${confCell(t)}</td><td class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? '–' : sgn(t.upnl, 2)}</td></tr>`).join('')
+      || '<tr><td colspan="8" class="muted">geen open trades</td></tr>');
   const hs = (a.history || []).slice().reverse();
   $('trDone').innerHTML = '<tr><th>dicht</th><th>ticker</th><th>kant</th><th>positie</th><th>in → uit</th><th>uitstap</th><th>edge</th><th>pnl</th></tr>'
     + (hs.map(h => `<tr data-c="${h.coin}"><td class="muted">${hhmmss(h.t).slice(0, 5)}</td><td>${tk(h.coin)}${h.paper ? '' : ' <b class="down">LIVE</b>'}</td><td>${side(h.side)} ${h.lev}x</td>
