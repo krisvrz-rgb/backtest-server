@@ -289,7 +289,10 @@
     <div class="alltop"><canvas id="allRing" class="fill" style="height:460px;cursor:pointer" title="Klik een ticker om hem op de Desk te openen"></canvas>
       <div id="pfSlot"></div></div>
     <div class="chips" id="allChips"></div>
-    <div class="cap" style="margin:-4px 0 6px">kaartjes gesorteerd op sterkte van de score (|score|, long en short), elke 10 s opnieuw</div>
+    <div style="display:flex;gap:10px;align-items:center;margin:-2px 0 8px"><span class="cap">sorteren op</span>
+      <span class="seg" id="sortSeg"><button data-by="edge">edge</button><button data-by="score">score</button></span>
+      <span class="cap">ring, ranglijst en kaartjes elke 10 s opnieuw · groen = edge boven 0 (kans verslaat de kosten), rood = eronder</span></div>
+    <div style="overflow:auto;max-height:420px;margin-bottom:10px"><table class="scan" id="edgeList"></table></div>
     <div class="cards" id="allCards"></div>
   </div>
   <div class="panel">
@@ -921,7 +924,10 @@ $('coachDetect').onclick = async () => {
   const r = await fetch('/api/desk/coach/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: S.token, detect: true }) });
   const j = await r.json().catch(() => ({})); $('coachCfg').textContent = r.ok ? `gevonden: ${j.config.model} op ${j.config.url} (ook: ${(j.models || []).slice(1, 4).join(', ')})` : (j.detail || 'niet gevonden');
 };
-setInterval(pollCoach, 10000); setInterval(renderLearn, 5000);
+setInterval(pollCoach, 10000);
+$('sortSeg').onclick = e => { const b = e.target.dataset.by; if (!b) return; allState.by = b; localStorage.setItem('desk.sortBy', b); allState.sortedAt = 0; renderAll(); };
+$('edgeList').onclick = e => { const r = e.target.closest('tr[data-c]'); if (!r) return;
+  document.querySelector('.tabs button[data-tab="desk"]').click(); if (r.dataset.c !== st.coin) setCoin(r.dataset.c); }; setInterval(renderLearn, 5000);
 
 // ---------- trace / wire ----------
 function trace(from, to, act, text, val = '', at = Date.now(), coin = st.coin) {
@@ -1277,7 +1283,8 @@ let allSpots = [];
 function drawAllRing(tm) {
   const c = $('allRing'), [x, w, h] = canvasCtx(c), a = st.auto; allSpots = [];
   if (!a) return;
-  const coins = Object.keys(a.coins).filter(k => a.coins[k]), open = {};
+  const on = Object.keys(a.coins).filter(k => a.coins[k]), open = {};
+  const coins = allState.order.filter(c => on.includes(c)).concat(on.filter(c => !allState.order.includes(c)));  // beste bovenaan, met de klok mee
   for (const t of (a.portfolio && a.portfolio.open) || []) open[t.coin] = t;
   const cx = w / 2, cy = h / 2, R = Math.min(w * .44, 900), ry = h / 2 - 50;
   // gelijke afstand langs de omtrek van de ellips, anders klonteren de cirkels samen aan de smalle uiteinden
@@ -1294,7 +1301,7 @@ function drawAllRing(tm) {
   x.fillText(`venster ${winLbl()} · drempel ${sgn(a.min_edge || 0, 0, '¢')}`, cx, cy + 34);
   coins.forEach((coin, i) => {
     const [px, py] = at(i / coins.length);
-    const t = open[coin], m = a.markets[coin] || {}, col = tColor(coin), r = t ? 26 + Math.sin(tm * 4) * 2 : 20;
+    const t = open[coin], m = a.markets[coin] || {}, col = edgeCol(m.model && m.model.edge), r = t ? 26 + Math.sin(tm * 4) * 2 : 20;
     if (TH.dark) { x.shadowColor = col; x.shadowBlur = t ? 30 : 10; }
     if (t) {  // draaiende boog rond de bol: groen vooruit bij winst, rood achteruit bij verlies
       x.beginPath(); x.arc(px, py, r + 9, 0, 7); x.strokeStyle = col; x.lineWidth = 3; x.globalAlpha = .25; x.stroke(); x.globalAlpha = 1;
@@ -1307,7 +1314,7 @@ function drawAllRing(tm) {
     x.lineWidth = 3; x.strokeStyle = col; x.stroke(); x.shadowBlur = 0;
     x.fillStyle = t ? '#fff' : col; x.font = '700 11px ui-monospace, monospace'; x.fillText(short(coin).slice(0, 6), px, py + 4);
     x.fillStyle = TH.text; x.font = '10px ui-monospace, monospace';
-    const lbl = t ? `${t.side === 'long' ? '▲' : '▼'} ${t.lev}x ${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}` : `edge ${m.model && m.model.edge != null ? sgn(m.model.edge, 1, '¢') : '–'}`;
+    const lbl = t ? `${t.side === 'long' ? '▲' : '▼'} ${t.lev}x ${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}` : allState.by === 'score' ? `score ${m.score == null ? '–' : sgn(m.score, 2)}` : `edge ${edgeTxt(m.model && m.model.edge)}`;
     x.fillText(lbl, px, py + r + 15);
     allSpots.push({ coin, px, py, r });
   });
@@ -1623,7 +1630,12 @@ $('scanBody').onclick = async e => {
 // ---------- tabblad Alle tickers ----------
 const TCOL = ['#e5383b', '#2463eb', '#f08c00', '#2fbf4a', '#9b5de5', '#13b5a6', '#d6336c', '#0b7285', '#e67700', '#5c940d', '#7048e8', '#c2255c', '#1098ad', '#862e9c'];
 const tColor = c => { if (!c) return '#8a92a3'; let h = 0; for (const ch of c) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return TCOL[h % TCOL.length]; };
-const allState = { rows: [], filter: new Set(), n: 0, order: [], sortedAt: 0 };
+const allState = { rows: [], filter: new Set(), n: 0, order: [], sortedAt: 0, by: localStorage.getItem('desk.sortBy') || 'edge' };
+// edge-kleur: groen = genoeg kans om de kosten te verslaan, rood = niet; feller = verder van 0
+const edgeCol = e => e == null ? '#8a92a3' : e >= 0 ? `rgb(${Math.round(22 + 30 * (1 - clamp(e / 10, 0, 1)))},${Math.round(150 + 60 * clamp(e / 10, 0, 1))},100)`
+  : `rgb(${Math.round(170 + 69 * clamp(-e / 20, 0, 1))},58,93)`;
+const edgeTxt = e => e == null ? '–' : e < -99 ? '< −99¢' : sgn(e, 1, '¢');
+const sortVal = (a, c) => { const m = a.markets[c] || {}; return allState.by === 'score' ? Math.abs(m.score || 0) : ((m.model || {}).edge ?? -1e9); };
 // vertrouwen in een open trade: de huidige kans van het model dat de koers zijn kant op gaat tot het venster sluit
 function tradeConf(t) {
   const m = st.auto && st.auto.markets && st.auto.markets[t.coin], p = m && m.model && m.model.p;
@@ -1668,10 +1680,18 @@ function renderAll() {
   $('allChips').innerHTML = coins.map(c => `<button style="--c:${tColor(c)}" class="${allState.filter.has(c) ? 'on' : ''}" data-c="${c}">${short(c)}</button>`).join('')
     + (allState.filter.size ? '<button style="--c:#8a92a3" data-c="">alles tonen</button>' : '');
   if (Date.now() - allState.sortedAt > 10000 || allState.order.length !== coins.length || coins.some(c => !allState.order.includes(c))) {
-    allState.order = coins.slice().sort((x, y) => Math.abs((a.markets[y] || {}).score || 0) - Math.abs((a.markets[x] || {}).score || 0));
+    allState.order = coins.slice().sort((x, y) => sortVal(a, y) - sortVal(a, x));
     allState.sortedAt = Date.now();
   }
   renderTrades();
+  $('sortSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.by === allState.by));
+  $('edgeList').innerHTML = '<tr><th>#</th><th>ticker</th><th>edge</th><th>kant</th><th>kans</th><th>break-even</th><th>score</th><th>verwachte beweging</th><th>trade</th></tr>'
+    + allState.order.map((c, i) => { const m = a.markets[c] || {}, mo = m.model || {}, tk = m.ticket;
+      return `<tr data-c="${c}" style="cursor:pointer"><td class="muted">${i + 1}</td><td><b style="color:${tColor(c)}">${short(c)}</b></td>
+        <td style="color:${edgeCol(mo.edge)};font-weight:700">${edgeTxt(mo.edge)}</td><td>${mo.side ? (mo.side === 'long' ? '▲ long' : '▼ short') : '–'}</td>
+        <td>${mo.pDir == null ? '–' : cents(mo.pDir)}</td><td>${mo.be == null ? '–' : mo.be > 1 ? '> 100¢' : cents(mo.be)}</td>
+        <td>${m.score == null ? '–' : sgn(m.score, 2)}</td><td>${mo.eMove == null ? '–' : fmt(mo.eMove, 1) + ' bp'}</td>
+        <td>${tk ? `<span class="${tk.side === 'long' ? 'up' : 'down'}">${tk.side} ${tk.lev}x</span>` : '<span class="muted">–</span>'}</td></tr>`; }).join('');
   $('allCards').innerHTML = allState.order.map(c => {
     const m = a.markets[c] || {}, mo = m.model || {}, tk = m.ticket, h = a.history.filter(x => x.coin === c), pnl = h.reduce((s, x) => s + x.pnl, 0);
     return `<div class="card" style="--c:${tColor(c)}"><div class="kv"><b class="t"><span title="${tk ? tk.side + ' ' + tk.state : 'geen trade'}" style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;background:${tk ? (tk.side === 'long' ? '#16b364' : '#ef3a5d') : '#e6e9f0'};box-shadow:${tk ? '0 0 0 3px ' + tColor(c) + '55' : 'none'}"></span>${short(c)}</b><span>${m.px ? fmt(m.px, m.px >= 100 ? 2 : 4) : '–'}</span></div>
