@@ -870,8 +870,13 @@ function renderPnl() {
   }
   const tz = -new Date().getTimezoneOffset() * 60;  // grafiek toont lokale tijd
   const rows = pnlS.rows.filter(r => r[2] === (pnlS.m === 'paper')), b = pnlS.b, agg = new Map();
-  for (const [t, p] of rows) { const k = bucketStart(t, b), a = agg.get(k) || { n: 0, w: 0, p: 0, best: -1e9, worst: 1e9 };
-    a.n++; a.w += p > 0 ? 1 : 0; a.p += p; a.best = Math.max(a.best, p); a.worst = Math.min(a.worst, p); agg.set(k, a); }
+  rows.forEach(([t, p, , coin, side, why], i) => { const k = b === 'a' ? t + i / 1000 : bucketStart(t, b),  // per trade: twee trades in dezelfde ms blijven apart
+      a = agg.get(k) || { n: 0, w: 0, p: 0, best: -1e9, worst: 1e9, coins: new Map() };
+    a.n++; a.w += p > 0 ? 1 : 0; a.p += p; a.best = Math.max(a.best, p); a.worst = Math.min(a.worst, p);
+    a.coins.set(coin, (a.coins.get(coin) || 0) + p); a.side = side; a.why = why; agg.set(k, a); });
+  const tick = a => b === 'a' ? `<b>${[...a.coins.keys()][0] || '?'}</b> <span class="${a.side === 'long' ? 'up' : 'down'}">${a.side || ''}</span> <span class="muted">${a.why || ''}</span>`
+    : [...a.coins].sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])).slice(0, 6)  // grootste bijdrage eerst
+      .map(([c, v]) => `<span class="${v >= 0 ? 'up' : 'down'}">${c} ${sgn(v, 2)}</span>`).join(' · ') + (a.coins.size > 6 ? ` <span class="muted">+${a.coins.size - 6}</span>` : '');
   const ks = [...agg.keys()].sort((x, y) => x - y); let cum = 0, last = -1;
   const bars = [], line = [];
   for (const k of ks) { let ts = Math.floor(k / 1000) + tz; if (ts <= last) ts = last + 1; last = ts;
@@ -883,11 +888,11 @@ function renderPnl() {
   const pos = ks.filter(k => agg.get(k).p > 0).length, name = { h: 'uren', d: 'dagen', w: 'weken', m: 'maanden', y: 'jaren', a: 'trades' }[b];
   $('pnlSum').innerHTML = `<span>totaal <b class="${tot >= 0 ? 'up' : 'down'}">${sgn(tot, 2)}</b></span><span>${n} trades · winrate ${n ? fmt(w / n * 100, 0) : '–'}%</span>
     <span>${pos} van ${ks.length} ${name} in de plus</span>${ks.length ? `<span>beste ${sgn(Math.max(...ks.map(k => agg.get(k).p)), 2)} · slechtste ${sgn(Math.min(...ks.map(k => agg.get(k).p)), 2)}</span>` : ''}`;
-  $('pnlTable').innerHTML = `<tr><th>${{ h: 'uur', d: 'dag', w: 'week', m: 'maand', y: 'jaar', a: 'trade' }[b]}</th><th>trades</th><th>winrate</th><th>beste</th><th>slechtste</th><th>pnl</th><th>totaal</th></tr>`
+  $('pnlTable').innerHTML = `<tr><th>${{ h: 'uur', d: 'dag', w: 'week', m: 'maand', y: 'jaar', a: 'trade' }[b]}</th><th>${b === 'a' ? 'ticker' : 'tickers'}</th><th>trades</th><th>winrate</th><th>beste</th><th>slechtste</th><th>pnl</th><th>totaal</th></tr>`
     + (ks.length ? ks.slice().reverse().slice(0, 60).map(k => { const a = agg.get(k), c = line[ks.indexOf(k)].value;
-      return `<tr><td>${bucketLbl(k, b)}</td><td>${a.n}</td><td>${fmt(a.w / a.n * 100, 0)}%</td><td>${sgn(a.best, 2)}</td><td>${sgn(a.worst, 2)}</td>
+      return `<tr><td>${bucketLbl(k, b)}</td><td>${tick(a)}</td><td>${a.n}</td><td>${fmt(a.w / a.n * 100, 0)}%</td><td>${sgn(a.best, 2)}</td><td>${sgn(a.worst, 2)}</td>
         <td class="${a.p >= 0 ? 'up' : 'down'}">${sgn(a.p, 2)}</td><td class="${c >= 0 ? 'up' : 'down'}">${sgn(c, 2)}</td></tr>`; }).join('')
-      : `<tr><td colspan="7" class="muted">nog geen afgesloten ${pnlS.m === 'paper' ? 'papier' : 'live'}trades</td></tr>`);
+      : `<tr><td colspan="8" class="muted">nog geen afgesloten ${pnlS.m === 'paper' ? 'papier' : 'live'}trades</td></tr>`);
 }
 $('pnlSeg').onclick = e => { const b = e.target.dataset.b; if (!b) return; pnlS.b = b;
   $('pnlSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.b === b)); renderPnl(); };
