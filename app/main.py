@@ -23,6 +23,7 @@ from .watchlist import (PORTFOLIO_LIST, default_periods, PORTFOLIO_URL, SCANNER,
                         list_name, load_watchlist, parse_tradingview, replace_lists, save_watchlist, tv_to_yahoo,
                         scan_cached, ticker_detail, watchlist_view)
 from .robust import cross_ticker
+from . import desk
 from .picks import picks, strategy_scores
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
 from .strategies.plot import indicators
@@ -151,6 +152,63 @@ def watchlist_page():
 @app.get("/aanraders", include_in_schema=False)
 def picks_page():
     return FileResponse(STATIC_DIR / "picks.html")
+
+
+@app.get("/desk", include_in_schema=False)
+def desk_page():
+    return FileResponse(STATIC_DIR / "desk.html")
+
+
+class DeskOrder(BaseModel):
+    coin: str
+    side: Literal["long", "short"] | None = None
+    usd: float = 0
+    token: str | None = None
+
+
+@app.get("/api/desk/status")
+def desk_status():
+    return desk.status()
+
+
+@app.get("/api/desk/candles")
+def desk_candles(coin: str = "BTC", interval: str = "1m", minutes: int = Query(180, ge=10, le=1440)):
+    try:
+        return desk.candles(coin, interval, minutes)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Hyperliquid niet bereikbaar: {e}")
+
+
+@app.get("/api/desk/account")
+def desk_account():
+    try:
+        return desk.account()
+    except Exception as e:
+        raise HTTPException(502, f"Hyperliquid niet bereikbaar: {e}")
+
+
+@app.post("/api/desk/open")
+def desk_open(req: DeskOrder):
+    if req.side is None:
+        raise HTTPException(400, "side ontbreekt")
+    try:
+        return desk.open_position(req.coin, req.side, req.usd, req.token)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/desk/close")
+def desk_close(req: DeskOrder):
+    try:
+        return desk.close_position(req.coin, req.token)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/health")

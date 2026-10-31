@@ -95,6 +95,28 @@ Beschikbare bouwstenen staan in `app/strategies/dsl.py`: SMA, EMA, WMA, HMA, VWM
 CCI, CMO, TSI, ROC, MOM, Williams %R, MFI, OBV, ATR, DMI/ADX, Supertrend, Parabolic SAR, Bollinger,
 Keltner, Donchian, `crosses_above`/`crosses_below`, `expr[n]` (n bars terug) en `&`, `|`, `~`.
 
+## Swarm Desk (`/desk`)
+
+Een live dashboard waarop zes agents (Spotter, Prior, Edge, Kelly, Taker, Closer) per venster van 5 minuten
+beslissen of ze BTC of ETH long of short gaan op Hyperliquid. Koersen, trades en orderboek komen rechtstreeks
+van de openbare Hyperliquid-websocket; zonder verbinding valt de pagina terug op een gesimuleerde koers.
+
+- **Spotter** combineert koopdruk (trades), orderboek en momentum tot een score tussen -1 en 1.
+- **Prior** leert uit elk afgesloten venster hoeveel die score echt voorspelt (β, met krimp naar 0,25).
+- **Edge** vergelijkt de winkans met de break-even na kosten (standaard taker 4,5 bp per kant + 1 bp slippage).
+- **Kelly** bepaalt de grootte (kwart-Kelly, afgetopt), **Taker** voert uit, **Closer** rekent af bij sluiting.
+
+Standaard is alles papier (saldo per coin in de browser). Voor echte orders:
+
+1. `pip install hyperliquid-python-sdk` in de venv.
+2. Maak op Hyperliquid een API-wallet aan (kan handelen, niet opnemen) en zet in `data/desk.env`:
+   `HL_SECRET_KEY`, `HL_ACCOUNT_ADDRESS`, `DESK_TOKEN`, `DESK_LIVE=1`, `DESK_MAX_USD=25`.
+3. Herstart de server, open `/desk` → Instellingen, vul het token in en zet live aan.
+
+Elke nieuwe positie vraagt een klik binnen 20 seconden; sluiten bij het einde van het venster en de kill switch
+gebeuren automatisch (reduce-only). Sluit je de pagina met een open live positie, dan blijft die open op Hyperliquid.
+Alle live orders komen in `data/desk-orders.jsonl`.
+
 ## Tests
 
 ```bash

@@ -1,0 +1,853 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm Desk · Backtest Server</title>
+<script src="/static/lightweight-charts.js"></script>
+<style>
+  :root {
+    --bg: #f6f7fb; --panel: #ffffff; --panel-2: #f3f5f9; --text: #15171c; --muted: #8a92a3; --border: #e6e9f0;
+    --up: #16b364; --down: #ef3a5d; --accent: #2463eb; --warn: #f08c00;
+    --taker: #f08c00; --spotter: #e5383b; --kelly: #2fbf4a; --edge: #13b5a6; --closer: #12b5e5; --prior: #2463eb;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--muted); }
+  .mono, .num { font-family: var(--mono); }
+  .num { font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); }
+  .cap { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+  /* bovenbalk */
+  .top { display: flex; align-items: center; gap: 22px; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .logo { width: 34px; height: 34px; border-radius: 50%; background: #15171c; display: grid; place-items: center; }
+  .brand .logo i { display: inline-block; width: 4px; height: 12px; background: #fff; border-radius: 2px; margin: 0 2px; }
+  .brand b { font-size: 20px; letter-spacing: .02em; }
+  .brand small { display: block; font-size: 9px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; }
+  .nav { display: flex; gap: 14px; font-size: 12px; }
+  .stat { display: grid; line-height: 1.1; }
+  .stat b { font: 600 17px var(--mono); }
+  .stat span { font-size: 9px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+  .clock { font: 600 26px var(--mono); }
+  .grow { flex: 1; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; background: var(--panel); padding: 5px 10px; font: 600 12px var(--mono); cursor: pointer; color: var(--muted); }
+  .seg button.on { background: var(--text); color: #fff; }
+  .badge { font: 700 11px var(--mono); padding: 4px 9px; border-radius: 6px; border: 1.5px solid; letter-spacing: .06em; }
+  .badge.paper { color: var(--accent); border-color: var(--accent); }
+  .badge.live { color: #fff; background: var(--down); border-color: var(--down); animation: blink 1.4s infinite; }
+  .badge.sim { color: var(--warn); border-color: var(--warn); }
+  @keyframes blink { 50% { opacity: .55; } }
+  button.btn { font: 600 12px inherit; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  button.btn.danger { color: var(--down); border-color: var(--down); }
+  button.btn.go { color: #fff; background: var(--up); border-color: var(--up); }
+
+  /* statusregel + live wire */
+  .strip { display: flex; gap: 26px; padding: 7px 18px; background: var(--panel); border-bottom: 1px solid var(--border); font: 600 11px var(--mono); flex-wrap: wrap; }
+  .strip .pill { color: var(--down); }
+  .wire { display: flex; align-items: center; background: var(--panel); border-bottom: 1px solid var(--border); overflow: hidden; height: 28px; }
+  .wire .lbl { background: #15171c; color: #fff; font: 700 10px var(--mono); padding: 0 12px; height: 100%; display: grid; place-items: center; letter-spacing: .1em; flex: none; }
+  .wire .run { white-space: nowrap; font: 11px var(--mono); color: var(--muted); display: flex; gap: 26px; padding-left: 14px; }
+  .wire .run span b { color: var(--text); }
+  .wire .chip { color: #fff; border-radius: 9px; padding: 1px 7px; font-weight: 700; }
+
+  /* agents */
+  .agents { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; padding: 10px 18px; }
+  .agent { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; display: flex; align-items: center; gap: 10px; border-bottom: 3px solid var(--border); transition: border-color .3s; }
+  .agent.work { border-bottom-color: var(--c); box-shadow: 0 4px 14px -8px var(--c); }
+  .blob { width: 30px; height: 30px; border-radius: 50%; background: var(--c); display: grid; place-items: center; flex: none; }
+  .blob i { display: inline-block; width: 3px; height: 10px; background: #fff; border-radius: 2px; margin: 0 1.5px; }
+  .agent b { font-size: 15px; letter-spacing: .02em; display: block; }
+  .agent .role { font-size: 9px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+  .agent .st { margin-left: auto; text-align: right; font: 600 10px var(--mono); color: var(--muted); text-transform: uppercase; }
+  .agent.work .st { color: var(--c); }
+
+  /* panelen */
+  main { padding: 0 18px 30px; display: grid; gap: 10px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+  .ph { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; flex-wrap: wrap; }
+  .ph h2 { margin: 0; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+  .ph h2::before { content: "◆ "; }
+  .ph .sub { font-size: 10px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+  .ph .right { margin-left: auto; font: 600 11px var(--mono); color: var(--muted); }
+
+  .reactor { display: grid; grid-template-columns: 230px minmax(0, 1fr) 260px; gap: 12px; }
+  .bank { display: grid; gap: 7px; }
+  .spark { border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; position: relative; }
+  .spark .hd { display: flex; font: 700 10px var(--mono); letter-spacing: .06em; }
+  .spark .hd span { margin-left: auto; color: var(--accent); }
+  .spark canvas { width: 100%; height: 40px; display: block; }
+  .ring { position: relative; min-height: 520px; }
+  .ring canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .ring .hud { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: flex-start; pointer-events: none; }
+  .ring .big { font: 700 30px var(--mono); }
+  .ring .mid { text-align: center; flex: 1; font: 600 10px var(--mono); color: var(--muted); letter-spacing: .06em; }
+  .ring .mid b { color: var(--text); display: block; font-size: 11px; }
+  .ring .bar { position: absolute; left: 4%; right: 4%; top: 96px; display: grid; grid-template-columns: repeat(6, 1fr); border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,.85); font: 600 12px var(--mono); }
+  .ring .bar div { padding: 6px 10px; border-right: 1px solid var(--border); }
+  .ring .bar div:last-child { border: 0; }
+  .ctrl { display: grid; gap: 8px; align-content: start; }
+  .box { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  .box h3 { margin: 0 0 6px; font: 700 10px var(--mono); letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+  .kv { display: flex; font: 12px var(--mono); padding: 1px 0; }
+  .kv span:last-child { margin-left: auto; font-weight: 600; }
+  .conf { display: grid; grid-template-columns: 60px 1fr 34px; gap: 6px; align-items: center; font: 600 10px var(--mono); margin: 3px 0; }
+  .conf .track { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+  .conf .track div { height: 100%; border-radius: 3px; transition: width .5s; }
+  .exhaust { font: 11px var(--mono); max-height: 110px; overflow: auto; }
+  .exhaust div { display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px dashed var(--border); }
+  .exhaust div span:last-child { margin-left: auto; }
+  .approve { border: 2px solid var(--down); border-radius: 8px; padding: 8px 10px; display: none; }
+  .approve.on { display: block; animation: blink 1.2s infinite; }
+  .approve .row { display: flex; gap: 6px; margin-top: 6px; }
+
+  .row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 10px; }
+  .row3 { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.2fr); gap: 10px; }
+  .pnlbig { font: 700 44px var(--mono); color: var(--down); }
+  .pnlbig.pos { color: var(--up); }
+  .pnlbig sup { font-size: 22px; }
+  .stats4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
+  .stats4 b { font: 700 17px var(--mono); display: block; }
+  .stats4 span { font-size: 9px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+  canvas.fill { width: 100%; display: block; }
+  .tape { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 10px; }
+  #chart { height: 330px; }
+  .book { font: 11px var(--mono); }
+  .book div { display: grid; grid-template-columns: 1fr 1fr; position: relative; padding: 1px 4px; }
+  .book div i { position: absolute; right: 0; top: 1px; bottom: 1px; opacity: .22; border-radius: 2px; }
+  .book div span:last-child { text-align: right; }
+  .book .spread { text-align: center; display: block; color: var(--muted); padding: 3px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 2px 0; }
+  .trace { font: 11px var(--mono); max-height: 270px; overflow: auto; }
+  .trace .t { display: grid; grid-template-columns: 14px 62px 70px 1fr auto; gap: 8px; align-items: center; padding: 3px 0; border-bottom: 1px dashed var(--border); }
+  .trace .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .trace .who { font-weight: 700; padding: 1px 5px; border-radius: 4px; color: #fff; text-align: center; font-size: 10px; }
+  .trace .hand { font-weight: 700; }
+  .prc4 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 6px; }
+  .prc4 div { border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font: 700 13px var(--mono); }
+  .prc4 div span { display: block; font: 9px system-ui; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .spec { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 8px; }
+  .feat { font: 10px var(--mono); }
+  .feat div { display: grid; grid-template-columns: 60px 1fr; gap: 5px; align-items: center; margin: 2px 0; }
+  .feat i { height: 5px; border-radius: 2px; display: block; }
+
+  .foot { position: sticky; bottom: 0; background: #15171c; color: #cfd3db; font: 11px var(--mono); padding: 6px 18px; display: flex; gap: 26px; flex-wrap: wrap; }
+  .foot b { color: #fff; }
+
+  dialog { border: 1px solid var(--border); border-radius: 12px; padding: 18px; max-width: 520px; }
+  dialog label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); margin: 8px 0; }
+  dialog input { font: 13px var(--mono); padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+  dialog p { font-size: 12px; color: var(--muted); }
+
+  @media (max-width: 1250px) {
+    .reactor { grid-template-columns: 1fr; } .bank { grid-template-columns: repeat(3, 1fr); }
+    .row2, .row3, .tape { grid-template-columns: 1fr; } .agents { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="brand"><div class="logo"><i></i><i></i></div>
+    <div><b>SWARM DESK</b><small>zes agents · één boek · <span id="coinLbl">BTC</span> 5m · hyperliquid</small></div></div>
+  <div class="nav"><a href="/">Overzicht</a><a href="/tool">Backtest</a><a href="/watchlist">Watchlist</a><a href="/aanraders">Aanraders</a></div>
+  <div class="seg" id="coinSeg"><button data-c="BTC" class="on">BTC</button><button data-c="ETH">ETH</button></div>
+  <div class="stat"><b class="num" id="hdSpot">–</b><span>spot · hyperliquid</span></div>
+  <div class="stat"><b class="num" id="hdPnl">–</b><span>swarm pnl</span></div>
+  <div class="stat"><b class="num" id="hdTickets">0</b><span>tickets</span></div>
+  <div class="grow"></div>
+  <div class="clock num" id="clock">--:--:--</div><span class="cap">utc</span>
+  <span class="badge paper" id="modeBadge">PAPER</span>
+  <span class="badge sim" id="feedBadge" style="display:none">SIMULATIE</span>
+  <button class="btn" id="setBtn">Instellingen</button>
+  <button class="btn danger" id="killBtn" title="Sluit alle posities en zet de desk op pauze">Kill switch</button>
+</div>
+<div class="strip">
+  <span class="pill">● ZES AGENTS LIVE</span>
+  <span>HOLDER <b id="sHolder">–</b></span>
+  <span>HANDOFFS/MIN <b id="sHand">0</b></span>
+  <span>MODEL <b id="sFair">–</b> VS BREAK-EVEN <b id="sBe">–</b></span>
+  <span>EDGE <b id="sEdge">–</b></span>
+  <span>OPEN <b id="sOpen">0</b> TICKETS</span>
+  <span>MENSELIJKE GOEDKEURING <b id="sAppr">ALLEEN LIVE</b></span>
+</div>
+<div class="wire"><div class="lbl">LIVE WIRE</div><div class="run" id="wire"></div></div>
+
+<div class="agents" id="agents"></div>
+
+<main>
+  <section class="panel">
+    <div class="ph"><h2>The Reactor</h2><span class="sub">zes spoelen houden de ring · één ticket rijdt mee · het model in de kern</span>
+      <span class="right" id="stage">VENSTER –</span></div>
+    <div class="reactor">
+      <div class="bank" id="bank"></div>
+      <div class="ring">
+        <canvas id="ring"></canvas>
+        <div class="hud">
+          <div><div class="cap" id="ringCoin">BTC · hyperliquid perp</div><div class="big num" id="ringSpot">–</div>
+            <div class="cap">open venster <span class="num" id="ringOpen">–</span></div></div>
+          <div class="mid"><b id="ringWin">VENSTER –</b><span id="ringLeft">sluit over –</span></div>
+          <div style="text-align:right"><div class="cap">P(stijgt) tot sluiting</div><div class="big num" id="ringFair">–</div>
+            <div class="cap">break-even <span class="num" id="ringBe">–</span></div></div>
+        </div>
+        <div class="bar">
+          <div id="barCoin">BTC UP 5M</div><div class="num" id="barSpot">–</div><div class="num" id="barMove">–</div>
+          <div class="num" id="barVol">–</div><div class="num" id="barP">–</div><div class="num" id="barEdge">–</div>
+        </div>
+      </div>
+      <div class="ctrl">
+        <div class="approve" id="approve">
+          <h3 style="color:var(--down)">Goedkeuring nodig · echte order</h3>
+          <div class="kv"><span id="apText">–</span></div>
+          <div class="row"><button class="btn go" id="apYes">Uitvoeren</button><button class="btn" id="apNo">Weigeren</button>
+            <span class="num muted" id="apTimer" style="margin-left:auto"></span></div>
+        </div>
+        <div class="box"><h3>Live ticket</h3><div id="ticket" class="mono muted">Geen open ticket</div></div>
+        <div class="box"><h3>Vertrouwen per agent</h3><div id="conf"></div></div>
+        <div class="box"><h3>Plasma flow · koopdruk</h3><canvas id="plasma" class="fill" height="50"></canvas></div>
+        <div class="box"><h3>Exhaust log · afgerekend</h3><div class="exhaust" id="exhaust"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="row2">
+    <section class="panel">
+      <div class="ph"><h2>Swarm PnL</h2><span class="sub">één boek · saldo</span><span class="right" id="pnlMode">PAPER</span></div>
+      <div class="cap" id="pnlWho">papiersaldo</div>
+      <div class="pnlbig num" id="balance">–</div>
+      <div class="num muted" id="lastSettle">nog niets afgerekend</div>
+      <div class="stats4">
+        <div><b id="stTickets">0</b><span>tickets</span></div>
+        <div><b id="stWin">–</b><span>win rate</span></div>
+        <div><b id="stAvg">–</b><span>gem. pnl</span></div>
+        <div><b id="stDd">–</b><span>max dd</span></div>
+      </div>
+      <canvas id="balChart" class="fill" height="150"></canvas>
+      <canvas id="pnlBars" class="fill" height="50"></canvas>
+      <div id="split" style="margin-top:8px"></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>The Tape</h2><span class="sub"><span id="tapeCoin">BTC</span> 1m · vwap · live orderboek</span>
+        <span class="right" id="tapeStats">–</span></div>
+      <div class="tape">
+        <div><div class="big num" id="tapePx" style="font:700 26px var(--mono)">–</div><div id="chart"></div></div>
+        <div class="book" id="book"></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="row3">
+    <section class="panel">
+      <div class="ph"><h2>The Trace</h2><span class="sub">elke stap die de desk zet</span><span class="right" id="traceCount">0 stappen</span></div>
+      <div class="trace" id="trace"></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>The Pricer</h2><span class="sub">spot · vol · tijd · p(stijgt)</span></div>
+      <canvas id="dist" class="fill" height="190"></canvas>
+      <div class="prc4">
+        <div><span>spot</span><b id="pSpot">–</b></div>
+        <div><span>σ 5m</span><b id="pVol">–</b></div>
+        <div><span>tijd</span><b id="pLeft">–</b></div>
+        <div><span>p(stijgt)</span><b id="pP">–</b></div>
+        <div><span>edge</span><b id="pEdge">–</b></div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>Signal Spectrogram</h2><span class="sub">12 kenmerken · sterkte door de tijd</span></div>
+      <div class="spec"><canvas id="spec" class="fill" height="230"></canvas><div class="feat" id="feat"></div></div>
+    </section>
+  </div>
+</main>
+<div class="foot">
+  <span><b>SWARM DESK</b> · <span id="fFeed">verbinden…</span></span>
+  <span>SALDO <b id="fBal">–</b></span>
+  <span>MAX DD <b id="fDd">–</b></span>
+  <span>KOSTEN/RONDE <b id="fCost">–</b></span>
+  <span>PRIOR β <b id="fBeta">–</b> (<span id="fN">0</span> vensters)</span>
+  <span id="fLive">LIVE UIT</span>
+</div>
+
+<dialog id="dlg">
+  <h3 style="margin-top:0">Instellingen</h3>
+  <p>Papier is de standaard. Echte orders vragen data/desk.env op de server (zie uitleg onderaan) én dat je hieronder live aanzet met het desk-token. Elke nieuwe positie vraagt jouw klik; sluiten aan het einde van het venster gebeurt automatisch (reduce-only).</p>
+  <label>Startsaldo papier ($)<input id="cfBal" type="number" step="100"></label>
+  <label>Hefboom (notional = saldo × fractie × hefboom)<input id="cfLev" type="number" step="1" min="1" max="20"></label>
+  <label>Max Kelly-fractie van het saldo (%)<input id="cfCap" type="number" step="0.5" min="0.5" max="10"></label>
+  <label>Minimale edge (¢ boven break-even)<input id="cfEdge" type="number" step="0.5" min="0"></label>
+  <label>Kosten per kant (bps, Hyperliquid taker = 4.5, maker = 1.5)<input id="cfFee" type="number" step="0.5" min="0"></label>
+  <label>Live: grootte per order ($, de server kapt af op DESK_MAX_USD)<input id="cfUsd" type="number" step="5" min="1"></label>
+  <label>Desk-token (DESK_TOKEN uit data/desk.env)<input id="cfToken" type="password" autocomplete="off"></label>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input id="cfLive" type="checkbox"> Live handel aan (echt geld op Hyperliquid)</label>
+  <p id="liveInfo" class="mono"></p>
+  <div style="display:flex;gap:8px;justify-content:flex-end">
+    <button class="btn danger" id="cfReset">Papier resetten</button>
+    <button class="btn" id="cfClose">Sluiten</button><button class="btn go" id="cfSave">Opslaan</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+// ---------- constanten ----------
+const AGENTS = [
+  { k: 'taker',   n: 'TAKER',   role: '01 · uitvoering', c: '#f08c00' },
+  { k: 'spotter', n: 'SPOTTER', role: '02 · tape',       c: '#e5383b' },
+  { k: 'kelly',   n: 'KELLY',   role: '03 · grootte',    c: '#2fbf4a' },
+  { k: 'edge',    n: 'EDGE',    role: '04 · edge',       c: '#13b5a6' },
+  { k: 'closer',  n: 'CLOSER',  role: '05 · afrekening', c: '#12b5e5' },
+  { k: 'prior',   n: 'PRIOR',   role: '06 · prijsmodel', c: '#2463eb' },
+];
+const AG = Object.fromEntries(AGENTS.map(a => [a.k, a]));
+const WIN = 300;            // venster van 5 minuten (s)
+const DECIDE_FROM = 45, DECIDE_UNTIL = 200;
+const FEATS = ['flow 10s', 'flow 30s', 'boek', 'boek diep', 'momentum', 'vol', 'trades/s', 'grootte', 'spread', 'eth mee', 'vwap afst', 'score'];
+
+// ---------- instellingen en opslag ----------
+const DEF = { bal: 10000, lev: 5, cap: 3, edge: 2, fee: 4.5, usd: 20, token: '', live: false };
+const S = Object.assign({}, DEF, JSON.parse(localStorage.getItem('desk.cfg') || '{}'));
+const saveCfg = () => localStorage.setItem('desk.cfg', JSON.stringify(S));
+function book() {  // papierboek per coin
+  const key = 'desk.book.' + st.coin;
+  return st.books[key] || (st.books[key] = JSON.parse(localStorage.getItem(key) || 'null') || { bal: S.bal, hist: [], curve: [[Date.now(), S.bal]] });
+}
+function saveBook() { localStorage.setItem('desk.book.' + st.coin, JSON.stringify(book())); }
+function priorSamples() {
+  const key = 'desk.prior.' + st.coin;
+  return st.priors[key] || (st.priors[key] = JSON.parse(localStorage.getItem(key) || '[]'));
+}
+function savePrior() { const a = priorSamples(); if (a.length > 2000) a.splice(0, a.length - 2000); localStorage.setItem('desk.prior.' + st.coin, JSON.stringify(a)); }
+
+// ---------- toestand ----------
+const st = {
+  coin: localStorage.getItem('desk.coin') || 'BTC', px: 0, eth: 0, ethOpen: 0, trades: [], bookL: null, sim: false,
+  books: {}, priors: {}, winStart: 0, open0: 0, var1: 0, lastPx: 0, series: {}, specCols: [], feat: {},
+  decided: false, sample: null, ticket: null, pending: null, traceN: 0, hand: [], wire: [], paused: false,
+  vwapPV: 0, vwapV: 0, conf: Object.fromEntries(AGENTS.map(a => [a.k, 0])), work: {}, server: null, account: null,
+};
+
+// ---------- hulpfuncties ----------
+const $ = id => document.getElementById(id);
+const fmt = (v, d = 2) => v == null || !isFinite(v) ? '–' : v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const usd = (v, d = 0) => (v < 0 ? '-$' : '$') + fmt(Math.abs(v), d);
+const sgn = (v, d = 2, suf = '') => (v >= 0 ? '+' : '') + fmt(v, d) + suf;
+const cents = p => (p * 100).toFixed(1) + '¢';
+const pxD = () => st.coin === 'BTC' ? 0 : 2;
+const hhmmss = t => new Date(t).toISOString().slice(11, 19);
+function erf(x) { const t = 1 / (1 + .3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - .284496736) * t + .254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; }
+const Phi = z => .5 * (1 + erf(z / Math.SQRT2));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function push(name, v, n = 240) { const a = st.series[name] || (st.series[name] = []); a.push(v); if (a.length > n) a.shift(); }
+function canvasCtx(c) {
+  const r = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight || +c.getAttribute('height');
+  if (c.width !== Math.round(w * r) || c.height !== Math.round(h * r)) { c.width = Math.round(w * r); c.height = Math.round(h * r); }
+  const x = c.getContext('2d'); x.setTransform(r, 0, 0, r, 0, 0); x.clearRect(0, 0, w, h); return [x, w, h];
+}
+
+// ---------- opbouw DOM ----------
+$('agents').innerHTML = AGENTS.map(a => `<div class="agent" id="ag-${a.k}" style="--c:${a.c}">
+  <div class="blob"><i></i><i></i></div><div><span class="role">${a.role}</span><b>${a.n}</b></div>
+  <div class="st" id="as-${a.k}">idle</div></div>`).join('');
+const BANK = [['TAPE', 'tps'], ['BOOK', 'bookImb'], ['ORACLE', 'fair'], ['FLOW', 'flow'], ['VOL', 'vol'], ['CHAIN', 'chain']];
+$('bank').innerHTML = BANK.map(([n, k]) => `<div class="spark"><div class="hd">${n}<span id="bv-${k}">–</span></div><canvas id="bc-${k}" height="40"></canvas></div>`).join('');
+$('conf').innerHTML = AGENTS.map(a => `<div class="conf"><span>${a.n}</span><div class="track"><div id="cf-${a.k}" style="background:${a.c};width:0"></div></div><span class="num" id="cv-${a.k}">0</span></div>`).join('');
+
+// ---------- grafiek ----------
+const chart = LightweightCharts.createChart($('chart'), {
+  layout: { background: { color: 'transparent' }, textColor: '#8a92a3', fontFamily: 'ui-monospace, monospace' },
+  grid: { vertLines: { color: '#f0f2f6' }, horzLines: { color: '#f0f2f6' } },
+  rightPriceScale: { borderVisible: false }, timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+  crosshair: { mode: 0 },
+});
+const cs = chart.addCandlestickSeries({ upColor: '#16b364', downColor: '#ef3a5d', borderVisible: false, wickUpColor: '#16b364', wickDownColor: '#ef3a5d' });
+const vwapS = chart.addLineSeries({ color: '#2463eb', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+const openLine = cs.createPriceLine({ price: 0, color: '#f08c00', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'open venster' });
+let candles = [];
+new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, height: 330 })).observe($('chart'));
+
+// ---------- trace / wire ----------
+function trace(from, to, act, text, val = '') {
+  st.traceN++; st.hand.push(Date.now());
+  const a = AG[from], el = document.createElement('div'); el.className = 't';
+  el.innerHTML = `<span class="dot" style="background:${a.c}"></span><span class="muted">${hhmmss(Date.now())}</span>
+    <span class="who" style="background:${a.c}">${act}</span><span>${text}</span>
+    <span class="hand">${to ? a.n + '→' + AG[to].n : val}</span>`;
+  const t = $('trace'); t.prepend(el); while (t.children.length > 120) t.lastChild.remove();
+  $('traceCount').textContent = st.traceN + ' stappen';
+  setWork(from); if (to) setTimeout(() => setWork(to), 350);
+}
+function wire(agent, text, chip) {
+  st.wire.unshift({ a: agent, text, chip, t: Date.now() }); st.wire.length = Math.min(st.wire.length, 12);
+  $('wire').innerHTML = st.wire.map(w => `<span><b style="color:${AG[w.a].c}">● ${AG[w.a].n}</b> ${w.text}
+    ${w.chip ? `<span class="chip" style="background:${AG[w.a].c}">${w.chip}</span>` : ''} <span class="muted">${hhmmss(w.t)}</span></span>`).join('');
+}
+function setWork(k) { st.work[k] = Date.now(); }
+
+// ---------- marktdata: Hyperliquid websocket met simulatie als terugval ----------
+let ws, wsOk = false, simTimer = null;
+function connect() {
+  try { ws && ws.close(); } catch (e) {}
+  wsOk = false;
+  ws = new WebSocket('wss://api.hyperliquid.xyz/ws');
+  ws.onopen = () => {
+    const sub = s => ws.send(JSON.stringify({ method: 'subscribe', subscription: s }));
+    sub({ type: 'trades', coin: st.coin }); sub({ type: 'l2Book', coin: st.coin });
+    sub({ type: 'candle', coin: st.coin, interval: '1m' }); sub({ type: 'allMids' });
+  };
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.channel === 'trades') { wsOk = true; stopSim(); for (const t of m.data) if (t.coin === st.coin) onTrade(+t.px, +t.sz, t.side === 'B', t.time); }
+    else if (m.channel === 'l2Book' && m.data.coin === st.coin) st.bookL = m.data.levels.map(side => side.map(l => [+l.px, +l.sz]));
+    else if (m.channel === 'candle' && m.data.s === st.coin) onCandle({ t: m.data.t, o: +m.data.o, h: +m.data.h, l: +m.data.l, c: +m.data.c, v: +m.data.v });
+    else if (m.channel === 'allMids') { const e = +m.data.mids.ETH, b = +m.data.mids.BTC; st.eth = st.coin === 'BTC' ? e : b; }
+  };
+  ws.onclose = () => setTimeout(connect, 3000);
+  setTimeout(() => { if (!wsOk) startSim(); }, 7000);
+  const ping = setInterval(() => ws.readyState === 1 ? ws.send('{"method":"ping"}') : clearInterval(ping), 30000);
+}
+function onCandle(c) {
+  const last = candles[candles.length - 1];
+  if (last && last.t === c.t) candles[candles.length - 1] = c; else if (!last || c.t > last.t) candles.push(c);
+  if (candles.length > 400) candles.shift();
+  cs.update({ time: c.t / 1000, open: c.o, high: c.h, low: c.l, close: c.c });
+}
+function onTrade(px, sz, buy, t) {
+  st.px = px; st.trades.push({ px, sz, buy, t }); st.vwapPV += px * sz; st.vwapV += sz;
+  const cut = Date.now() - 60000; while (st.trades.length && st.trades[0].t < cut) st.trades.shift();
+  if (st.sim) {  // candles zelf opbouwen
+    const m = Math.floor(t / 60000) * 60000, last = candles[candles.length - 1];
+    if (last && last.t === m) onCandle({ t: m, o: last.o, h: Math.max(last.h, px), l: Math.min(last.l, px), c: px, v: last.v + sz });
+    else onCandle({ t: m, o: px, h: px, l: px, c: px, v: sz });
+  }
+}
+function startSim() {
+  if (st.sim) return; st.sim = true; $('feedBadge').style.display = '';
+  $('fFeed').textContent = 'geen verbinding met Hyperliquid · gesimuleerde koers';
+  if (!st.px) st.px = st.coin === 'BTC' ? 81500 : 3900;
+  if (!st.eth) st.eth = st.coin === 'BTC' ? 3900 : 81500;
+  let drift = 0;
+  simTimer = setInterval(() => {
+    drift = .97 * drift + (Math.random() - .5) * 2e-5;
+    const n = 1 + Math.floor(Math.random() * 6);
+    for (let i = 0; i < n; i++) {
+      const r = drift / n + (Math.random() - .5) * 2.4e-4 / Math.sqrt(n), px = st.px * Math.exp(r);
+      onTrade(px, Math.random() ** 3 * (st.coin === 'BTC' ? 2 : 30), r > 0 || Math.random() < .3, Date.now());
+    }
+    st.eth *= Math.exp(drift / 2 + (Math.random() - .5) * 2e-4);
+    const step = st.px * 1e-5, bids = [], asks = [];
+    for (let i = 0; i < 12; i++) { bids.push([st.px - step * (i + .5), Math.random() * 4 * (1 + drift * 3e4)]); asks.push([st.px + step * (i + .5), Math.random() * 4 * (1 - drift * 3e4)]); }
+    st.bookL = [bids, asks.map(([p, s]) => [p, Math.max(.05, s)])];
+  }, 250);
+}
+function stopSim() { if (!st.sim) return; st.sim = false; clearInterval(simTimer); $('feedBadge').style.display = 'none'; }
+
+async function loadHistory() {
+  candles = [];
+  try {
+    const r = await fetch(`/api/desk/candles?coin=${st.coin}&minutes=240`);
+    if (!r.ok) throw new Error(await r.text());
+    candles = await r.json();
+  } catch (e) {
+    let p = st.coin === 'BTC' ? 81500 : 3900, t = Math.floor(Date.now() / 60000) * 60000 - 240 * 60000;
+    for (let i = 0; i < 240; i++) { const o = p; p *= Math.exp((Math.random() - .5) * .003); candles.push({ t: t + i * 60000, o, h: Math.max(o, p) * 1.0004, l: Math.min(o, p) * .9996, c: p, v: Math.random() * 50 }); }
+  }
+  cs.setData(candles.map(c => ({ time: c.t / 1000, open: c.o, high: c.h, low: c.l, close: c.c })));
+  const last = candles[candles.length - 1]; if (last && !st.px) st.px = last.c;
+  // σ per seconde uit de 1m-candles
+  const rs = []; for (let i = 1; i < candles.length; i++) rs.push(Math.log(candles[i].c / candles[i - 1].c));
+  const v = rs.reduce((a, r) => a + r * r, 0) / Math.max(1, rs.length);
+  st.var1 = v / 60 || 1e-8;
+  // vwap van de sessie (sinds 00:00 UTC) uit de candles
+  const day = Math.floor(Date.now() / 864e5) * 864e5;
+  st.vwapPV = 0; st.vwapV = 0;
+  for (const c of candles) if (c.t >= day) { const tp = (c.h + c.l + c.c) / 3; st.vwapPV += tp * c.v; st.vwapV += c.v; }
+  vwapS.setData([]);
+}
+
+// ---------- kenmerken ----------
+function features(now) {
+  const tr = st.trades, f = {};
+  const flowOver = ms => { let b = 0, s = 0; for (const t of tr) if (t.t > now - ms) (t.buy ? b += t.sz : s += t.sz); return b + s ? (b - s) / (b + s) : 0; };
+  f.flow10 = flowOver(10000); f.flow30 = flowOver(30000);
+  const recent = tr.filter(t => t.t > now - 10000);
+  f.tps = recent.length / 10;
+  f.size = recent.length ? recent.reduce((a, t) => a + t.sz * t.px, 0) / recent.length : 0;
+  if (st.bookL) {
+    const [b, a] = st.bookL, sum = (l, n) => l.slice(0, n).reduce((s, x) => s + x[1], 0);
+    const b5 = sum(b, 5), a5 = sum(a, 5), b20 = sum(b, 20), a20 = sum(a, 20);
+    f.book = b5 + a5 ? (b5 - a5) / (b5 + a5) : 0; f.bookDeep = b20 + a20 ? (b20 - a20) / (b20 + a20) : 0;
+    f.spread = b[0] && a[0] ? (a[0][0] - b[0][0]) / st.px * 1e4 : 0;
+  } else { f.book = f.bookDeep = f.spread = 0; }
+  const el = Math.max(1, (now - st.winStart) / 1000);
+  f.mom = st.open0 ? Math.log(st.px / st.open0) / Math.sqrt(st.var1 * el) : 0;
+  f.vol5 = Math.sqrt(st.var1 * WIN);
+  f.chain = st.ethOpen && st.eth ? Math.log(st.eth / st.ethOpen) / Math.sqrt(st.var1 * el) : 0;
+  const vwap = st.vwapV ? st.vwapPV / st.vwapV : st.px;
+  f.vwap = vwap; f.vwapDist = (st.px - vwap) / st.px * 1e4;
+  // Spotter-score: tape, boek en momentum samen, tussen -1 en 1
+  f.score = clamp(.35 * f.flow30 + .2 * f.flow10 + .25 * f.book + .1 * f.bookDeep + .1 * clamp(f.mom / 2, -1, 1), -1, 1);
+  return f;
+}
+
+// ---------- Prior: leert uit afgelopen vensters hoeveel de score echt voorspelt ----------
+function prior() {
+  const a = priorSamples(), n = a.length, beta0 = .25, k = 30;
+  let sy = 0, ss = 0, hit = 0;
+  for (const s of a) { sy += s.s * s.y; ss += s.s * s.s; if (Math.sign(s.s) === Math.sign(s.y)) hit++; }
+  const bhat = ss > 1e-9 ? sy / ss : 0;
+  return { beta: (n * bhat + k * beta0) / (n + k), n, hit: n ? hit / n : null, bhat };
+}
+
+// ---------- de zwerm ----------
+function costBps() { return 2 * S.fee + 1; }  // twee kanten + 1 bp slippage
+function model(f, now) {
+  const left = Math.max(1, WIN - (now - st.winStart) / 1000), sd = Math.sqrt(st.var1 * left);
+  const pr = prior(), z = pr.beta * f.score, p = Phi(z);
+  const eMove = sd * Math.sqrt(2 / Math.PI) * 1e4;            // verwachte absolute beweging in bps
+  const be = .5 + costBps() / (2 * Math.max(eMove, .01));     // winkans nodig om kosten terug te verdienen
+  const side = p >= .5 ? 'long' : 'short', pDir = Math.max(p, 1 - p);
+  return { p, pDir, side, be, edge: (pDir - be) * 100, sd, left, eMove, pr };
+}
+
+function newWindow(now) {
+  const ws = Math.floor(now / (WIN * 1000)) * WIN * 1000;
+  if (ws === st.winStart) return false;
+  if (st.winStart) settle(now);
+  if (st.sample && st.px) {  // Prior-steekproef afsluiten
+    const y = Math.log(st.px / st.sample.px) / Math.max(1e-9, st.sample.sd);
+    priorSamples().push({ s: +st.sample.s.toFixed(4), y: +y.toFixed(4), t: st.winStart }); savePrior();
+    trace('prior', null, 'LEER', `venster gesloten: score ${sgn(st.sample.s, 2)} → uitkomst ${sgn(y, 2)}σ`, `n=${priorSamples().length}`);
+  }
+  st.winStart = ws; st.open0 = st.px; st.ethOpen = st.eth; st.decided = false; st.sample = null;
+  openLine.applyOptions({ price: st.px });
+  trace('closer', 'spotter', 'OPEN', `nieuw venster ${hhmmss(ws)}, open ${fmt(st.px, pxD())}`);
+  return true;
+}
+
+function decide(f, m, now) {
+  const el = (now - st.winStart) / 1000;
+  if (!st.sample && el >= DECIDE_FROM) st.sample = { s: f.score, px: st.px, sd: m.sd };
+  if (st.decided || st.ticket || st.pending || st.paused || el < DECIDE_FROM || el > DECIDE_UNTIL) return;
+  if (Math.floor(el) % 15 !== 0) return;   // elke 15 s een evaluatieronde
+  trace('spotter', 'prior', 'SCAN', `flow ${sgn(f.flow30, 2)} · boek ${sgn(f.book, 2)} · score ${sgn(f.score, 2)}`);
+  trace('prior', 'edge', 'PRIJS', `β ${fmt(m.pr.beta, 3)} · P(stijgt) ${cents(m.p)} · σ rest ${fmt(m.sd * 1e4, 1)}bp`);
+  if (m.edge < S.edge) {
+    trace('edge', null, 'PASS', `${m.side} ${cents(m.pDir)} < break-even ${cents(m.be)} + ${S.edge}¢`, sgn(m.edge, 1, '¢'));
+    if (el >= DECIDE_UNTIL - 15) { st.decided = true; wire('edge', `geen edge dit venster (${sgn(m.edge, 1, '¢')})`); }
+    return;
+  }
+  trace('edge', 'kelly', 'EDGE', `${m.side} ${cents(m.pDir)} vs break-even ${cents(m.be)}`, sgn(m.edge, 1, '¢'));
+  // Kelly voor een symmetrische uitbetaling na kosten: f = 2p - 1, kwart-Kelly, afgetopt
+  const kelly = clamp((2 * m.pDir - 1) / 4, 0, S.cap / 100);
+  const bk = book(), notional = bk.bal * kelly * S.lev;
+  trace('kelly', 'taker', 'SIZE', `kwart-Kelly ${fmt(kelly * 100, 2)}% × ${S.lev}x → ${usd(notional)}`);
+  st.decided = true;
+  const ticket = { id: Date.now(), coin: st.coin, side: m.side, entry: st.px, notional, p: m.pDir, be: m.be, edge: m.edge, opened: now, win: st.winStart, live: false };
+  if (S.live && st.server && st.server.live) requestApproval(ticket); else fill(ticket);
+}
+
+function fill(t) {
+  const slip = 1e-4 * (t.side === 'long' ? 1 : -1);
+  t.entry = t.entry * (1 + slip); st.ticket = t;
+  trace('taker', 'closer', 'TAKE', `${t.live ? 'LIVE' : 'papier'} ${t.side} ${usd(t.notional)} @ ${fmt(t.entry, pxD())}`);
+  wire('taker', `${t.side} ${t.coin} ${usd(t.notional)} @ ${fmt(t.entry, pxD())}`, sgn(t.edge, 1, '¢'));
+}
+
+function settle(now) {
+  const t = st.ticket; if (!t) return;
+  const exit = st.px * (1 + 1e-4 * (t.side === 'long' ? -1 : 1));
+  const ret = (exit - t.entry) / t.entry * (t.side === 'long' ? 1 : -1);
+  const pnl = t.notional * ret - t.notional * 2 * S.fee / 1e4;
+  if (t.live) closeLive(t.coin);
+  const bk = book();
+  if (!t.live) { bk.bal += pnl; bk.curve.push([now, bk.bal]); if (bk.curve.length > 3000) bk.curve.shift(); }
+  bk.hist.push({ t: now, side: t.side, entry: t.entry, exit, notional: t.notional, pnl, edge: t.edge, live: t.live });
+  if (bk.hist.length > 3000) bk.hist.shift();
+  saveBook(); st.ticket = null;
+  trace('closer', null, 'AFREK', `${t.side} ${fmt(t.entry, pxD())} → ${fmt(exit, pxD())}`, `<span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 2)}</span>`);
+  wire('closer', `afgerekend ${t.side} ${t.coin}`, sgn(pnl, 2));
+}
+
+// ---------- live: goedkeuring en server ----------
+let apTimer = null;
+function requestApproval(t) {
+  const usdLive = Math.min(S.usd, st.server.max_usd);
+  t.notional = usdLive; t.live = true; st.pending = t;
+  $('apText').textContent = `${t.side.toUpperCase()} ${t.coin} $${usdLive} · edge ${sgn(t.edge, 1, '¢')}`;
+  $('approve').classList.add('on');
+  trace('taker', null, 'WACHT', 'echte order wacht op jouw goedkeuring', 'mens');
+  let left = 20; $('apTimer').textContent = left + 's';
+  clearInterval(apTimer);
+  apTimer = setInterval(() => { left--; $('apTimer').textContent = left + 's'; if (left <= 0) reject('verlopen'); }, 1000);
+  if (window.Notification && Notification.permission === 'granted') new Notification('Swarm Desk: order wacht', { body: $('apText').textContent });
+}
+function reject(why) {
+  clearInterval(apTimer); $('approve').classList.remove('on');
+  if (st.pending) trace('taker', null, 'NEE', `order ${why}`); st.pending = null;
+}
+async function approve() {
+  const t = st.pending; if (!t) return;
+  clearInterval(apTimer); $('approve').classList.remove('on'); st.pending = null;
+  if (t.win !== st.winStart) return trace('taker', null, 'NEE', 'venster al voorbij');
+  try {
+    const r = await fetch('/api/desk/open', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ coin: t.coin, side: t.side, usd: t.notional, token: S.token }) });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.detail || JSON.stringify(j.result));
+    t.entry = j.mid; fill(t); refreshAccount();
+  } catch (e) { trace('taker', null, 'FOUT', 'order geweigerd: ' + e.message); wire('taker', 'order mislukt'); }
+}
+async function closeLive(coin) {
+  try {
+    const r = await fetch('/api/desk/close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ coin, token: S.token }) });
+    const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j.detail || 'onbekend');
+    trace('closer', null, 'LIVE', `${coin} positie gesloten op Hyperliquid`);
+  } catch (e) { trace('closer', null, 'FOUT', `sluiten mislukt: ${e.message}. Sluit handmatig!`); }
+  refreshAccount();
+}
+async function refreshStatus() {
+  try { st.server = await (await fetch('/api/desk/status')).json(); } catch (e) { st.server = { live: false, reasons: ['server niet bereikbaar'] }; }
+  const live = S.live && st.server.live;
+  $('modeBadge').textContent = live ? 'LIVE' : 'PAPER'; $('modeBadge').className = 'badge ' + (live ? 'live' : 'paper');
+  $('fLive').innerHTML = live ? `<b style="color:#ff6b81">LIVE AAN</b> · max $${st.server.max_usd}/order · ${st.server.account}` : 'LIVE UIT · papier';
+  $('sAppr').textContent = live ? 'ELKE ORDER' : 'ALLEEN LIVE';
+  $('liveInfo').textContent = st.server.live ? `Server klaar voor live (${st.server.account}, max $${st.server.max_usd}/order).` : 'Server niet klaar voor live: ' + st.server.reasons.join('; ');
+  if (live) refreshAccount();
+}
+async function refreshAccount() {
+  try { const r = await fetch('/api/desk/account'); if (r.ok) st.account = await r.json(); } catch (e) {}
+}
+
+// ---------- tekenen ----------
+function spark(id, data, color, opts = {}) {
+  const c = $(id); if (!c) return; const [x, w, h] = canvasCtx(c); if (!data || data.length < 2) return;
+  let lo = Math.min(...data), hi = Math.max(...data); if (opts.zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+  if (hi - lo < 1e-12) { hi += 1; lo -= 1; }
+  const X = i => i / (data.length - 1) * w, Y = v => h - 3 - (v - lo) / (hi - lo) * (h - 6);
+  if (opts.zero) { x.strokeStyle = '#e6e9f0'; x.beginPath(); x.moveTo(0, Y(0)); x.lineTo(w, Y(0)); x.stroke(); }
+  x.beginPath(); data.forEach((v, i) => i ? x.lineTo(X(i), Y(v)) : x.moveTo(X(i), Y(v)));
+  x.strokeStyle = color; x.lineWidth = 1.4; x.stroke();
+  x.lineTo(w, h); x.lineTo(0, h); x.closePath(); x.globalAlpha = .08; x.fillStyle = color; x.fill(); x.globalAlpha = 1;
+}
+
+// reactor: ring van gekleurde draden, zes agents erop, kern in het midden
+const strands = Array.from({ length: 140 }, (_, i) => ({ ph: Math.random() * 6.28, amp: 4 + Math.random() * 26, f: 2 + Math.floor(Math.random() * 5), sp: (Math.random() - .5) * .6, col: i }));
+function hue(a) { const cols = AGENTS.map(g => g.c); const t = ((a / (2 * Math.PI)) % 1 + 1) % 1 * 6, i = Math.floor(t); return cols[(i + 1) % 6]; }
+function drawRing(time) {
+  const c = $('ring'), [x, w, h] = canvasCtx(c), cx = w / 2, cy = h / 2 + 62, R = Math.min(w * .42, h * .5), ry = Math.min(R * .62, h / 2 - 90);
+  const tm = time / 1000, energy = .4 + Math.min(1.5, Math.abs(st.feat.score || 0) * 3);
+  // draden
+  x.lineWidth = .7;
+  for (const s of strands) {
+    x.beginPath();
+    for (let k = 0; k <= 64; k++) {
+      const a = k / 64 * Math.PI * 2, wob = Math.sin(a * s.f + s.ph + tm * s.sp * energy) * s.amp;
+      const px = cx + (R + wob) * Math.cos(a + tm * .05), py = cy + (ry + wob * .7) * Math.sin(a + tm * .05);
+      k ? x.lineTo(px, py) : x.moveTo(px, py);
+    }
+    x.strokeStyle = hue(s.ph * 3); x.globalAlpha = .28; x.stroke();
+  }
+  x.globalAlpha = 1;
+  // agents op de ring
+  AGENTS.forEach((a, i) => {
+    const ang = -Math.PI / 2 + i * Math.PI / 3 + tm * .05, px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang);
+    const active = Date.now() - (st.work[a.k] || 0) < 1500, r = active ? 26 + Math.sin(tm * 8) * 2 : 22;
+    if (active) { x.beginPath(); x.arc(px, py, r + 10, 0, 7); x.strokeStyle = a.c; x.lineWidth = 3; x.globalAlpha = .35; x.stroke(); x.globalAlpha = 1; }
+    x.beginPath(); x.arc(px, py, r, 0, 7); x.fillStyle = a.c; x.fill();
+    x.fillStyle = '#fff'; x.fillRect(px - 7, py - 7, 4, 13); x.fillRect(px + 3, py - 7, 4, 13);
+    x.font = '700 10px ui-monospace, monospace'; x.fillStyle = '#15171c'; x.textAlign = 'center';
+    x.fillText(a.n, px, py + r + 14);
+  });
+  // ticket dat over de ring rijdt
+  if (st.ticket) {
+    const el = (Date.now() - st.ticket.opened) / 1000, ang = -Math.PI / 2 + el / 20 * Math.PI * 2;
+    const px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang), col = st.ticket.side === 'long' ? '#16b364' : '#ef3a5d';
+    x.beginPath(); x.arc(px, py, 9, 0, 7); x.fillStyle = col; x.fill();
+    x.font = '700 10px ui-monospace, monospace'; x.fillText(st.ticket.side.toUpperCase(), px, py - 14);
+  }
+  // kern
+  const pr = 48 + (st.feat.score ? Math.abs(st.feat.score) * 14 : 0) + Math.sin(tm * 2) * 2;
+  const g = x.createRadialGradient(cx, cy, pr * .3, cx, cy, pr * 1.8); g.addColorStop(0, 'rgba(36,99,235,.18)'); g.addColorStop(1, 'rgba(36,99,235,0)');
+  x.fillStyle = g; x.beginPath(); x.arc(cx, cy, pr * 1.8, 0, 7); x.fill();
+  x.beginPath(); x.arc(cx, cy, pr, 0, 7); x.fillStyle = '#15171c'; x.fill();
+  x.fillStyle = '#fff'; x.beginPath(); x.roundRect(cx - 15, cy - 18, 9, 34, 5); x.roundRect(cx + 6, cy - 18, 9, 34, 5); x.fill();
+  requestAnimationFrame(drawRing);
+}
+
+function drawBalance() {
+  const bk = book(), c = $('balChart'), [x, w, h] = canvasCtx(c), d = bk.curve.map(p => p[1]);
+  if (d.length < 2) { x.fillStyle = '#8a92a3'; x.font = '12px system-ui'; x.fillText('Saldoverloop verschijnt na het eerste afgerekende ticket', 8, h / 2); }
+  else spark('balChart', d, '#ef3a5d');
+  const pb = $('pnlBars'), [y, w2, h2] = canvasCtx(pb), hs = bk.hist.slice(-120);
+  const mx = Math.max(1e-9, ...hs.map(t => Math.abs(t.pnl))), bw = w2 / Math.max(hs.length, 60);
+  hs.forEach((t, i) => { const bh = Math.abs(t.pnl) / mx * (h2 / 2 - 2); y.fillStyle = t.pnl >= 0 ? '#16b364' : '#ef3a5d';
+    y.fillRect(i * bw, t.pnl >= 0 ? h2 / 2 - bh : h2 / 2, Math.max(1, bw - 1), bh); });
+}
+
+function drawDist(m) {
+  const c = $('dist'), [x, w, h] = canvasCtx(c); if (!st.open0 || !m) return;
+  // verdeling van de koers bij sluiting (lognormaal rond de huidige koers + verwachte drift)
+  const mu = Math.log(st.px) + (m.p - .5) * 0.4 * m.sd, sd = Math.max(m.sd, 1e-6);
+  const lo = Math.exp(mu - 3.2 * sd), hi = Math.exp(mu + 3.2 * sd), N = 60, bins = [];
+  for (let i = 0; i < N; i++) { const p = lo + (hi - lo) * (i + .5) / N, z = (Math.log(p) - mu) / sd; bins.push([p, Math.exp(-z * z / 2)]); }
+  const bw = w / N, top = 18;
+  bins.forEach(([p, d], i) => { const bh = d * (h - top - 16); x.fillStyle = p >= st.px ? '#2463eb' : '#c9d6f7'; x.fillRect(i * bw + 1, h - 16 - bh, bw - 2, bh); });
+  // cdf
+  x.beginPath(); bins.forEach(([p], i) => { const v = Phi((Math.log(p) - mu) / sd); const yy = h - 16 - v * (h - top - 16); i ? x.lineTo(i * bw + bw / 2, yy) : x.moveTo(bw / 2, yy); });
+  x.strokeStyle = '#2fbf4a'; x.lineWidth = 1.5; x.stroke();
+  const X = p => (p - lo) / (hi - lo) * w;
+  x.strokeStyle = '#f08c00'; x.setLineDash([4, 3]); x.beginPath(); x.moveTo(X(st.px), top); x.lineTo(X(st.px), h - 16); x.stroke(); x.setLineDash([]);
+  x.fillStyle = '#15171c'; x.font = '700 11px ui-monospace, monospace'; x.textAlign = 'left';
+  x.fillText(`nu ${fmt(st.px, pxD())}`, Math.min(w - 110, X(st.px) + 4), 12);
+  x.fillStyle = '#8a92a3'; x.font = '10px ui-monospace, monospace';
+  x.fillText(fmt(lo, pxD()), 2, h - 3); x.textAlign = 'right'; x.fillText(fmt(hi, pxD()), w - 2, h - 3);
+}
+
+function drawSpec() {
+  const c = $('spec'), [x, w, h] = canvasCtx(c), cols = st.specCols, nF = FEATS.length;
+  const cw = w / 120, ch = h / nF;
+  const col = v => { const t = clamp((v + 1) / 2, 0, 1); // blauw → groen → geel
+    const r = Math.round(t < .5 ? 30 + t * 2 * 20 : 50 + (t - .5) * 2 * 200), g = Math.round(t < .5 ? 60 + t * 2 * 130 : 190 + (t - .5) * 2 * 40), b = Math.round(t < .5 ? 160 - t * 2 * 60 : 100 - (t - .5) * 2 * 80); return `rgb(${r},${g},${b})`; };
+  cols.forEach((cv, i) => cv.forEach((v, j) => { x.fillStyle = col(v); x.fillRect(i * cw, j * ch, Math.ceil(cw), Math.ceil(ch) - 1); }));
+  const last = cols[cols.length - 1] || [];
+  $('feat').innerHTML = FEATS.map((n, j) => `<div><span>${n}</span><i style="width:${Math.abs(last[j] || 0) * 100}%;background:${(last[j] || 0) >= 0 ? '#16b364' : '#ef3a5d'}"></i></div>`).join('');
+}
+
+function drawBook() {
+  if (!st.bookL) return;
+  const [b, a] = st.bookL, asks = a.slice(0, 9).reverse(), bids = b.slice(0, 9), mx = Math.max(...asks.concat(bids).map(l => l[1]), 1e-9);
+  const row = (l, col) => `<div><i style="width:${l[1] / mx * 100}%;background:${col}"></i><span>${fmt(l[0], pxD() || 1)}</span><span>${fmt(l[1], 3)}</span></div>`;
+  const spr = a[0] && b[0] ? a[0][0] - b[0][0] : 0;
+  $('book').innerHTML = `<div class="cap" style="display:grid;grid-template-columns:1fr 1fr"><span>prijs</span><span style="text-align:right">grootte</span></div>`
+    + asks.map(l => row(l, '#ef3a5d')).join('') + `<span class="spread">spread ${fmt(spr, 2)} · ${fmt(spr / st.px * 1e4, 2)}bp</span>` + bids.map(l => row(l, '#16b364')).join('');
+}
+
+// ---------- hoofdlus, elke seconde ----------
+let lastSec = 0;
+function tick() {
+  const now = Date.now();
+  $('clock').textContent = hhmmss(now);
+  if (!st.px) return;
+  newWindow(now);
+  // σ bijwerken met 1s-rendementen (EWMA)
+  if (st.lastPx) { const r = Math.log(st.px / st.lastPx); st.var1 = .985 * st.var1 + .015 * r * r; }
+  st.lastPx = st.px;
+  const f = features(now), m = model(f, now); st.feat = f;
+  decide(f, m, now);
+
+  // series
+  push('tps', f.tps); push('bookImb', f.book); push('fair', m.p); push('flow', f.flow30); push('vol', f.vol5 * 1e4); push('chain', f.chain); push('plasma', f.flow10, 120);
+  const vals = { tps: fmt(f.tps, 1) + ' tr/s', bookImb: sgn(f.book, 2), fair: cents(m.p), flow: sgn(f.flow30, 2), vol: fmt(f.vol5 * 1e4, 1) + 'bp', chain: sgn(f.chain, 2) + 'σ' };
+  BANK.forEach(([, k], i) => { $('bv-' + k).textContent = vals[k]; spark('bc-' + k, st.series[k], AGENTS[i].c, { zero: k !== 'tps' && k !== 'vol' && k !== 'fair' }); });
+  spark('plasma', st.series.plasma, '#2463eb', { zero: true });
+  if (now - lastSec >= 2000) {
+    lastSec = now;
+    st.specCols.push([f.flow10, f.flow30, f.book, f.bookDeep, clamp(f.mom / 2, -1, 1), clamp(f.vol5 * 1e4 / 30 - .5, -1, 1), clamp(f.tps / 10 - .5, -1, 1),
+      clamp(Math.log10(f.size + 1) / 6 - .3, -1, 1), clamp(-f.spread, -1, 1), clamp(f.chain / 2, -1, 1), clamp(f.vwapDist / 50, -1, 1), f.score]);
+    if (st.specCols.length > 120) st.specCols.shift();
+    drawSpec();
+  }
+
+  // vertrouwen per agent
+  st.conf = { spotter: Math.abs(f.score), prior: m.pr.n / (m.pr.n + 30), edge: clamp((m.edge + 10) / 20, 0, 1), kelly: clamp((2 * m.pDir - 1) * 4, 0, 1),
+              taker: st.ticket ? 1 : st.pending ? .6 : .1, closer: st.ticket ? clamp(1 - m.left / WIN, 0, 1) : 0 };
+  AGENTS.forEach(a => { $('cf-' + a.k).style.width = (st.conf[a.k] * 100) + '%'; $('cv-' + a.k).textContent = Math.round(st.conf[a.k] * 100);
+    const work = now - (st.work[a.k] || 0) < 1500; $('ag-' + a.k).classList.toggle('work', work);
+    $('as-' + a.k).textContent = work ? '● bezig' : (a.k === 'taker' && st.ticket ? 'holder' : 'idle'); });
+
+  // koppen en getallen
+  const el = (now - st.winStart) / 1000, d = pxD(), move = st.open0 ? (st.px / st.open0 - 1) * 1e4 : 0;
+  $('hdSpot').textContent = fmt(st.px, d); $('ringSpot').textContent = '$' + fmt(st.px, d); $('tapePx').textContent = '$' + fmt(st.px, d);
+  $('ringOpen').textContent = fmt(st.open0, d); $('ringFair').textContent = cents(m.p); $('ringBe').textContent = cents(m.be);
+  $('ringWin').textContent = `VENSTER ${hhmmss(st.winStart).slice(0, 5)} · ${st.coin} 5M`;
+  $('ringLeft').textContent = `sluit over ${Math.floor(m.left / 60)}:${String(Math.floor(m.left % 60)).padStart(2, '0')} · ${el < DECIDE_FROM ? 'zwerm verzamelt' : el <= DECIDE_UNTIL ? 'zwerm beslist' : 'uitrijden'}`;
+  $('stage').textContent = `FASE ${el < DECIDE_FROM ? 'VERZAMELEN' : el <= DECIDE_UNTIL ? 'BESLISSEN' : 'UITRIJDEN'} · VENSTER ${hhmmss(st.winStart).slice(0, 5)}`;
+  $('barCoin').textContent = `${st.coin} ${m.side === 'long' ? 'UP' : 'DOWN'} 5M`; $('barSpot').textContent = '$' + fmt(st.px, d);
+  $('barMove').innerHTML = `<span class="${move >= 0 ? 'up' : 'down'}">${sgn(move, 1, 'bp')}</span>`; $('barVol').textContent = 'σ ' + fmt(m.sd * 1e4, 1) + 'bp';
+  $('barP').textContent = cents(m.pDir); $('barEdge').innerHTML = `<span class="${m.edge >= 0 ? 'up' : 'down'}">${sgn(m.edge, 1, '¢')}</span>`;
+  $('sFair').textContent = cents(m.pDir); $('sBe').textContent = cents(m.be); $('sEdge').textContent = sgn(m.edge, 1, '¢');
+  $('sOpen').textContent = st.ticket ? 1 : 0; $('sHolder').textContent = st.ticket ? 'TAKER' : st.pending ? 'MENS' : '–';
+  st.hand = st.hand.filter(t => t > now - 60000); $('sHand').textContent = st.hand.length;
+  $('pSpot').textContent = fmt(st.px, d); $('pVol').textContent = fmt(f.vol5 * 1e4, 1) + 'bp';
+  $('pLeft').textContent = `${Math.floor(m.left / 60)}:${String(Math.floor(m.left % 60)).padStart(2, '0')}`; $('pP').textContent = cents(m.p);
+  $('pEdge').innerHTML = `<span class="${m.edge >= 0 ? 'up' : 'down'}">${sgn(m.edge, 1, '¢')}</span>`;
+  $('fCost').textContent = fmt(costBps(), 1) + 'bp'; $('fBeta').textContent = fmt(m.pr.beta, 3) + (m.pr.hit != null ? ` · treffers ${fmt(m.pr.hit * 100, 0)}%` : ''); $('fN').textContent = m.pr.n;
+  if (!st.sim) $('fFeed').textContent = 'hyperliquid live';
+  const vw = st.vwapV ? st.vwapPV / st.vwapV : 0; if (vw) vwapS.update({ time: Math.floor(now / 60000) * 60, value: vw });
+  $('tapeStats').textContent = `${fmt(f.tps, 1)} TR/S · VWAP ${fmt(vw, d)} · FLOW ${sgn(f.flow30, 2)}`;
+  drawBook(); drawDist(m);
+
+  // ticket
+  const t = st.ticket;
+  if (t) {
+    const ret = (st.px - t.entry) / t.entry * (t.side === 'long' ? 1 : -1), upnl = t.notional * ret;
+    $('ticket').innerHTML = `<div class="kv"><span>${t.coin} ${t.side.toUpperCase()} 5M ${t.live ? '· LIVE' : '· papier'}</span><span>${usd(t.notional)}</span></div>
+      <div class="kv"><span>instap</span><span>${fmt(t.entry, d)}</span></div><div class="kv"><span>nu</span><span>${fmt(st.px, d)}</span></div>
+      <div class="kv"><span>p / break-even</span><span>${cents(t.p)} / ${cents(t.be)}</span></div>
+      <div class="kv"><span>open pnl</span><span class="${upnl >= 0 ? 'up' : 'down'}">${sgn(upnl, 2)}</span></div>`;
+  } else $('ticket').innerHTML = `<span class="muted">Geen open ticket${st.paused ? ' · desk gepauzeerd' : ''}</span>`;
+
+  // pnl
+  const bk = book(), hs = bk.hist, n = hs.length, wins = hs.filter(h => h.pnl > 0).length;
+  let peak = -Infinity, dd = 0; for (const [, v] of bk.curve) { peak = Math.max(peak, v); dd = Math.max(dd, (peak - v) / peak); }
+  const pnl = bk.bal - S.bal, live = S.live && st.server && st.server.live && st.account && st.account.connected;
+  $('balance').innerHTML = live ? `<sup>$</sup>${fmt(st.account.value, 2)}` : `<sup>$</sup>${fmt(bk.bal, 0)}`;
+  $('balance').classList.toggle('pos', pnl >= 0);
+  $('pnlWho').textContent = live ? 'hyperliquid accountwaarde' : 'papiersaldo ' + st.coin;
+  $('pnlMode').textContent = live ? 'LIVE' : 'PAPER';
+  const lt = hs[n - 1]; $('lastSettle').innerHTML = lt ? `laatste: ${lt.side} <span class="${lt.pnl >= 0 ? 'up' : 'down'}">${sgn(lt.pnl, 2)}</span> · totaal ${sgn(pnl, 2)}` : 'nog niets afgerekend';
+  $('stTickets').textContent = n; $('stWin').textContent = n ? fmt(wins / n * 100, 1) + '%' : '–';
+  $('stAvg').textContent = n ? sgn(hs.reduce((a, h) => a + h.pnl, 0) / n, 2) : '–'; $('stDd').textContent = fmt(dd * 100, 1) + '%';
+  $('hdPnl').innerHTML = `<span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 0)}</span>`; $('hdTickets').textContent = n;
+  $('fBal').textContent = usd(bk.bal); $('fDd').textContent = fmt(dd * 100, 1) + '%';
+  const longs = hs.filter(h => h.side === 'long').length, lw = hs.filter(h => h.side === 'long' && h.pnl > 0).length, sw = wins - lw;
+  $('split').innerHTML = `<div class="conf" style="grid-template-columns:90px 1fr 90px"><span>LONG / SHORT</span><div class="track"><div style="width:${n ? longs / n * 100 : 50}%;background:#16b364"></div></div><span class="num">${longs} / ${n - longs}</span></div>
+    <div class="conf" style="grid-template-columns:90px 1fr 90px"><span>WIN L / S</span><div class="track"><div style="width:${n ? (lw / Math.max(1, longs)) * 100 : 0}%;background:#2463eb"></div></div><span class="num">${longs ? fmt(lw / longs * 100, 0) : '–'}% / ${n - longs ? fmt(sw / (n - longs) * 100, 0) : '–'}%</span></div>`;
+  $('exhaust').innerHTML = hs.slice(-12).reverse().map(h => `<div><span class="muted">${hhmmss(h.t).slice(0, 5)}</span><span>${h.side}${h.live ? ' ●' : ''}</span><span class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</span></div>`).join('') || '<span class="muted">leeg</span>';
+  if (now % 10000 < 1000) drawBalance();
+}
+
+// ---------- bediening ----------
+async function setCoin(c) {
+  if (st.ticket && st.ticket.live) return alert('Er staat een live positie open; wacht tot die gesloten is.');
+  if (st.ticket) settle(Date.now());
+  st.coin = c; localStorage.setItem('desk.coin', c);
+  document.querySelectorAll('#coinSeg button').forEach(b => b.classList.toggle('on', b.dataset.c === c));
+  $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
+  Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
+  stopSim(); await loadHistory(); connect(); drawBalance();
+}
+$('coinSeg').onclick = e => e.target.dataset.c && e.target.dataset.c !== st.coin && setCoin(e.target.dataset.c);
+$('apYes').onclick = approve; $('apNo').onclick = () => reject('geweigerd door jou');
+$('killBtn').onclick = async () => {
+  st.paused = !st.paused; $('killBtn').textContent = st.paused ? 'Hervatten' : 'Kill switch';
+  if (st.paused) {
+    reject('kill switch');
+    if (st.ticket) settle(Date.now());
+    if (S.live && st.server && st.server.live) for (const c of ['BTC', 'ETH']) await closeLive(c);
+    trace('closer', null, 'KILL', 'alles gesloten, desk gepauzeerd');
+  } else trace('closer', null, 'START', 'desk hervat');
+};
+$('setBtn').onclick = () => {
+  for (const [id, k] of [['cfBal', 'bal'], ['cfLev', 'lev'], ['cfCap', 'cap'], ['cfEdge', 'edge'], ['cfFee', 'fee'], ['cfUsd', 'usd'], ['cfToken', 'token']]) $(id).value = S[k];
+  $('cfLive').checked = S.live; refreshStatus(); $('dlg').showModal();
+};
+$('cfClose').onclick = () => $('dlg').close();
+$('cfSave').onclick = () => {
+  for (const [id, k] of [['cfBal', 'bal'], ['cfLev', 'lev'], ['cfCap', 'cap'], ['cfEdge', 'edge'], ['cfFee', 'fee'], ['cfUsd', 'usd']]) S[k] = +$(id).value || DEF[k];
+  S.token = $('cfToken').value.trim();
+  if ($('cfLive').checked && !S.live && !confirm('Live handel aanzetten? Goedgekeurde orders gebruiken echt geld op Hyperliquid.')) $('cfLive').checked = false;
+  S.live = $('cfLive').checked;
+  if (S.live && window.Notification && Notification.permission === 'default') Notification.requestPermission();
+  saveCfg(); refreshStatus(); $('dlg').close();
+};
+$('cfReset').onclick = () => {
+  if (!confirm(`Papierboek ${st.coin} terugzetten naar $${S.bal}?`)) return;
+  localStorage.removeItem('desk.book.' + st.coin); delete st.books['desk.book.' + st.coin]; drawBalance();
+};
+
+setCoin(st.coin).then(() => { setInterval(tick, 1000); requestAnimationFrame(drawRing); });
+refreshStatus(); setInterval(refreshStatus, 60000);
+wire('prior', 'zwerm gestart, eerste venster verzamelt data');
+</script>
+</body>
+</html>
