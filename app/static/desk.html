@@ -144,6 +144,10 @@
   .tabs { display: flex; gap: 4px; padding: 8px 18px 0; }
   .tabs button { border: 1px solid var(--border); border-bottom: 0; background: var(--panel-2); padding: 7px 16px; border-radius: 8px 8px 0 0; font: 600 12px inherit; cursor: pointer; color: var(--muted); }
   .tabs button.on { background: var(--panel); color: var(--text); }
+  .trades2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; }
+  .trwrap { max-height: 320px; overflow: auto; }
+  table.tr td { font: 11px var(--mono); } table.tr tr[data-c] { cursor: pointer; } table.tr tr[data-c]:hover td { background: var(--panel-2); }
+  @media (max-width: 1250px) { .trades2 { grid-template-columns: 1fr; } }
   .allview { padding: 0 18px 30px; display: grid; gap: 10px; }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
   .chips button { border: 1.5px solid var(--c); color: var(--c); background: var(--panel); border-radius: 14px; padding: 3px 10px; font: 700 11px var(--mono); cursor: pointer; }
@@ -240,9 +244,17 @@
   <div class="panel">
     <div class="ph"><h2>Alle tickers</h2><span class="sub">de zwerm op de server · elke markt in zijn eigen kleur · klik een ticker om te filteren</span>
       <span class="right" id="allMode">–</span></div>
-    <canvas id="allRing" class="fill" style="height:380px;cursor:pointer" title="Klik een ticker om hem op de Desk te openen"></canvas>
+    <canvas id="allRing" class="fill" style="height:460px;cursor:pointer" title="Klik een ticker om hem op de Desk te openen"></canvas>
     <div class="chips" id="allChips"></div>
+    <div class="cap" style="margin:-4px 0 6px">kaartjes gesorteerd op sterkte van de score (|score|, long en short), elke 10 s opnieuw</div>
     <div class="cards" id="allCards"></div>
+  </div>
+  <div class="panel">
+    <div class="ph"><h2>Trades</h2><span class="sub">open en afgesloten · alle tickers · klik een rij om de grafiek te openen</span><span class="right" id="trSum">–</span></div>
+    <div class="trades2">
+      <div><div class="cap">open</div><div class="trwrap"><table class="scan tr" id="trOpen"></table></div></div>
+      <div><div class="cap">afgesloten (nieuwste boven)</div><div class="trwrap"><table class="scan tr" id="trDone"></table></div></div>
+    </div>
   </div>
   <div class="panel">
     <div class="ph"><h2>Gecombineerde trace</h2><span class="sub">nieuwste boven</span><span class="right" id="allCount">0 regels</span></div>
@@ -361,6 +373,20 @@
   <p>Deze instellingen gelden voor het papierboek in deze browser. Echt geld loopt via de zwerm op de server: grootte, daglimiet en kosten staan in data/desk.env. Met het desk-token hieronder kan deze browser de zwerm aan/uit zetten en orders goedkeuren.</p>
   <label>Startsaldo papierportefeuille ($, geldt bij "Papier resetten")<input id="cfBal" type="number" step="100"></label>
   <p class="muted" style="font-size:11px">Hefboom, grootte, minimale edge en kosten stelt de server zelf in (Kelly, DESK_MIN_EDGE, DESK_MAKER_BPS en DESK_FEE_BPS in data/desk.env).</p>
+  <fieldset style="border:1px solid var(--border);border-radius:8px;margin:10px 0;padding:6px 10px">
+    <legend class="cap">Prijsmodel (Spotter + Prior) · geldt voor de server-zwerm</legend>
+    <p class="muted" style="font-size:11px;margin:2px 0 6px">Score = som van gewicht × kenmerk. Prior begint bij start-β en vertrouwt de gemeten β meer naarmate er meer vensters zijn: na "krimp" vensters weegt de data even zwaar als de start-β. Hoger β = de score voorspelt meer = grotere kansen.</p>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+      <label>start-β<input id="mdBeta" type="number" step="0.05" min="0" max="2"></label>
+      <label>krimp (vensters)<input id="mdK" type="number" step="5" min="1" max="1000"></label>
+      <label>flow 30s<input id="mdW_flow30" type="number" step="0.05" min="0" max="1"></label>
+      <label>flow 10s<input id="mdW_flow10" type="number" step="0.05" min="0" max="1"></label>
+      <label>boek top 5<input id="mdW_book" type="number" step="0.05" min="0" max="1"></label>
+      <label>boek top 20<input id="mdW_bookDeep" type="number" step="0.05" min="0" max="1"></label>
+      <label>momentum<input id="mdW_mom" type="number" step="0.05" min="0" max="1"></label>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:4px"><button class="btn" id="mdSave">Model toepassen</button><button class="btn" id="mdReset">Standaard herstellen</button><span class="muted" id="mdInfo" style="font-size:11px;align-self:center"></span></div>
+  </fieldset>
   <label>Desk-token (DESK_TOKEN uit data/desk.env)<input id="cfToken" type="password" autocomplete="off"></label>
   <p id="liveInfo" class="mono"></p>
   <div style="display:flex;gap:8px;justify-content:flex-end">
@@ -857,7 +883,12 @@ function drawAllRing(tm) {
   if (!a) return;
   const coins = Object.keys(a.coins).filter(k => a.coins[k]), open = {};
   for (const t of (a.portfolio && a.portfolio.open) || []) open[t.coin] = t;
-  const cx = w / 2, cy = h / 2, R = Math.min(w * .42, 520), ry = h / 2 - 60;
+  const cx = w / 2, cy = h / 2, R = Math.min(w * .44, 900), ry = h / 2 - 50;
+  // gelijke afstand langs de omtrek van de ellips, anders klonteren de cirkels samen aan de smalle uiteinden
+  const N = 720, pts = [], cum = [0];
+  for (let k = 0; k <= N; k++) { const a = -Math.PI / 2 + k / N * Math.PI * 2; pts.push([cx + R * Math.cos(a), cy + ry * Math.sin(a)]);
+    if (k) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1])); }
+  const at = f => { const L = f * cum[N]; let k = cum.findIndex(v => v >= L); return pts[Math.max(0, k)]; };
   x.lineWidth = 1; x.strokeStyle = TH.border; x.beginPath(); x.ellipse(cx, cy, R, ry, 0, 0, 7); x.stroke();
   const pf = a.portfolio || {};
   x.textAlign = 'center'; x.fillStyle = TH.text; x.font = '700 26px ui-monospace, monospace';
@@ -866,7 +897,7 @@ function drawAllRing(tm) {
   x.fillText(`${(pf.open || []).length} trade(s) open · ${coins.length} tickers gevolgd · ${pf.mode === 'live' ? 'LIVE' : 'papier'}`, cx, cy + 18);
   x.fillText(`venster ${winLbl()} · drempel ${sgn(a.min_edge || 0, 0, '¢')}`, cx, cy + 34);
   coins.forEach((coin, i) => {
-    const ang = -Math.PI / 2 + i / coins.length * Math.PI * 2, px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang);
+    const [px, py] = at(i / coins.length);
     const t = open[coin], m = a.markets[coin] || {}, col = tColor(coin), r = t ? 26 + Math.sin(tm * 4) * 2 : 20;
     if (TH.dark) { x.shadowColor = col; x.shadowBlur = t ? 30 : 10; }
     if (t) { x.beginPath(); x.arc(px, py, r + 9, 0, 7); x.strokeStyle = col; x.lineWidth = 3; x.globalAlpha = .35; x.stroke(); x.globalAlpha = 1; }
@@ -1100,7 +1131,25 @@ $('scanBody').onclick = async e => {
 // ---------- tabblad Alle tickers ----------
 const TCOL = ['#e5383b', '#2463eb', '#f08c00', '#2fbf4a', '#9b5de5', '#13b5a6', '#d6336c', '#0b7285', '#e67700', '#5c940d', '#7048e8', '#c2255c', '#1098ad', '#862e9c'];
 const tColor = c => { if (!c) return '#8a92a3'; let h = 0; for (const ch of c) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return TCOL[h % TCOL.length]; };
-const allState = { rows: [], filter: new Set(), n: 0 };
+const allState = { rows: [], filter: new Set(), n: 0, order: [], sortedAt: 0 };
+function renderTrades() {
+  const a = st.auto, pf = a.portfolio || { open: [] }, d = v => v == null ? '–' : fmt(v, v >= 100 ? 2 : v >= 1 ? 4 : 6);
+  const tk = c => `<b style="color:${tColor(c)}">${short(c)}</b>`, side = sd => `<span class="${sd === 'long' ? 'up' : 'down'}">${sd === 'long' ? '▲ long' : '▼ short'}</span>`;
+  $('trOpen').innerHTML = '<tr><th>ticker</th><th>kant</th><th>positie</th><th>instap</th><th>nu</th><th>status</th><th>pnl</th></tr>'
+    + (pf.open.map(t => `<tr data-c="${t.coin}"><td>${tk(t.coin)}</td><td>${side(t.side)} ${t.lev}x</td><td>${usd(t.usd)}</td><td>${d(t.entry)}</td><td>${d(t.px)}</td>
+      <td>${{ entering: 'limiet wacht', open: 'open', exiting: 'uitstap' }[t.state] || t.state}</td><td class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? '–' : sgn(t.upnl, 2)}</td></tr>`).join('')
+      || '<tr><td colspan="7" class="muted">geen open trades</td></tr>');
+  const hs = (a.history || []).slice().reverse();
+  $('trDone').innerHTML = '<tr><th>dicht</th><th>ticker</th><th>kant</th><th>positie</th><th>in → uit</th><th>uitstap</th><th>edge</th><th>pnl</th></tr>'
+    + (hs.map(h => `<tr data-c="${h.coin}"><td class="muted">${hhmmss(h.t).slice(0, 5)}</td><td>${tk(h.coin)}${h.paper ? '' : ' <b class="down">LIVE</b>'}</td><td>${side(h.side)} ${h.lev}x</td>
+      <td>${usd(h.usd)}</td><td>${d(h.entry)} → ${d(h.exit)}</td><td>${h.maker_exit ? 'maker' : 'markt'}</td><td>${sgn(h.edge, 1, '¢')}</td>
+      <td class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">nog niets afgerekend</td></tr>');
+  const n = hs.length, w = hs.filter(h => h.pnl > 0).length, tot = hs.reduce((s, h) => s + h.pnl, 0);
+  $('trSum').innerHTML = `${pf.open.length} open · ${n} afgesloten · winrate ${n ? fmt(w / n * 100, 0) + '%' : '–'} · totaal <span class="${tot >= 0 ? 'up' : 'down'}">${sgn(tot, 2)}</span>`;
+}
+for (const id of ['trOpen', 'trDone']) $(id).onclick = e => { const r = e.target.closest('tr[data-c]'); if (!r) return;
+  document.querySelector('.tabs button[data-tab="desk"]').click(); if (r.dataset.c !== st.coin) setCoin(r.dataset.c);
+  setTimeout(() => $('chart').scrollIntoView({ behavior: 'smooth', block: 'center' }), 100); };
 function allFeed(lines) {
   if (!lines.length) return;
   for (const t of lines) allState.rows.unshift(t);
@@ -1120,7 +1169,12 @@ function renderAll() {
   $('allMode').innerHTML = a.live ? '<b style="color:var(--down)">LIVE</b>' : 'PAPIER · zet markten aan met de knoppen bovenaan of in de scanner';
   $('allChips').innerHTML = coins.map(c => `<button style="--c:${tColor(c)}" class="${allState.filter.has(c) ? 'on' : ''}" data-c="${c}">${short(c)}</button>`).join('')
     + (allState.filter.size ? '<button style="--c:#8a92a3" data-c="">alles tonen</button>' : '');
-  $('allCards').innerHTML = coins.map(c => {
+  if (Date.now() - allState.sortedAt > 10000 || allState.order.length !== coins.length || coins.some(c => !allState.order.includes(c))) {
+    allState.order = coins.slice().sort((x, y) => Math.abs((a.markets[y] || {}).score || 0) - Math.abs((a.markets[x] || {}).score || 0));
+    allState.sortedAt = Date.now();
+  }
+  renderTrades();
+  $('allCards').innerHTML = allState.order.map(c => {
     const m = a.markets[c] || {}, mo = m.model || {}, tk = m.ticket, h = a.history.filter(x => x.coin === c), pnl = h.reduce((s, x) => s + x.pnl, 0);
     return `<div class="card" style="--c:${tColor(c)}"><div class="kv"><b class="t"><span title="${tk ? tk.side + ' ' + tk.state : 'geen trade'}" style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;background:${tk ? (tk.side === 'long' ? '#16b364' : '#ef3a5d') : '#e6e9f0'};box-shadow:${tk ? '0 0 0 3px ' + tColor(c) + '55' : 'none'}"></span>${short(c)}</b><span>${m.px ? fmt(m.px, m.px >= 100 ? 2 : 4) : '–'}</span></div>
       <div class="kv"><span>score</span><span>${m.score == null ? '–' : sgn(m.score, 2)}</span></div>
@@ -1174,8 +1228,20 @@ $('killBtn').onclick = async () => {
 };
 $('setBtn').onclick = () => {
   for (const [id, k] of [['cfBal', 'bal'], ['cfToken', 'token']]) $(id).value = S[k];
-  refreshStatus(); $('dlg').showModal();
+  refreshStatus(); fillModel(); $('dlg').showModal();
 };
+const MW = ['flow30', 'flow10', 'book', 'bookDeep', 'mom'];
+function fillModel() {
+  const md = st.auto && st.auto.model; if (!md) { $('mdInfo').textContent = 'server niet bereikbaar'; return; }
+  $('mdBeta').value = md.beta0; $('mdK').value = md.k; for (const k of MW) $('mdW_' + k).value = md.w[k];
+  $('mdInfo').textContent = '';
+}
+async function postModel(model) {
+  try { await autoPost('/api/desk/auto', { model }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'toegepast'; }
+  catch (e) { $('mdInfo').textContent = e.message; }
+}
+$('mdSave').onclick = () => postModel({ beta0: +$('mdBeta').value, k: +$('mdK').value, w: Object.fromEntries(MW.map(k => [k, +$('mdW_' + k).value])) });
+$('mdReset').onclick = () => postModel({ reset: true });
 $('cfClose').onclick = () => $('dlg').close();
 $('cfSave').onclick = () => {
   S.bal = +$('cfBal').value || DEF.bal;

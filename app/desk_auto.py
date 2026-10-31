@@ -25,6 +25,9 @@ APPROVE_SECONDS = 30
 STATE_FILE = DATA_DIR / "desk-auto.json"
 WS_URL = "wss://api.hyperliquid.xyz/ws"
 WINDOWS = (15, 60, 240)
+# Prijsmodel, instelbaar op /desk → Instellingen: gewichten van de Spotter-score en hoe snel Prior zijn β uit de data haalt.
+MODEL_DEFAULT = {"beta0": 0.25, "k": 30, "w": {"flow30": .35, "flow10": .2, "book": .25, "bookDeep": .1, "mom": .1}}
+MODEL: dict = json.loads(json.dumps(MODEL_DEFAULT))
 
 
 def _phi(z: float) -> float:
@@ -105,13 +108,14 @@ class Market:
             f["book"], f["bookDeep"] = imb(5), imb(20)
         el = max(1.0, now - self.win)
         f["mom"] = math.log(self.px / self.open0) / math.sqrt(self.var1 * el) if self.open0 and self.var1 else 0.0
-        f["score"] = _clamp(.35 * f["flow30"] + .2 * f["flow10"] + .25 * f["book"] + .1 * f["bookDeep"]
-                            + .1 * _clamp(f["mom"] / 2, -1, 1), -1, 1)
+        w = MODEL["w"]
+        f["score"] = _clamp(w["flow30"] * f["flow30"] + w["flow10"] * f["flow10"] + w["book"] * f["book"]
+                            + w["bookDeep"] * f["bookDeep"] + w["mom"] * _clamp(f["mom"] / 2, -1, 1), -1, 1)
         return f
 
     def prior(self, window: int) -> dict:
         a = self.samples(window)
-        n, beta0, k = len(a), .25, 30
+        n, beta0, k = len(a), MODEL["beta0"], MODEL["k"]
         sy = sum(s["s"] * s["y"] for s in a)
         ss = sum(s["s"] ** 2 for s in a)
         hit = sum(1 for s in a if (s["s"] > 0) == (s["y"] > 0)) / n if n else None
@@ -139,7 +143,9 @@ class Swarm:
         self.coins: dict[str, bool] = {c: c == "BTC" for c in desk.COINS}
         self.coins.update(saved.get("coins", {}))
         self.window_min: int = int(saved.get("window_min") or desk.num(cfg, "DESK_WINDOW_MIN", 60))
-        self.min_edge: float | None = saved.get("min_edge")  # drempel in ¢ boven break-even; None = DESK_MIN_EDGE
+        self.min_edge: float | None = saved.get("min_edge")
+        if saved.get("model"):
+            MODEL.update(saved["model"])  # drempel in ¢ boven break-even; None = DESK_MIN_EDGE
         start = desk.num(cfg, "DESK_PAPER_START", 1000)
         self.paper: dict = saved.get("paper") or {"start": start, "cash": start, "curve": [[int(time.time() * 1000), start]]}
         self.resubscribe = False
@@ -168,7 +174,7 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "min_edge": self.min_edge, "paper": self.paper, "history": list(self.history)}))
+                                          "min_edge": self.min_edge, "model": MODEL, "paper": self.paper, "history": list(self.history)}))
 
     def log(self, agent: str, act: str, text: str, val: str = "", coin: str = "") -> None:
         self.seq += 1
@@ -575,7 +581,8 @@ class Swarm:
             threading.Thread(target=self.loop, daemon=True, name="desk-swarm").start()
 
     def set(self, on: bool | None = None, confirm: bool | None = None, coins: dict | None = None,
-            window_min: int | None = None, reset_paper: float | None = None, min_edge: float | None = None) -> None:
+            window_min: int | None = None, reset_paper: float | None = None, min_edge: float | None = None,
+            model: dict | None = None) -> None:
         """Markten volgen, venster en papier mogen altijd; aan/uit en bevestigen vragen live-toestemming."""
         if on is not None or confirm is not None:
             if not desk.status()["auto_allowed"]:
@@ -619,6 +626,24 @@ class Swarm:
                     raise ValueError("Drempel moet tussen 0¢ en 10¢ liggen")
                 self.min_edge = float(min_edge)
                 self.log("edge", "DREMPEL", f"edge-drempel {self.min_edge:+g}¢ boven break-even")
+            if model is not None:
+                new = json.loads(json.dumps(MODEL_DEFAULT if model.get("reset") else MODEL))
+                if not model.get("reset"):
+                    if "beta0" in model:
+                        new["beta0"] = float(model["beta0"])
+                    if "k" in model:
+                        new["k"] = float(model["k"])
+                    for key, v in (model.get("w") or {}).items():
+                        if key not in new["w"]:
+                            raise ValueError(f"Onbekend kenmerk: {key}")
+                        new["w"][key] = float(v)
+                if not (0 <= new["beta0"] <= 2 and 1 <= new["k"] <= 1000 and all(0 <= v <= 1 for v in new["w"].values())
+                        and sum(new["w"].values()) > 0):
+                    raise ValueError("Start-β 0..2, krimp 1..1000, gewichten 0..1 (niet allemaal 0)")
+                MODEL.clear()
+                MODEL.update(new)
+                ws = " · ".join(f"{k} {v:g}" for k, v in MODEL["w"].items())
+                self.log("prior", "MODEL", f"{'standaard hersteld: ' if model.get('reset') else ''}start-β {MODEL['beta0']:g}, krimp {MODEL['k']:g}, gewichten {ws}")
             if reset_paper is not None:
                 if any(t["paper"] for t in self.open_tickets()):
                     for m in self.markets.values():
@@ -680,7 +705,7 @@ class Swarm:
                        for c, m in self.markets.items()}
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
-                "coins": self.coins, "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "windows": WINDOWS, "costs": costs(cfg),
+                "coins": self.coins, "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "model": MODEL, "windows": WINDOWS, "costs": costs(cfg),
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,
                 "portfolio": self.portfolio(), "history": list(self.history)[-200:],
                 "trace": [t for t in self.trace if t["id"] > since], "seq": self.seq,

@@ -229,6 +229,7 @@ class DeskAuto(BaseModel):
     window_min: int | None = None
     reset_paper: float | None = None
     min_edge: float | None = None
+    model: dict | None = None
 
 
 class DeskApproval(BaseModel):
@@ -250,7 +251,7 @@ def desk_auto_set(req: DeskAuto):
         elif req.on is not None or req.confirm is not None:
             raise PermissionError("Live handel staat uit; alleen markten volgen op papier kan")
         swarm.set(on=req.on, confirm=req.confirm, coins=req.coins,
-                  window_min=req.window_min, reset_paper=req.reset_paper, min_edge=req.min_edge)
+                  window_min=req.window_min, reset_paper=req.reset_paper, min_edge=req.min_edge, model=req.model)
         return swarm.snapshot(swarm.seq)
     except PermissionError as e:
         raise HTTPException(403, str(e))
