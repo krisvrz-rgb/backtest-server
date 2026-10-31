@@ -139,6 +139,7 @@ class Swarm:
         self.coins: dict[str, bool] = {c: c == "BTC" for c in desk.COINS}
         self.coins.update(saved.get("coins", {}))
         self.window_min: int = int(saved.get("window_min") or desk.num(cfg, "DESK_WINDOW_MIN", 60))
+        self.min_edge: float | None = saved.get("min_edge")  # drempel in ¢ boven break-even; None = DESK_MIN_EDGE
         start = desk.num(cfg, "DESK_PAPER_START", 1000)
         self.paper: dict = saved.get("paper") or {"start": start, "cash": start, "curve": [[int(time.time() * 1000), start]]}
         self.resubscribe = False
@@ -167,7 +168,7 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "paper": self.paper, "history": list(self.history)}))
+                                          "min_edge": self.min_edge, "paper": self.paper, "history": list(self.history)}))
 
     def log(self, agent: str, act: str, text: str, val: str = "", coin: str = "") -> None:
         self.seq += 1
@@ -273,12 +274,12 @@ class Swarm:
         if el < .15 * W or el > .67 * W or now - m.last_eval < every:
             return
         m.last_eval = now
-        min_edge = desk.num(cfg, "DESK_MIN_EDGE", 2)
+        min_edge = self.edge_floor(cfg, live)
         self.log("spotter", "SCAN", f"flow {f['flow30']:+.2f} · boek {f['book']:+.2f} · score {f['score']:+.2f}", coin=m.coin)
         self.log("prior", "PRIJS", f"β {mo['prior']['beta']:.3f} · P(stijgt) {mo['p'] * 100:.1f}¢ · "
                                    f"verwachte beweging {mo['eMove']:.1f}bp · kosten {costs(cfg)['round']:.1f}bp", coin=m.coin)
         if mo["edge"] < min_edge:
-            self.log("edge", "PASS", f"{mo['side']} {mo['pDir'] * 100:.1f}¢ < break-even {mo['be'] * 100:.1f}¢ + {min_edge:g}¢",
+            self.log("edge", "PASS", f"{mo['side']} {mo['pDir'] * 100:.1f}¢ < break-even {mo['be'] * 100:.1f}¢ {min_edge:+g}¢",
                      f"{mo['edge']:+.1f}¢", m.coin)
             if el + every > .67 * W:
                 m.decided = True
@@ -302,6 +303,11 @@ class Swarm:
             self.log("taker", "WACHT", f"{mo['side']} ${usd:g} ({lev}x) wacht op jouw goedkeuring", "mens", m.coin)
         else:
             self.enter(order, cfg)
+
+    def edge_floor(self, cfg: dict, live: bool) -> float:
+        """Drempel boven break-even. Op papier mag hij negatief (meer trades om van te leren); live nooit onder 0."""
+        e = self.min_edge if self.min_edge is not None else desk.num(cfg, "DESK_MIN_EDGE", 2)
+        return max(e, 0.0) if live else e
 
     def kelly(self, m: Market, cfg: dict, live: bool) -> tuple[int, float] | None:
         """Hefboom uit de volatiliteit: een tegenvaller van 2σ tot het einde van het venster mag hooguit
@@ -569,7 +575,7 @@ class Swarm:
             threading.Thread(target=self.loop, daemon=True, name="desk-swarm").start()
 
     def set(self, on: bool | None = None, confirm: bool | None = None, coins: dict | None = None,
-            window_min: int | None = None, reset_paper: float | None = None) -> None:
+            window_min: int | None = None, reset_paper: float | None = None, min_edge: float | None = None) -> None:
         """Markten volgen, venster en papier mogen altijd; aan/uit en bevestigen vragen live-toestemming."""
         if on is not None or confirm is not None:
             if not desk.status()["auto_allowed"]:
@@ -608,6 +614,11 @@ class Swarm:
                     m.win, m.sample = 0, None  # nieuwe vensters, zonder een half venster te laten leren
                 self.window_min = int(window_min)
                 self.log("prior", "VENSTER", f"vensters van {self.window_min} minuten")
+            if min_edge is not None and float(min_edge) != self.min_edge:
+                if not 0 <= float(min_edge) <= 10:  # onder 0 = bewust trades met verwacht verlies
+                    raise ValueError("Drempel moet tussen 0¢ en 10¢ liggen")
+                self.min_edge = float(min_edge)
+                self.log("edge", "DREMPEL", f"edge-drempel {self.min_edge:+g}¢ boven break-even")
             if reset_paper is not None:
                 if any(t["paper"] for t in self.open_tickets()):
                     for m in self.markets.values():
@@ -669,7 +680,7 @@ class Swarm:
                        for c, m in self.markets.items()}
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
-                "coins": self.coins, "window_min": self.window_min, "windows": WINDOWS, "costs": costs(cfg),
+                "coins": self.coins, "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "windows": WINDOWS, "costs": costs(cfg),
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,
                 "portfolio": self.portfolio(), "history": list(self.history)[-200:],
                 "trace": [t for t in self.trace if t["id"] > since], "seq": self.seq,

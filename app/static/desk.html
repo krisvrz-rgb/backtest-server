@@ -181,6 +181,7 @@
     <div><b>SWARM DESK</b><small>zes agents · één boek · <span id="coinLbl">BTC</span> <span id="winLbl">1u</span> · hyperliquid</small></div></div>
   <div class="nav"><a href="/">Overzicht</a><a href="/tool">Backtest</a><a href="/watchlist">Watchlist</a><a href="/aanraders">Aanraders</a></div>
   <div class="seg" id="coinSeg"></div>
+  <div class="seg" id="edgeSeg" title="Hoeveel edge (¢ boven break-even na kosten) de zwerm wil zien voor hij instapt. Los (0¢) = instappen zodra het model break-even of beter ziet: meer trades."></div>
   <div class="seg" id="winSeg" title="Lengte van een venster: zo lang houdt de zwerm een positie maximaal vast"></div>
   <div class="stat"><b class="num" id="hdSpot">–</b><span>spot · hyperliquid</span></div>
   <div class="stat"><b class="num" id="hdPnl">–</b><span>portefeuille pnl</span></div>
@@ -208,11 +209,12 @@
 
 <div class="agents" id="agents"></div>
 
-<div class="tabs"><button class="on" data-tab="desk">Desk</button><button data-tab="all">Alle tickers</button></div>
+<div class="tabs"><button class="on" data-tab="desk">Desk</button><button data-tab="all">Overzicht · alle tickers</button></div>
 <section id="tabAll" class="allview" style="display:none">
   <div class="panel">
     <div class="ph"><h2>Alle tickers</h2><span class="sub">de zwerm op de server · elke markt in zijn eigen kleur · klik een ticker om te filteren</span>
       <span class="right" id="allMode">–</span></div>
+    <canvas id="allRing" class="fill" style="height:380px;cursor:pointer" title="Klik een ticker om hem op de Desk te openen"></canvas>
     <div class="chips" id="allChips"></div>
     <div class="cards" id="allCards"></div>
   </div>
@@ -607,13 +609,19 @@ async function pollAuto() {
     allFeed(a.trace);
     const changed = a.trace.some(t => ['TAKE', 'AFREK', 'PASS', 'EDGE'].includes(t.act));
     const coinsChanged = JSON.stringify(a.coins) !== JSON.stringify(st.auto && st.auto.coins);
-    const winChanged = !st.auto || st.auto.window_min !== a.window_min;
+    const winChanged = !st.auto || st.auto.window_min !== a.window_min || st.auto.min_edge !== a.min_edge;
     st.autoSeq = a.seq; st.auto = a; if (changed) renderMarks(); if (coinsChanged && scanRows.length) renderScan();
     if (winChanged) renderWinSeg();
   } catch (e) { st.auto = null; }
   renderAuto();
 }
+const EDGES = [[2, 'streng'], [1, 'normaal'], [0, 'los']];
+function renderEdgeSeg() {
+  const a = st.auto, cur = a ? a.min_edge : 2;
+  $('edgeSeg').innerHTML = EDGES.map(([v, n]) => `<button data-e="${v}" class="${cur === v ? 'on' : ''}" title="instappen vanaf ${sgn(v, 0, '¢')} boven break-even">${n}</button>`).join('');
+}
 function renderWinSeg() {
+  renderEdgeSeg();
   const a = st.auto, ws = (a && a.windows) || [15, 60, 240];
   $('winSeg').innerHTML = ws.map(m => `<button data-w="${m}" class="${a && a.window_min === m ? 'on' : ''}">${winLbl(m)}</button>`).join('');
   $('winLbl').textContent = winLbl();
@@ -719,8 +727,44 @@ function drawRing(time) {
   x.fillStyle = g; x.beginPath(); x.arc(cx, cy, pr * 1.8, 0, 7); x.fill();
   x.beginPath(); x.arc(cx, cy, pr, 0, 7); x.fillStyle = '#15171c'; x.fill();
   x.fillStyle = '#fff'; x.beginPath(); x.roundRect(cx - 15, cy - 18, 9, 34, 5); x.roundRect(cx + 6, cy - 18, 9, 34, 5); x.fill();
+  if ($('tabAll').style.display !== 'none') drawAllRing(tm);
   requestAnimationFrame(drawRing);
 }
+
+// overzicht: elke gevolgde ticker als cirkel op een ring; gevuld (groen long, rood short) zolang er een trade loopt
+let allSpots = [];
+function drawAllRing(tm) {
+  const c = $('allRing'), [x, w, h] = canvasCtx(c), a = st.auto; allSpots = [];
+  if (!a) return;
+  const coins = Object.keys(a.coins).filter(k => a.coins[k]), open = {};
+  for (const t of (a.portfolio && a.portfolio.open) || []) open[t.coin] = t;
+  const cx = w / 2, cy = h / 2, R = Math.min(w * .42, 520), ry = h / 2 - 60;
+  x.lineWidth = 1; x.strokeStyle = '#e6e9f0'; x.beginPath(); x.ellipse(cx, cy, R, ry, 0, 0, 7); x.stroke();
+  const pf = a.portfolio || {};
+  x.textAlign = 'center'; x.fillStyle = '#15171c'; x.font = '700 26px ui-monospace, monospace';
+  x.fillText(pf.equity != null ? '$' + fmt(pf.equity, 2) : '–', cx, cy - 4);
+  x.font = '11px ui-monospace, monospace'; x.fillStyle = '#8a92a3';
+  x.fillText(`${(pf.open || []).length} trade(s) open · ${coins.length} tickers gevolgd · ${pf.mode === 'live' ? 'LIVE' : 'papier'}`, cx, cy + 18);
+  x.fillText(`venster ${winLbl()} · drempel ${sgn(a.min_edge || 0, 0, '¢')}`, cx, cy + 34);
+  coins.forEach((coin, i) => {
+    const ang = -Math.PI / 2 + i / coins.length * Math.PI * 2, px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang);
+    const t = open[coin], m = a.markets[coin] || {}, col = tColor(coin), r = t ? 26 + Math.sin(tm * 4) * 2 : 20;
+    if (t) { x.beginPath(); x.arc(px, py, r + 9, 0, 7); x.strokeStyle = col; x.lineWidth = 3; x.globalAlpha = .35; x.stroke(); x.globalAlpha = 1; }
+    x.beginPath(); x.arc(px, py, r, 0, 7);
+    x.fillStyle = t ? (t.side === 'long' ? '#16b364' : '#ef3a5d') : '#ffffff'; x.globalAlpha = t && t.state === 'entering' ? .5 : 1; x.fill(); x.globalAlpha = 1;
+    x.lineWidth = 3; x.strokeStyle = col; x.stroke();
+    x.fillStyle = t ? '#fff' : col; x.font = '700 11px ui-monospace, monospace'; x.fillText(short(coin).slice(0, 6), px, py + 4);
+    x.fillStyle = '#15171c'; x.font = '10px ui-monospace, monospace';
+    const lbl = t ? `${t.side === 'long' ? '▲' : '▼'} ${t.lev}x ${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}` : `edge ${m.model && m.model.edge != null ? sgn(m.model.edge, 1, '¢') : '–'}`;
+    x.fillText(lbl, px, py + r + 15);
+    allSpots.push({ coin, px, py, r });
+  });
+}
+$('allRing').onclick = e => {
+  const b = $('allRing').getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
+  const hit = allSpots.find(p => Math.hypot(p.px - mx, p.py - my) < p.r + 8); if (!hit) return;
+  document.querySelector('.tabs button[data-tab="desk"]').click(); if (hit.coin !== st.coin) setCoin(hit.coin);
+};
 
 function pfData() {  // gedeelde portefeuille van de server: papier, of het Hyperliquid-account als live aan staat
   const a = st.auto, pf = a && a.portfolio; if (!pf) return null;
@@ -975,6 +1019,10 @@ $('winSeg').onclick = async e => {
   const open = st.auto.portfolio ? st.auto.portfolio.open.length : 0;
   if (open && !confirm(`Venster naar ${winLbl(w)}? De ${open} open positie(s) worden eerst gesloten.`)) return;
   try { await autoPost('/api/desk/auto', { window_min: w }); } catch (err) { alert(err.message); } pollAuto();
+};
+$('edgeSeg').onclick = async e => {
+  const v = e.target.dataset.e; if (v === undefined || !st.auto) return;
+  try { await autoPost('/api/desk/auto', { min_edge: +v }); } catch (err) { alert(err.message); } pollAuto();
 };
 $('apYes').onclick = () => answer(true); $('apNo').onclick = () => answer(false);
 $('autoBtn').onclick = async () => {
