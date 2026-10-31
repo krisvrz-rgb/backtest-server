@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from io import StringIO
 from typing import Any, Literal
 
@@ -23,7 +24,7 @@ from .watchlist import (PORTFOLIO_LIST, default_periods, PORTFOLIO_URL, SCANNER,
                         list_name, load_watchlist, parse_tradingview, replace_lists, save_watchlist, tv_to_yahoo,
                         scan_cached, ticker_detail, watchlist_view)
 from .robust import cross_ticker
-from . import desk
+from . import desk, desk_coach
 from .desk_auto import swarm
 from .picks import picks, strategy_scores
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
@@ -238,6 +239,7 @@ class DeskAuto(BaseModel):
     sl_sigma: float | None = None
     tp_sigma: float | None = None
     hold_max: int | None = None
+    learn: bool | None = None
     risk_pct: float | None = None
 
 
@@ -263,7 +265,7 @@ def desk_auto_set(req: DeskAuto):
                   window_min=req.window_min, reset_paper=req.reset_paper, min_edge=req.min_edge, model=req.model,
                   max_lev=req.max_lev, risk_pct=req.risk_pct, auto_scan=req.auto_scan, scan_n=req.scan_n,
                   kelly_frac=req.kelly_frac, max_margin_pct=req.max_margin_pct,
-                  sl_sigma=req.sl_sigma, tp_sigma=req.tp_sigma, hold_max=req.hold_max)
+                  sl_sigma=req.sl_sigma, tp_sigma=req.tp_sigma, hold_max=req.hold_max, learn=req.learn)
         return swarm.snapshot(swarm.seq)
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -288,6 +290,46 @@ def desk_auto_level(req: DeskLevel):
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+class DeskCoach(BaseModel):
+    token: str = ""
+    url: str | None = None
+    model: str | None = None
+    hour: int | None = Field(None, ge=0, le=23)
+    enabled: bool | None = None
+    detect: bool = False
+
+
+@app.get("/api/desk/coach")
+def desk_coach_get():
+    """Je lokale taalmodel als dagelijkse coach: instellingen, of hij bezig is, en de laatste rapporten."""
+    return {"config": desk_coach.config(), "status": desk_coach.STATUS, "reports": desk_coach.reports()[-7:]}
+
+
+@app.post("/api/desk/coach/config")
+def desk_coach_config(req: DeskCoach):
+    try:
+        if desk.status()["live"]:
+            desk.check_token(req.token)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    if req.detect:
+        found = desk_coach.detect()
+        if not found:
+            raise HTTPException(404, "Geen lokaal taalmodel gevonden op " + ", ".join(desk_coach.CANDIDATES))
+        return {"config": desk_coach.save_config(url=found["url"], model=found["model"]), "models": found["models"]}
+    if req.url and not req.url.startswith(("http://127.0.0.1", "http://localhost", "http://192.168.")):
+        raise HTTPException(400, "Alleen een taalmodel op deze machine of in je thuisnetwerk")
+    return {"config": desk_coach.save_config(url=req.url, model=req.model, hour=req.hour, enabled=req.enabled)}
+
+
+@app.post("/api/desk/coach/run")
+def desk_coach_run():
+    if desk_coach.STATUS["running"]:
+        raise HTTPException(409, "De coach is al bezig")
+    desk_coach.start_background_run()
+    return {"ok": True}
 
 
 @app.post("/api/desk/auto/approve")
@@ -628,6 +670,7 @@ def stop_scan():
 def _start_scheduler():
     start_scheduler()
     swarm.start()  # op papier tot live aan staat; volgt alle aangezette markten en leert 24/7
+    threading.Thread(target=desk_coach.scheduler, daemon=True, name="desk-coach").start()
 
 
 class ScheduleSettings(BaseModel):

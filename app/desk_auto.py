@@ -18,7 +18,7 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 
-from . import desk
+from . import desk, desk_learn
 from .data import DATA_DIR
 
 APPROVE_SECONDS = 30
@@ -71,6 +71,9 @@ def sr_levels(cs: list[dict], k: int = 6) -> list[dict]:
         else:
             out.append({"sum": px, "n": 1, "hi": px, "lo": px, "last": t})
     return [{"px": o["sum"] / o["n"], "n": o["n"], "last": o["last"]} for o in out]
+
+
+LEARN = {"on": True}  # geleerde gewichten gebruiken als ze beter zijn dan de vaste (aan/uit vanaf /desk)
 
 
 class Market:
@@ -169,11 +172,16 @@ class Market:
         sd = math.sqrt(max(self.var1, 1e-12) * left)
         pr = self.prior(window)
         p = _phi(pr["beta"] * f["score"])
+        src = "vast"
+        if LEARN["on"]:
+            pl = desk_learn.predict(window, self.coin, f)
+            if pl is not None:
+                p, src = pl, "geleerd"
         e_move = sd * math.sqrt(2 / math.pi) * 1e4
         be = .5 + costs(cfg)["round"] / (2 * max(e_move, .01))
         p_dir = max(p, 1 - p)
         return {"p": p, "pDir": p_dir, "side": "long" if p >= .5 else "short", "be": be,
-                "edge": (p_dir - be) * 100, "sd": sd, "left": left, "prior": pr, "eMove": e_move}
+                "edge": (p_dir - be) * 100, "sd": sd, "left": left, "prior": pr, "eMove": e_move, "src": src}
 
 
 class Swarm:
@@ -196,7 +204,8 @@ class Swarm:
         self.kelly_info: dict = {}
         self.sl_sigma: float | None = saved.get("sl_sigma")
         self.tp_sigma: float | None = saved.get("tp_sigma")
-        self.hold_max: int | None = saved.get("hold_max")  # hoeveel vensters een trade mag doorlopen (None = 3)
+        self.hold_max: int | None = saved.get("hold_max")
+        LEARN["on"] = saved.get("learn", True)  # hoeveel vensters een trade mag doorlopen (None = 3)
         self.max_margin_pct: float | None = saved.get("max_margin_pct")
         if saved.get("model"):
             MODEL.update(saved["model"])  # drempel in ¢ boven break-even; None = DESK_MIN_EDGE
@@ -233,7 +242,7 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac, "sl_sigma": self.sl_sigma, "tp_sigma": self.tp_sigma, "hold_max": self.hold_max,
+                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac, "sl_sigma": self.sl_sigma, "tp_sigma": self.tp_sigma, "hold_max": self.hold_max, "learn": LEARN["on"],
                                           "max_margin_pct": self.max_margin_pct, "model": MODEL, "paper": self.paper, "history": list(self.history),
                                           "tickets": [m.ticket for m in self.markets.values() if m.ticket and m.ticket["paper"]]}))
 
@@ -325,6 +334,9 @@ class Swarm:
             a = m.samples(self.window)
             a.append({"s": round(m.sample["s"], 4), "y": round(y, 4), "t": m.win})
             m.prior_file(self.window).write_text(json.dumps(a[-2000:]))
+            if m.sample.get("f"):
+                desk_learn.record({"t": m.win, "coin": m.coin, "window": self.window, "f": [round(v, 4) for v in m.sample["f"]],
+                                   "s": round(m.sample["s"], 4), "p": round(m.sample["p"], 4), "y": round(y, 4), "src": m.sample.get("src")})
             if self.coins[m.coin]:
                 self.log("prior", "LEER", f"score {m.sample['s']:+.2f} → uitkomst {y:+.2f}σ", f"n={len(a)}", m.coin)
         m.win, m.open0, m.decided, m.sample = win, m.px, False, None
@@ -335,7 +347,7 @@ class Swarm:
     def decide(self, m: Market, now: float, cfg: dict) -> None:
         f, mo, el, W = m.feat, m.model, now - m.win, self.window
         if not m.sample and el >= .15 * W:
-            m.sample = {"s": f["score"], "px": m.px, "sd": mo["sd"]}
+            m.sample = {"s": f["score"], "px": m.px, "sd": mo["sd"], "f": desk_learn.fvec(f), "p": mo["p"], "src": mo.get("src")}
         live = self.is_live()
         if not self.coins[m.coin] or (live and self.halted) or m.decided or m.ticket or (live and self.pending):
             return
@@ -379,7 +391,7 @@ class Swarm:
         why = {"score": round(f["score"], 3), "parts": [[n_, round(c, 3), round(v, 3)] for n_, c, v in parts],
                "p": round(mo["pDir"], 4), "be": round(mo["be"], 4), "edge": round(mo["edge"], 2), "emove": round(mo["eMove"], 1),
                "beta": round(mo["prior"]["beta"], 3), "n": mo["prior"]["n"], "hit": mo["prior"]["hit"],
-               "cost": costs(cfg)["round"], **self.kelly_info,
+               "cost": costs(cfg)["round"], "src": mo.get("src"), **self.kelly_info,
                "room": round(room, 2) if room is not None else None, "wall": round(wall["px"], 8) if wall else None,
                "wall_n": wall["n"] if wall else None}
         bid, ask = m.best()
@@ -662,6 +674,10 @@ class Swarm:
                     desk.do_close(cfg, t["coin"], by="zwerm")
                 bid, ask = m.best()
                 exit_px, exit_fee = (bid if t["side"] == "long" else ask), c["taker"]
+                if t["paper"] and m.px and bid and ask:
+                    # het boek loopt soms achter op de laatste trade: rond de laatste prijs + halve spread afrekenen
+                    half = min((ask - bid) / 2, m.px * 5e-4)
+                    exit_px = m.px - half if t["side"] == "long" else m.px + half
             sign = 1 if t["side"] == "long" else -1
             pnl = t["usd"] * sign * (exit_px - t["entry"]) / t["entry"] - t["usd"] * (c["maker"] + exit_fee) / 1e4
             p_up = m.model.get("p")
@@ -679,6 +695,7 @@ class Swarm:
                                  "maker_exit": bool(t.get("maker_exit")), "reason": t.get("exit_reason") or "venster",
                                  "why": t.get("why"), "sl": t.get("sl"), "tp": t.get("tp"), "plan": t.get("plan"), "exit_why": exit_why,
                                  "holds": t.get("holds", 0), "holds_why": t.get("holds_why", [])[-12:]})
+            desk_learn.record_trade(self.history[-1])
             self.log("closer", "AFREK", f"{'papier' if t['paper'] else 'LIVE'} {t['side']} {t['entry']:,.6g} → {exit_px:,.6g} "
                                         f"({'maker' if t.get('maker_exit') else 'markt'})", f"{pnl:+.2f}", m.coin)
             self.save()
@@ -788,6 +805,24 @@ class Swarm:
             threading.Thread(target=self.loop, daemon=True, name="desk-swarm").start()
             threading.Thread(target=self.scanner, daemon=True, name="desk-scan").start()
             threading.Thread(target=self.level_refresher, daemon=True, name="desk-levels").start()
+            threading.Thread(target=self.trainer, daemon=True, name="desk-learn").start()
+
+    def trainer(self) -> None:
+        """Elk uur de gewichten opnieuw leren uit de LEER-vensters van het huidige venster."""
+        time.sleep(60)
+        while True:
+            try:
+                before = desk_learn.STATE.get(str(self.window), {}).get("groups", {})
+                res = desk_learn.train(self.window)
+                for g, i in res["groups"].items():
+                    if "ll_learned" in i:
+                        was = before.get(g, {}).get("use")
+                        self.log("prior", "TRAIN", f"{g}: geleerd log-loss {i['ll_learned']:.4f} vs vast {i['ll_base']:.4f} op "
+                                 f"{i['n_test']} nieuwe vensters → {'GELEERD in gebruik' if i['use'] else 'vast blijft'}"
+                                 + (" (gewisseld)" if was is not None and was != i["use"] else ""), f"n={i['n']}")
+            except Exception as e:
+                self.log("prior", "FOUT", f"leren mislukt: {e}")
+            time.sleep(3600)
 
     def level_refresher(self) -> None:
         """Steun en weerstand elk uur opnieuw berekenen, één markt per keer (anders 429 van Hyperliquid)."""
@@ -861,7 +896,8 @@ class Swarm:
             window_min: int | None = None, reset_paper: float | None = None, min_edge: float | None = None,
             model: dict | None = None, auto_scan: bool | None = None, scan_n: int | None = None, max_lev: float | None = None, risk_pct: float | None = None,
             kelly_frac: float | None = None, max_margin_pct: float | None = None,
-            sl_sigma: float | None = None, tp_sigma: float | None = None, hold_max: int | None = None) -> None:
+            sl_sigma: float | None = None, tp_sigma: float | None = None, hold_max: int | None = None,
+            learn: bool | None = None) -> None:
         """Markten volgen, venster en papier mogen altijd; aan/uit en bevestigen vragen live-toestemming."""
         if on is not None or confirm is not None:
             if not desk.status()["auto_allowed"]:
@@ -905,6 +941,9 @@ class Swarm:
                 self.auto_scan, self.scan_at = auto_scan, 0.0
                 self.drop.clear()
                 self.log("spotter", "AUTO", "scanner-modus " + ("aan: elke 5 min de top 25" if auto_scan else "uit"))
+            if learn is not None and learn != LEARN["on"]:
+                LEARN["on"] = bool(learn)
+                self.log("prior", "LEREN", "geleerde gewichten gebruiken als ze beter zijn" if learn else "alleen de vaste gewichten")
             if hold_max is not None:
                 if not 0 <= int(hold_max) <= 12:
                     raise ValueError("Doorlopen: 0 (altijd sluiten op het einde van het venster) tot 12 vensters")
@@ -1061,7 +1100,8 @@ class Swarm:
                 "auto_scan": self.auto_scan, "scan_n": self.scan_n, "scan_at": int(self.scan_at * 1000),
                 "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)),
                 "size": dict(zip(("kelly", "max_margin_pct"), self.size_limits())),
-                "exits": dict(zip(("sl", "tp"), self.exit_limits()), hold=self.hold_max if self.hold_max is not None else 3), "windows": WINDOWS, "costs": costs(cfg),
+                "exits": dict(zip(("sl", "tp"), self.exit_limits()), hold=self.hold_max if self.hold_max is not None else 3),
+                "learn": {"on": LEARN["on"], **desk_learn.summary(self.window)}, "windows": WINDOWS, "costs": costs(cfg),
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,
                 "portfolio": self.portfolio(), "history": list(self.history)[-200:],
                 "trace": [t for t in self.trace if t["id"] > since], "seq": self.seq,

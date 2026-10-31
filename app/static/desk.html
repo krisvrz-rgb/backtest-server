@@ -53,7 +53,7 @@
   .mpct { display: flex; align-items: center; gap: 5px; font: 600 12px var(--mono); }
   .mpct input { width: 54px; font: 600 13px var(--mono); padding: 4px 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
   .mpct b { color: var(--muted); font-size: 11px; }
-  .reactor.withpf { grid-template-columns: 230px minmax(0, 1fr) 420px 260px; }
+  .reactor.withpf { grid-template-columns: 170px minmax(0, 1fr) 420px 300px; }
   .pfslot:empty { display: none; } .pfslot > .panel { border: 0; box-shadow: none; padding: 0; }
   .pfslot #balChart { height: 110px; }
   .row2.solo { grid-template-columns: 1fr; }
@@ -89,13 +89,13 @@
   .ph .sub { font-size: 10px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
   .ph .right { margin-left: auto; font: 600 11px var(--mono); color: var(--muted); }
 
-  .reactor { display: grid; grid-template-columns: 230px minmax(0, 1fr) 260px; gap: 12px; }
-  .bank { display: grid; gap: 7px; }
-  .spark { border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; position: relative; }
+  .reactor { display: grid; grid-template-columns: 170px minmax(0, 1fr) 300px; gap: 12px; align-items: start; }
+  .bank { display: grid; gap: 5px; align-content: start; }
+  .spark { border: 1px solid var(--border); border-radius: 8px; padding: 3px 7px; position: relative; }
   .spark .hd { display: flex; font: 700 10px var(--mono); letter-spacing: .06em; }
   .spark .hd span { margin-left: auto; color: var(--accent); }
-  .spark canvas { width: 100%; height: 40px; display: block; }
-  .ring { position: relative; min-height: 520px; }
+  .spark canvas { width: 100%; height: 24px; display: block; }
+  .ring { position: relative; height: 430px; }
   .ring canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   .ring .hud { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: flex-start; pointer-events: none; }
   .ring .big { font: 700 30px var(--mono); }
@@ -130,7 +130,7 @@
   canvas.fill { width: 100%; display: block; }
   /* vaste CSS-hoogte, anders schaalt een canvas mee met de breedte en wordt hij op brede schermen metershoog */
   #balChart { height: 150px; } #pnlBars { height: 50px; } #dist { height: 190px; } #spec { height: 230px; } #plasma { height: 50px; }
-  .spark canvas { height: 40px; }
+  .spark canvas { height: 24px; }
   .tape { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 10px; }
   #chart { height: 400px; }
   .book { font: 11px var(--mono); }
@@ -323,7 +323,7 @@
             <span class="num muted" id="apTimer" style="margin-left:auto"></span></div>
         </div>
         <div class="box"><h3>Live ticket</h3><div id="ticket" class="mono muted">Geen open ticket</div></div>
-        <div class="box"><h3>Waarom · wat denkt de zwerm</h3><div id="why" class="why">–</div></div>
+        <div class="box"><h3>Waarom · wat denkt de zwerm</h3><div id="why" class="why" style="max-height:330px;overflow:auto">–</div></div>
         <div class="box"><h3>Vertrouwen per agent</h3><div id="conf"></div></div>
         <div class="box"><h3>Plasma flow · koopdruk</h3><canvas id="plasma" class="fill" height="50"></canvas></div>
         <div class="box"><h3>Exhaust log · afgerekend</h3><div class="exhaust" id="exhaust"></div></div>
@@ -361,6 +361,19 @@
       </div>
     </section>
   </div>
+
+  <section class="panel">
+    <div class="ph"><h2>Leren &amp; coach</h2><span class="sub">gewichten leren uit eigen data (klein ML-model, geen taalmodel) · dagelijks rapport van je eigen taalmodel op CrushMini</span>
+      <span class="right"><button class="btn" id="learnBtn" title="Geleerde gewichten gebruiken zodra ze op nieuwe data beter voorspellen dan de vaste">Geleerd: –</button></span></div>
+    <div class="row2" style="grid-template-columns:1fr 1.4fr;gap:14px">
+      <div id="learnBox" class="why"><span class="muted">laden…</span></div>
+      <div><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          <span class="muted" id="coachCfg">–</span><span style="flex:1"></span>
+          <button class="btn" id="coachDetect" title="Zoek een lokaal taalmodel (Ollama, LM Studio, llama.cpp) en kies het grootste">Zoek mijn model</button>
+          <button class="btn" id="coachRun">Coach nu</button></div>
+        <div id="coachBox" class="why" style="white-space:pre-wrap;max-height:340px;overflow:auto"><span class="muted">nog geen rapport</span></div></div>
+    </div>
+  </section>
 
   <section class="panel">
     <div class="ph"><h2>The Scanner</h2><span class="sub">alle Hyperliquid-perps · ook tokenized aandelen · gesorteerd op beweging tegenover kosten</span>
@@ -812,6 +825,38 @@ function drawTradeSegs() {
   }
 }
 
+// ---------- leren & coach ----------
+function renderLearn() {
+  const L = st.auto && st.auto.learn; if (!L) return;
+  $('learnBtn').textContent = 'Geleerd: ' + (L.on ? 'AAN' : 'UIT'); $('learnBtn').classList.toggle('on', !!L.on);
+  const gname = { crypto: 'crypto', stock: 'aandelen (HIP-3)' }, gs = Object.entries(L.groups || {});
+  const wbars = (w, names) => w.map((v, i) => `<div class="bar"><span>${names[i]}</span><span style="background:var(--panel-2);border-radius:3px">
+    <i style="width:${Math.min(100, Math.abs(v) / 1.5 * 100)}%;background:${v >= 0 ? '#16b364' : '#ef3a5d'}"></i></span><span>${sgn(v, 2)}</span></div>`).join('');
+  $('learnBox').innerHTML = `<p><b>${L.n}</b> vensters van ${L.window / 60} min verzameld. Per groep zijn er minstens ${L.min} nodig voor hij gaat leren;
+    daarna toetst hij elk uur op de nieuwste 30% die het model niet gezien heeft.</p>`
+    + (gs.length ? gs.map(([g, i]) => i.ll_learned == null ? `<p><b>${gname[g] || g}</b>: ${i.n} / ${L.min} vensters, nog aan het verzamelen.</p>`
+      : `<p><b>${gname[g] || g}</b> (${i.n} vensters): geleerd model log-loss <b>${fmt(i.ll_learned, 4)}</b> (${fmt(i.acc_learned * 100, 0)}% juist)
+        tegen vast ${fmt(i.ll_base, 4)} (${fmt(i.acc_base * 100, 0)}% juist) → <b class="${i.use ? 'up' : 'muted'}">${i.use ? 'geleerd in gebruik' : 'vast blijft'}</b>.</p>
+        ${i.w ? wbars(i.w, L.names) : ''}`).join('') : '<p class="muted">Nog niet getraind: de eerste training draait een minuut na de start, daarna elk uur.</p>');
+}
+$('learnBtn').onclick = async () => { await autoPost('/api/desk/auto', { learn: !(st.auto.learn && st.auto.learn.on) }); await pollAuto(); renderLearn(); };
+async function pollCoach() {
+  try {
+    const c = await (await fetch('/api/desk/coach')).json(), cf = c.config, rs = c.reports || [], last = rs[rs.length - 1];
+    $('coachCfg').textContent = (cf.url ? `${cf.model} op ${cf.url}` : 'nog geen model gekozen') + ` · elke dag om ${cf.hour}u`
+      + (c.status.running ? ' · BEZIG (een 35B-model kan enkele minuten nodig hebben)…' : '') + (c.status.error ? ' · fout: ' + c.status.error : '');
+    $('coachRun').disabled = !!c.status.running;
+    if (last) $('coachBox').innerHTML = `<div class="cap">${new Date(last.at).toLocaleString('nl-BE')} · ${last.model} · ${last.n_trades} trades · ${sgn(last.pnl, 2)} · ${fmt(last.seconds, 0)} s</div>`
+      + last.text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  } catch (e) {}
+}
+$('coachRun').onclick = async () => { await fetch('/api/desk/coach/run', { method: 'POST' }); pollCoach(); };
+$('coachDetect').onclick = async () => {
+  const r = await fetch('/api/desk/coach/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: S.token, detect: true }) });
+  const j = await r.json().catch(() => ({})); $('coachCfg').textContent = r.ok ? `gevonden: ${j.config.model} op ${j.config.url} (ook: ${(j.models || []).slice(1, 4).join(', ')})` : (j.detail || 'niet gevonden');
+};
+setInterval(pollCoach, 10000); setInterval(renderLearn, 5000);
+
 // ---------- trace / wire ----------
 function trace(from, to, act, text, val = '', at = Date.now(), coin = st.coin) {
   st.traceN++; st.hand.push(Date.now());
@@ -1094,7 +1139,7 @@ let ringSpots = [];
 $('ring').onclick = e => { const b = $('ring').getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
   const hit = ringSpots.find(p => Math.hypot(p.px - mx, p.py - my) < 22); if (hit && hit.coin !== st.coin) setCoin(hit.coin); };
 function drawRing(time) {
-  const c = $('ring'), [x, w, h] = canvasCtx(c), cx = w / 2, cy = h / 2 + 62, R = Math.min(w * .42, h * .5), ry = Math.min(R * .62, h / 2 - 90);
+  const c = $('ring'), [x, w, h] = canvasCtx(c), cx = w / 2, cy = h / 2 + 50, R = Math.min(w * .3, h * .55), ry = Math.min(R * .55, h / 2 - 100);
   const tm = time / 1000, energy = .4 + Math.min(1.5, Math.abs(st.feat.score || 0) * 3);
   // draden
   x.lineWidth = TH.dark ? 1 : .7; if (TH.dark) x.globalCompositeOperation = 'lighter';  // neon: kleuren tellen op tot een gloed
@@ -1262,7 +1307,7 @@ function explain(t, sm) {
   const now = tradeConf(t);
   return `<p><b>${t.side.toUpperCase()} ${short(t.coin)}</b> omdat vooral <b>${top}</b> wezen op een koers die ${dir} (score ${sgn(w.score, 2)}).</p>
     ${bars(w.parts)}
-    <p>Prior zette dat om in <b>${cents(w.p)}</b> kans (β ${fmt(w.beta, 2)}, ${w.n} vensters geleerd). Break-even na ${fmt(w.cost, 1)} bp kosten
+    <p>${w.src === 'geleerd' ? 'Het <b>geleerde model</b>' : 'Prior'} zette dat om in <b>${cents(w.p)}</b> kans (β ${fmt(w.beta, 2)}, ${w.n} vensters geleerd). Break-even na ${fmt(w.cost, 1)} bp kosten
       op een verwachte beweging van ${fmt(w.emove, 1)} bp was ${cents(w.be)}, dus edge <b>${sgn(w.edge, 1, '¢')}</b>.</p>
     <p>Kelly: σ ${fmt(w.sd, 0)} bp → hefboom ${w.lev}x${w.want_lev > w.lev ? ` (wilde ${w.want_lev}x, max ${w.lev_cap}x)` : ''}; ${w.kelly}×Kelly wilde ${usd(w.kelly_usd)} positie,
       ${w.capped ? `afgetopt op ${w.max_margin_pct}% marge` : 'binnen de grens'} → ${usd(w.margin, 2)} marge, ${usd(w.usd, 2)} positie.</p>
