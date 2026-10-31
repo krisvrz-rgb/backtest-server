@@ -207,6 +207,9 @@
     .reactor { grid-template-columns: 1fr; } .bank { grid-template-columns: repeat(3, 1fr); }
     .row2, .row3, .tape { grid-template-columns: 1fr; } .agents { grid-template-columns: repeat(3, 1fr); }
   }
+  .why { font: 11.5px/1.5 system-ui, sans-serif; } .why p { margin: 0 0 5px; } .why b { font-weight: 700; }
+  .why .bar { display: grid; grid-template-columns: 96px 1fr 44px; gap: 6px; align-items: center; font: 10px var(--mono); margin: 1px 0; }
+  .why .bar i { display: block; height: 5px; border-radius: 3px; }
   .pfm{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--panel-2);margin:8px 0 2px}
   .pfm i{display:block;height:100%}
   .pfo{font:11px var(--mono);margin:4px 0 6px}
@@ -311,6 +314,7 @@
             <span class="num muted" id="apTimer" style="margin-left:auto"></span></div>
         </div>
         <div class="box"><h3>Live ticket</h3><div id="ticket" class="mono muted">Geen open ticket</div></div>
+        <div class="box"><h3>Waarom · wat denkt de zwerm</h3><div id="why" class="why">–</div></div>
         <div class="box"><h3>Vertrouwen per agent</h3><div id="conf"></div></div>
         <div class="box"><h3>Plasma flow · koopdruk</h3><canvas id="plasma" class="fill" height="50"></canvas></div>
         <div class="box"><h3>Exhaust log · afgerekend</h3><div class="exhaust" id="exhaust"></div></div>
@@ -1066,6 +1070,31 @@ function drawBook() {
     + asks.map(l => row(l, '#ef3a5d')).join('') + `<span class="spread">spread ${fmt(spr, 2)} · ${fmt(spr / st.px * 1e4, 2)}bp</span>` + bids.map(l => row(l, '#16b364')).join('');
 }
 
+// uitleg in gewone taal, uit de getallen die de agents bij de instap gebruikten (geen taalmodel, gewoon regels)
+function explain(t, sm) {
+  const w = t && t.why, mo = (sm && sm.model) || {}, pr = (sm && sm.prior) || {};
+  const bars = parts => parts.map(([n, c, v]) => `<div class="bar"><span>${n}</span><span style="background:var(--panel-2);border-radius:3px">
+    <i style="width:${Math.min(100, Math.abs(c) / .35 * 100)}%;background:${c >= 0 ? '#16b364' : '#ef3a5d'}"></i></span><span>${sgn(c, 2)}</span></div>`).join('');
+  if (!w) {
+    if (mo.p == null) return '<span class="muted">wacht op data van de server</span>';
+    const side = mo.p >= .5 ? 'stijgen' : 'dalen';
+    return `<p>Geen trade op ${short(st.coin)}. De zwerm schat <b>${cents(mo.pDir)}</b> kans dat de koers gaat ${side}, maar heeft
+      <b>${cents(mo.be)}</b> nodig om de kosten (${fmt(costBps(), 1)} bp) terug te verdienen op een verwachte beweging van ${fmt(mo.eMove, 1)} bp.</p>
+      <p>${mo.edge >= ((st.auto && st.auto.min_edge) || 0) ? 'Dat is genoeg: hij stapt in zodra hij in de beslisfase zit en er ruimte is in de portefeuille.' : `Edge ${sgn(mo.edge, 1, '¢')}: te weinig, dus <b>PASS</b>.`}
+      Prior vertrouwt de score met β ${fmt(pr.beta, 2)} (${pr.n || 0} vensters geleerd${pr.hit != null ? ', ' + fmt(pr.hit * 100, 0) + '% juist' : ''}).</p>`;
+  }
+  const dir = t.side === 'long' ? 'stijgt' : 'daalt', top = w.parts.filter(x => Math.abs(x[1]) > .01).slice(0, 2).map(x => x[0]).join(' en ') || 'een zwak signaal';
+  const now = tradeConf(t);
+  return `<p><b>${t.side.toUpperCase()} ${short(t.coin)}</b> omdat vooral <b>${top}</b> wezen op een koers die ${dir} (score ${sgn(w.score, 2)}).</p>
+    ${bars(w.parts)}
+    <p>Prior zette dat om in <b>${cents(w.p)}</b> kans (β ${fmt(w.beta, 2)}, ${w.n} vensters geleerd). Break-even na ${fmt(w.cost, 1)} bp kosten
+      op een verwachte beweging van ${fmt(w.emove, 1)} bp was ${cents(w.be)}, dus edge <b>${sgn(w.edge, 1, '¢')}</b>.</p>
+    <p>Kelly: σ ${fmt(w.sd, 0)} bp → hefboom ${w.lev}x${w.want_lev > w.lev ? ` (wilde ${w.want_lev}x, max ${w.lev_cap}x)` : ''}; ${w.kelly}×Kelly wilde ${usd(w.kelly_usd)} positie,
+      ${w.capped ? `afgetopt op ${w.max_margin_pct}% marge` : 'binnen de grens'} → ${usd(w.margin, 2)} marge, ${usd(w.usd, 2)} positie.</p>
+    ${t.sl || t.tp ? `<p>Uitstap: stop ${t.sl ? fmt(t.sl, pxD()) : 'uit'}, take-profit ${t.tp ? fmt(t.tp, pxD()) : 'uit'}, anders aan het einde van het venster.</p>` : ''}
+    ${now != null ? `<p>Nu: <b class="${now >= .5 ? 'up' : 'down'}">${fmt(now * 100, 0)}%</b> kans dat het zijn kant op gaat${now < .5 ? ': het model twijfelt nu aan deze trade' : ''}.</p>` : ''}`;
+}
+
 function drawLevels() {
   const sm = srvMarket(), srvT = sm && sm.ticket;
   // instaplijn: groen voor long, rood voor short, met de lopende winst of verlies
@@ -1149,6 +1178,8 @@ function tick() {
   drawBook(); drawDist(m);
 
   drawLevels();
+  const pfT = st.auto && st.auto.portfolio && st.auto.portfolio.open.find(o => o.coin === st.coin);
+  if (now % 2000 < 1000) $('why').innerHTML = explain(pfT, srvMarket());
 
   // ticket van de server-zwerm voor deze markt: limiet staat, open, of maker-uitstap
   if (srvT) {

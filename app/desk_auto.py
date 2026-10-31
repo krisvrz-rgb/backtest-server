@@ -158,6 +158,7 @@ class Swarm:
         self.max_lev: float | None = saved.get("max_lev")    # None = DESK_MAX_LEV; live nooit boven DESK_MAX_LEV
         self.risk_pct: float | None = saved.get("risk_pct")  # None = DESK_RISK_PCT
         self.kelly_frac: float | None = saved.get("kelly_frac")
+        self.kelly_info: dict = {}
         self.sl_sigma: float | None = saved.get("sl_sigma")
         self.tp_sigma: float | None = saved.get("tp_sigma")
         self.max_margin_pct: float | None = saved.get("max_margin_pct")
@@ -261,7 +262,7 @@ class Swarm:
                 upnl = t["usd"] * (1 if t["side"] == "long" else -1) * (m.px - t["entry"]) / t["entry"]
             tickets.append({"coin": t["coin"], "side": t["side"], "usd": t["usd"], "lev": t["lev"], "margin": t["usd"] / t["lev"],
                             "state": t["state"], "entry": t.get("entry"), "px": m.px, "upnl": round(upnl, 4), "paper": t["paper"],
-                            "sl": t.get("sl"), "tp": t.get("tp")})
+                            "sl": t.get("sl"), "tp": t.get("tp"), "why": t.get("why")})
         used = sum(t["margin"] for t in tickets)
         upnl = sum(t["upnl"] for t in tickets)
         live = self.is_live()
@@ -322,11 +323,20 @@ class Swarm:
         if not sized:
             return
         lev, usd = sized
+        w = MODEL["w"]  # waarom: welke kenmerken de score maakten, en wat Prior, Edge en Kelly ervan dachten
+        parts = [("koopdruk 3 min", w["flow30"] * f["flow30"], f["flow30"]), ("koopdruk 30 s", w["flow10"] * f["flow10"], f["flow10"]),
+                 ("orderboek top 5", w["book"] * f["book"], f["book"]), ("orderboek top 20", w["bookDeep"] * f["bookDeep"], f["bookDeep"]),
+                 ("momentum", w["mom"] * _clamp(f["mom"] / 2, -1, 1), f["mom"])]
+        parts.sort(key=lambda x: abs(x[1]), reverse=True)
+        why = {"score": round(f["score"], 3), "parts": [[n_, round(c, 3), round(v, 3)] for n_, c, v in parts],
+               "p": round(mo["pDir"], 4), "be": round(mo["be"], 4), "edge": round(mo["edge"], 2), "emove": round(mo["eMove"], 1),
+               "beta": round(mo["prior"]["beta"], 3), "n": mo["prior"]["n"], "hit": mo["prior"]["hit"],
+               "cost": costs(cfg)["round"], **self.kelly_info}
         bid, ask = m.best()
         limit = bid if mo["side"] == "long" else ask
         order = {"id": int(now * 1000), "coin": m.coin, "side": mo["side"], "usd": usd, "lev": lev, "edge": mo["edge"],
                  "p": mo["pDir"], "be": mo["be"], "win": m.win, "expires": now + APPROVE_SECONDS, "paper": not live,
-                 "limit": limit}
+                 "limit": limit, "why": why}
         if not live:
             self.enter(order, cfg)
         elif self.confirm:
@@ -385,6 +395,9 @@ class Swarm:
         if usd < 10:  # Hyperliquid weigert orders onder $10
             self.log("kelly", "TE KLEIN", f"vrije marge ${pf['free']:,.2f} te klein voor een order", coin=m.coin)
             return None
+        self.kelly_info = {"sd": round(sd * 1e4, 1), "lev": lev, "want_lev": want, "lev_cap": cap, "kelly": kf,
+                           "kelly_usd": round(kelly_notional, 2), "margin": round(usd / lev, 2), "usd": round(usd, 2),
+                           "capped": "marge" if kelly_notional / lev > cap_margin else None, "max_margin_pct": mpct}
         self.log("kelly", "SIZE", f"σ venster {sd * 1e4:.0f}bp → hefboom {lev}x"
                                   + (f" (wil {want}x, max {cap:g}x)" if want > lev else "")
                                   + f" · Kelly ×{kf:g} wil ${kelly_notional:,.0f} positie"
