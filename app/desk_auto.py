@@ -149,6 +149,8 @@ class Swarm:
         self.drop: set = set()  # uit de top 25 gevallen, maar nog een open trade: gaat uit zodra die afgerekend is
         self.max_lev: float | None = saved.get("max_lev")    # None = DESK_MAX_LEV; live nooit boven DESK_MAX_LEV
         self.risk_pct: float | None = saved.get("risk_pct")  # None = DESK_RISK_PCT
+        self.kelly_frac: float | None = saved.get("kelly_frac")
+        self.max_margin_pct: float | None = saved.get("max_margin_pct")
         if saved.get("model"):
             MODEL.update(saved["model"])  # drempel in ¢ boven break-even; None = DESK_MIN_EDGE
         start = desk.num(cfg, "DESK_PAPER_START", 1000)
@@ -184,7 +186,8 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "model": MODEL, "paper": self.paper, "history": list(self.history),
+                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac,
+                                          "max_margin_pct": self.max_margin_pct, "model": MODEL, "paper": self.paper, "history": list(self.history),
                                           "tickets": [m.ticket for m in self.markets.values() if m.ticket and m.ticket["paper"]]}))
 
     def log(self, agent: str, act: str, text: str, val: str = "", coin: str = "") -> None:
@@ -326,6 +329,11 @@ class Swarm:
         e = self.min_edge if self.min_edge is not None else desk.num(cfg, "DESK_MIN_EDGE", 2)
         return max(e, 0.0) if live else e
 
+    def size_limits(self) -> tuple[float, float]:
+        """Kelly-fractie (0,25 = kwart-Kelly) en max marge per trade in % van de portefeuille."""
+        return (self.kelly_frac if self.kelly_frac is not None else 0.25,
+                self.max_margin_pct if self.max_margin_pct is not None else 5.0)
+
     def lev_limits(self, cfg: dict, live: bool) -> tuple[float, float]:
         """Max hefboom en risico per trade. Op papier vrij in te stellen; live nooit boven DESK_MAX_LEV uit desk.env."""
         env_cap = desk.num(cfg, "DESK_MAX_LEV", 3)
@@ -335,8 +343,9 @@ class Swarm:
 
     def kelly(self, m: Market, cfg: dict, live: bool) -> tuple[int, float] | None:
         """Hefboom uit de volatiliteit: een tegenvaller van 2σ tot het einde van het venster mag hooguit
-        DESK_RISK_PCT (10%) van de marge kosten, begrensd door DESK_MAX_LEV en de max van de markt.
-        Marge = DESK_ORDER_USD, maar nooit meer dan een kwart van de vrije marge van de gedeelde portefeuille."""
+        risico % (10%) van de marge kosten, begrensd door de max hefboom en de max van de markt.
+        Grootte uit Kelly: positie / portefeuille = fractie × μ / σ², met μ = (2p − 1)·E|beweging| − kosten.
+        Marge = positie / hefboom, nooit meer dan max marge % van de portefeuille of een kwart van de vrije marge."""
         pf = self.portfolio()
         if len(pf["open"]) >= desk.num(cfg, "DESK_MAX_OPEN", 5):
             self.log("kelly", "VOL", f"al {len(pf['open'])} posities open, geen nieuwe", coin=m.coin)
@@ -348,16 +357,24 @@ class Swarm:
             cap = min(cap, market_max)
         want = math.floor(risk / 100 / (2 * sd))
         lev = int(_clamp(want, 1, max(1, cap)))
-        margin = min(desk.num(cfg, "DESK_ORDER_USD", 20), pf["free"] / 4)
+        mo, (kf, mpct) = m.model, self.size_limits()
+        mu = (2 * mo["pDir"] - 1) * sd * math.sqrt(2 / math.pi) - costs(cfg)["round"] / 1e4
+        kelly_notional = max(0.0, kf * mu / (sd * sd)) * pf["equity"]
+        cap_margin = min(pf["equity"] * mpct / 100, pf["free"] / 4)
+        margin = min(kelly_notional / lev, cap_margin)
+        if 0 < margin * lev < 10 <= cap_margin * lev:  # Hyperliquid wil minstens $10: kleinste order
+            margin = 10 / lev
         usd = margin * lev
         if live:
-            usd = min(usd, desk.num(cfg, "DESK_MAX_USD", 25))
+            usd = min(usd, desk.num(cfg, "DESK_MAX_USD", 25), desk.num(cfg, "DESK_ORDER_USD", 20) * lev)
         if usd < 10:  # Hyperliquid weigert orders onder $10
             self.log("kelly", "TE KLEIN", f"vrije marge ${pf['free']:,.2f} te klein voor een order", coin=m.coin)
             return None
         self.log("kelly", "SIZE", f"σ venster {sd * 1e4:.0f}bp → hefboom {lev}x"
-                                  + (f" (wil {want}x, max {cap:g}x)" if want > lev else "") + f" · marge ${usd / lev:,.2f} → positie ${usd:,.2f} "
-                                  f"(vrij ${pf['free']:,.0f})", coin=m.coin)
+                                  + (f" (wil {want}x, max {cap:g}x)" if want > lev else "")
+                                  + f" · Kelly ×{kf:g} wil ${kelly_notional:,.0f} positie"
+                                  + (f", max marge {mpct:g}%" if kelly_notional / lev > cap_margin else "")
+                                  + f" → marge ${usd / lev:,.2f} · positie ${usd:,.2f} (vrij ${pf['free']:,.0f})", coin=m.coin)
         return lev, round(usd, 2)
 
     # ---------- orders: instap en uitstap met maker-orders ----------
@@ -667,7 +684,8 @@ class Swarm:
 
     def set(self, on: bool | None = None, confirm: bool | None = None, coins: dict | None = None,
             window_min: int | None = None, reset_paper: float | None = None, min_edge: float | None = None,
-            model: dict | None = None, auto_scan: bool | None = None, max_lev: float | None = None, risk_pct: float | None = None) -> None:
+            model: dict | None = None, auto_scan: bool | None = None, max_lev: float | None = None, risk_pct: float | None = None,
+            kelly_frac: float | None = None, max_margin_pct: float | None = None) -> None:
         """Markten volgen, venster en papier mogen altijd; aan/uit en bevestigen vragen live-toestemming."""
         if on is not None or confirm is not None:
             if not desk.status()["auto_allowed"]:
@@ -705,6 +723,17 @@ class Swarm:
                 self.auto_scan, self.scan_at = auto_scan, 0.0
                 self.drop.clear()
                 self.log("spotter", "AUTO", "scanner-modus " + ("aan: elke 5 min de top 25" if auto_scan else "uit"))
+            if kelly_frac is not None or max_margin_pct is not None:
+                if kelly_frac is not None and not 0.05 <= float(kelly_frac) <= 1:
+                    raise ValueError("Kelly-fractie moet tussen 0,05 en 1 liggen")
+                if max_margin_pct is not None and not 0.5 <= float(max_margin_pct) <= 25:
+                    raise ValueError("Max marge per trade moet tussen 0,5% en 25% liggen")
+                if kelly_frac is not None:
+                    self.kelly_frac = float(kelly_frac)
+                if max_margin_pct is not None:
+                    self.max_margin_pct = float(max_margin_pct)
+                kf, mp = self.size_limits()
+                self.log("kelly", "GROOTTE", f"Kelly ×{kf:g} · max marge {mp:g}% van de portefeuille per trade")
             if max_lev is not None or risk_pct is not None:
                 if max_lev is not None and not 1 <= float(max_lev) <= 20:
                     raise ValueError("Max hefboom moet tussen 1x en 20x liggen")
@@ -798,7 +827,8 @@ class Swarm:
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
                 "coins": self.coins, "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "model": MODEL,
                 "auto_scan": self.auto_scan, "scan_at": int(self.scan_at * 1000),
-                "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)), "windows": WINDOWS, "costs": costs(cfg),
+                "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)),
+                "size": dict(zip(("kelly", "max_margin_pct"), self.size_limits())), "windows": WINDOWS, "costs": costs(cfg),
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,
                 "portfolio": self.portfolio(), "history": list(self.history)[-200:],
                 "trace": [t for t in self.trace if t["id"] > since], "seq": self.seq,

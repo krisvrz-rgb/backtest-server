@@ -232,6 +232,8 @@ class DeskAuto(BaseModel):
     model: dict | None = None
     max_lev: float | None = None
     auto_scan: bool | None = None
+    kelly_frac: float | None = None
+    max_margin_pct: float | None = None
     risk_pct: float | None = None
 
 
@@ -255,7 +257,8 @@ def desk_auto_set(req: DeskAuto):
             raise PermissionError("Live handel staat uit; alleen markten volgen op papier kan")
         swarm.set(on=req.on, confirm=req.confirm, coins=req.coins,
                   window_min=req.window_min, reset_paper=req.reset_paper, min_edge=req.min_edge, model=req.model,
-                  max_lev=req.max_lev, risk_pct=req.risk_pct, auto_scan=req.auto_scan)
+                  max_lev=req.max_lev, risk_pct=req.risk_pct, auto_scan=req.auto_scan,
+                  kelly_frac=req.kelly_frac, max_margin_pct=req.max_margin_pct)
         return swarm.snapshot(swarm.seq)
     except PermissionError as e:
         raise HTTPException(403, str(e))
