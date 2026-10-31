@@ -192,6 +192,11 @@
   .pfm i{display:block;height:100%}
   .pfo{font:11px var(--mono);margin:4px 0 6px}
   .pfo div{display:grid;grid-template-columns:70px 64px 1fr 70px 70px;gap:6px;align-items:center;padding:2px 0}
+  .pfo div[data-c], .exhaust div[data-c] { cursor: pointer; } .pfo div[data-c]:hover, .exhaust div[data-c]:hover { background: var(--panel-2); }
+  .layers { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; font: 600 10px var(--mono); }
+  .layers button { border: 1px solid var(--border); background: var(--panel); color: var(--muted); border-radius: 10px; padding: 2px 8px; cursor: pointer; font: inherit; }
+  .layers button.on { color: #04050b; background: var(--c); border-color: var(--c); box-shadow: 0 0 8px -2px var(--c); }
+  .chartwrap { position: relative; } .chartwrap #heat { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 0; } .chartwrap #chart { position: relative; z-index: 1; }
   .pfo .bar{height:6px;border-radius:3px;background:var(--panel-2);overflow:hidden}.pfo .bar i{display:block;height:100%}
 </style>
 </head>
@@ -301,7 +306,9 @@
       <div class="ph"><h2>The Tape</h2><span class="sub"><span id="tapeCoin">BTC</span> 1m · vwap · live orderboek</span>
         <span class="right" id="tapeStats">–</span></div>
       <div class="tape">
-        <div><div class="big num" id="tapePx" style="font:700 26px var(--mono)">–</div><div id="chart"></div></div>
+        <div><div class="big num" id="tapePx" style="font:700 26px var(--mono)">–</div>
+          <div class="layers" id="layers" title="Lagen op de grafiek aan of uit"></div>
+          <div class="chartwrap"><canvas id="heat"></canvas><div id="chart"></div></div></div>
         <div class="book" id="book"></div>
       </div>
     </section>
@@ -450,7 +457,84 @@ const cs = chart.addCandlestickSeries({ upColor: '#16b364', downColor: '#ef3a5d'
 const vwapS = chart.addLineSeries({ color: '#2463eb', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
 const openLine = cs.createPriceLine({ price: 0, color: '#f08c00', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'open venster' });
 let candles = [];
+chart.timeScale().subscribeVisibleLogicalRangeChange(() => drawHeat());
 new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, height: 400 })).observe($('chart'));
+
+// ---------- lagen op de grafiek: 12 kenmerken + liquiditeitsheatmap (zoals Bookmap) ----------
+// Kenmerken komen per minuut uit de pagina zelf (alleen sinds de pagina open is), onderaan de grafiek op een eigen schaal -1..1.
+const FCOL = ['#ff4d6d', '#ff8c42', '#ffd166', '#06d6a0', '#4cc9f0', '#4361ee', '#b5179e', '#f72585', '#90be6d', '#43aa8b', '#c77dff', '#ffffff'];
+const layerOn = new Set(JSON.parse(localStorage.getItem('desk.layers') || '["heat","score"]'));
+const featSeries = {}; st.featMin = {};
+function renderLayers() {
+  $('layers').innerHTML = `<button data-l="heat" style="--c:#f5a524" class="${layerOn.has('heat') ? 'on' : ''}" title="Waar staan veel kopers en verkopers in het orderboek, door de tijd: hoe feller, hoe meer volume">heatmap boek</button>`
+    + FEATS.map((f, j) => `<button data-l="${f}" style="--c:${FCOL[j]}" class="${layerOn.has(f) ? 'on' : ''}" title="${FEAT_INFO[j]}">${f}</button>`).join('');
+}
+function syncFeatSeries() {
+  FEATS.forEach((f, j) => {
+    if (layerOn.has(f) && !featSeries[f]) {
+      featSeries[f] = chart.addLineSeries({ color: FCOL[j], lineWidth: 1.5, priceScaleId: 'feat', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        autoscaleInfoProvider: () => ({ priceRange: { minValue: -1, maxValue: 1 } }) });
+      featSeries[f].setData(Object.entries(st.featMin).map(([t, v]) => ({ time: +t, value: v[j] })).sort((a, b) => a.time - b.time));
+    } else if (!layerOn.has(f) && featSeries[f]) { chart.removeSeries(featSeries[f]); delete featSeries[f]; }
+  });
+  chart.priceScale('feat').applyOptions({ scaleMargins: { top: .72, bottom: .02 }, visible: false });
+}
+$('layers').onclick = e => { const l = e.target.dataset.l; if (!l) return;
+  layerOn.has(l) ? layerOn.delete(l) : layerOn.add(l); localStorage.setItem('desk.layers', JSON.stringify([...layerOn])); renderLayers(); syncFeatSeries(); drawHeat(); };
+function pushFeatures(vals, now) {
+  const m = Math.floor(now / 60000) * 60; st.featMin[m] = vals;
+  const keys = Object.keys(st.featMin); if (keys.length > 400) delete st.featMin[keys[0]];
+  FEATS.forEach((f, j) => featSeries[f] && featSeries[f].update({ time: m, value: vals[j] }));
+}
+
+// heatmap: per minuut het grootste volume per prijsbucket in het (gegroepeerde) orderboek
+st.heat = {}; st.heatStep = 0;
+function sigFigs(px) { for (let n = 5; n >= 2; n--) { if (Math.pow(10, Math.floor(Math.log10(px)) - n + 1) / px >= 4e-4) return n; } return 2; }
+async function pollHeat() {
+  if (!st.px || !layerOn.has('heat')) return;
+  let levels = null;
+  if (!st.sim) {
+    try {
+      const r = await fetch('https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'l2Book', coin: st.coin, nSigFigs: sigFigs(st.px) }) });
+      const j = await r.json(); if (j && j.levels) levels = j.levels.map(side => side.map(l => [+l.px, +l.sz]));
+    } catch (e) {}
+  }
+  if (!levels && st.bookL) levels = st.bookL;   // simulatie of geen verbinding: het fijne boek
+  if (!levels) return;
+  const all = levels[0].concat(levels[1]); if (all.length < 2) return;
+  const ps = all.map(l => l[0]).sort((a, b) => a - b); let step = Infinity;
+  for (let i = 1; i < ps.length; i++) if (ps[i] - ps[i - 1] > 1e-12) step = Math.min(step, ps[i] - ps[i - 1]);
+  if (!isFinite(step)) return; st.heatStep = Math.max(st.heatStep * .9, step);
+  const m = Math.floor(Date.now() / 60000) * 60, col = st.heat[m] || (st.heat[m] = {});
+  for (const [p, sz] of all) { const k = (Math.round(p / step) * step).toPrecision(8); col[k] = Math.max(col[k] || 0, sz * p); }
+  const keys = Object.keys(st.heat); if (keys.length > 300) delete st.heat[keys[0]];
+  drawHeat();
+}
+function heatColor(v) {  // 0..1: donkerblauw → cyaan → geel → oranje → rood, zoals Bookmap
+  const stops = [[0, [10, 20, 80]], [.35, [0, 170, 255]], [.6, [255, 230, 60]], [.8, [255, 140, 0]], [1, [255, 30, 30]]];
+  let i = 0; while (i < stops.length - 2 && v > stops[i + 1][0]) i++;
+  const [a, ca] = stops[i], [b, cb] = stops[i + 1], t = clamp((v - a) / (b - a), 0, 1);
+  return ca.map((c, k) => Math.round(c + (cb[k] - c) * t));
+}
+function drawHeat() {
+  const c = $('heat'), el = $('chart'); c.style.width = el.clientWidth + 'px'; c.style.height = el.clientHeight + 'px';
+  const [x, w, h] = canvasCtx(c); if (!layerOn.has('heat')) return;
+  const ts = chart.timeScale(), bs = ts.options().barSpacing, cols = Object.entries(st.heat); if (!cols.length) return;
+  const vals = []; for (const [, col] of cols) for (const v of Object.values(col)) vals.push(v);
+  vals.sort((a, b) => a - b); const hi = vals[Math.floor(vals.length * .97)] || vals[vals.length - 1] || 1;
+  const paneW = w - (chart.priceScale('right').width() || 0);
+  for (const [m, col] of cols) {
+    const cx = ts.timeToCoordinate(+m); if (cx == null || cx < -bs || cx > paneW) continue;
+    for (const [k, v] of Object.entries(col)) {
+      const p = +k, y1 = cs.priceToCoordinate(p + st.heatStep / 2), y2 = cs.priceToCoordinate(p - st.heatStep / 2);
+      if (y1 == null || y2 == null || y2 < 0 || y1 > h) continue;
+      const t = clamp(Math.sqrt(v / hi), 0, 1); if (t < .12) continue;
+      const [r, g, b] = heatColor(t); x.fillStyle = `rgba(${r},${g},${b},${(.1 + .6 * t).toFixed(2)})`;
+      x.fillRect(cx - bs / 2, Math.min(y1, y2), Math.max(1, bs), Math.max(1.5, Math.abs(y2 - y1)));
+    }
+  }
+}
 
 // ---------- trace / wire ----------
 function trace(from, to, act, text, val = '', at = Date.now(), coin = st.coin) {
@@ -883,6 +967,7 @@ function tick() {
     lastSec = now;
     st.specCols.push([f.flow10, f.flow30, f.book, f.bookDeep, clamp(f.mom / 2, -1, 1), clamp(f.vol5 * 1e4 / 30 - .5, -1, 1), clamp(f.tps / 10 - .5, -1, 1),
       clamp(Math.log10(f.size + 1) / 6 - .3, -1, 1), clamp(-f.spread, -1, 1), clamp(f.chain / 2, -1, 1), clamp(f.vwapDist / 50, -1, 1), f.score]);
+    pushFeatures(st.specCols[st.specCols.length - 1], now); drawHeat();
     if (st.specCols.length > 120) st.specCols.shift();
     drawSpec();
   }
@@ -944,7 +1029,7 @@ function tick() {
     const eq = Math.max(pf.equity, 1e-9);
     $('pfMargin').innerHTML = pf.open.map(t => `<i title="${t.coin} marge ${usd(t.margin, 2)}" style="width:${t.margin / eq * 100}%;background:${tColor(t.coin)}"></i>`).join('');
     $('pfOpen').innerHTML = `<div class="muted"><span>vrij</span><span>${usd(pf.free, 0)}</span><span>in gebruik ${usd(pf.used, 2)}</span><span></span><span></span></div>`
-      + pf.open.map(t => `<div><b style="color:${tColor(t.coin)}">${short(t.coin)}</b><span>${t.side} ${t.lev}x</span>
+      + pf.open.map(t => `<div data-c="${t.coin}" title="Open ${t.coin} op de grafiek"><b style="color:${tColor(t.coin)}">${short(t.coin)}</b><span>${t.side} ${t.lev}x</span>
         <span class="bar"><i style="width:${Math.min(100, t.margin / eq * 400)}%;background:${tColor(t.coin)}"></i></span>
         <span>${usd(t.margin, 2)}</span><span class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}</span></div>`).join('');
     $('stTickets').textContent = n; $('stWin').textContent = n ? fmt(pf.wins / n * 100, 1) + '%' : '–';
@@ -954,7 +1039,7 @@ function tick() {
     const hn = hs.length, longs = hs.filter(h => h.side === 'long').length, lw = hs.filter(h => h.side === 'long' && h.pnl > 0).length, sw = hs.filter(h => h.side === 'short' && h.pnl > 0).length;
     $('split').innerHTML = `<div class="conf" style="grid-template-columns:90px 1fr 90px"><span>LONG / SHORT</span><div class="track"><div style="width:${hn ? longs / hn * 100 : 50}%;background:#16b364"></div></div><span class="num">${longs} / ${hn - longs}</span></div>
       <div class="conf" style="grid-template-columns:90px 1fr 90px"><span>WIN L / S</span><div class="track"><div style="width:${longs ? lw / longs * 100 : 0}%;background:#2463eb"></div></div><span class="num">${longs ? fmt(lw / longs * 100, 0) : '–'}% / ${hn - longs ? fmt(sw / (hn - longs) * 100, 0) : '–'}%</span></div>`;
-    $('exhaust').innerHTML = hs.slice(-12).reverse().map(h => `<div><span class="muted">${hhmmss(h.t).slice(0, 5)}</span><span><b style="color:${tColor(h.coin)}">${short(h.coin)}</b> ${h.side}${h.paper ? '' : ' ●'}</span><span class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</span></div>`).join('') || '<span class="muted">leeg</span>';
+    $('exhaust').innerHTML = hs.slice(-12).reverse().map(h => `<div data-c="${h.coin}" title="Open ${h.coin} op de grafiek"><span class="muted">${hhmmss(h.t).slice(0, 5)}</span><span><b style="color:${tColor(h.coin)}">${short(h.coin)}</b> ${h.side}${h.paper ? '' : ' ●'}</span><span class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</span></div>`).join('') || '<span class="muted">leeg</span>';
   }
   if (now % 10000 < 1000) drawBalance();
 }
@@ -965,8 +1050,9 @@ async function setCoin(c) {
   renderCoinSeg();
   $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
   Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
-  st.passes = {};
-  stopSim(); await loadHistory(); connect(); drawBalance(); renderMarks();
+  st.passes = {}; st.heat = {}; st.heatStep = 0; st.featMin = {};
+  for (const f of Object.keys(featSeries)) { chart.removeSeries(featSeries[f]); delete featSeries[f]; }
+  stopSim(); await loadHistory(); connect(); drawBalance(); renderMarks(); syncFeatSeries(); pollHeat();
 
 }
 function renderCoinSeg() {
@@ -1105,6 +1191,9 @@ $('cfReset').onclick = async () => {
 
 renderCoinSeg(); loadScan();
 setCoin(st.coin).then(() => { setInterval(tick, 1000); requestAnimationFrame(drawRing); });
+renderLayers(); setInterval(pollHeat, 5000);
+for (const id of ['pfOpen', 'exhaust']) $(id).onclick = e => { const r = e.target.closest('[data-c]'); if (!r) return;
+  if (r.dataset.c !== st.coin) setCoin(r.dataset.c); $('chart').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
 renderWinSeg(); refreshStatus(); setInterval(refreshStatus, 60000); pollAuto(); setInterval(pollAuto, 1000);
 wire('prior', 'dashboard verbonden met de server-zwerm');
 </script>
