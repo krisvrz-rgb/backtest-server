@@ -374,6 +374,15 @@
   <label>Startsaldo papierportefeuille ($, geldt bij "Papier resetten")<input id="cfBal" type="number" step="100"></label>
   <p class="muted" style="font-size:11px">Hefboom, grootte, minimale edge en kosten stelt de server zelf in (Kelly, DESK_MIN_EDGE, DESK_MAKER_BPS en DESK_FEE_BPS in data/desk.env).</p>
   <fieldset style="border:1px solid var(--border);border-radius:8px;margin:10px 0;padding:6px 10px">
+    <legend class="cap">Hefboom (Kelly)</legend>
+    <p class="muted" style="font-size:11px;margin:2px 0 6px">Kelly kiest per trade: hefboom = risico ÷ (2 × σ van het venster), afgerond naar beneden en begrensd door de max hieronder en de max van de markt. Een tegenvaller van 2σ kost dan hooguit "risico" % van de marge. Live geldt bovendien DESK_MAX_LEV uit desk.env als plafond (<span id="lvLive">–</span>).</p>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;align-items:end">
+      <label>max hefboom (x)<input id="lvMax" type="number" step="1" min="1" max="20"></label>
+      <label>risico bij 2σ (% marge)<input id="lvRisk" type="number" step="1" min="1" max="50"></label>
+      <button class="btn" id="lvSave">Hefboom toepassen</button>
+    </div>
+  </fieldset>
+  <fieldset style="border:1px solid var(--border);border-radius:8px;margin:10px 0;padding:6px 10px">
     <legend class="cap">Prijsmodel (Spotter + Prior) · geldt voor de server-zwerm</legend>
     <p class="muted" style="font-size:11px;margin:2px 0 6px">Score = som van gewicht × kenmerk. Prior begint bij start-β en vertrouwt de gemeten β meer naarmate er meer vensters zijn: na "krimp" vensters weegt de data even zwaar als de start-β. Hoger β = de score voorspelt meer = grotere kansen.</p>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
@@ -1235,7 +1244,12 @@ function fillModel() {
   const md = st.auto && st.auto.model; if (!md) { $('mdInfo').textContent = 'server niet bereikbaar'; return; }
   $('mdBeta').value = md.beta0; $('mdK').value = md.k; for (const k of MW) $('mdW_' + k).value = md.w[k];
   $('mdInfo').textContent = '';
+  if (st.auto.lev) { $('lvMax').value = st.auto.lev.max; $('lvRisk').value = st.auto.lev.risk; $('lvLive').textContent = st.auto.lev.live_max + 'x'; }
 }
+$('lvSave').onclick = async () => {
+  try { await autoPost('/api/desk/auto', { max_lev: +$('lvMax').value, risk_pct: +$('lvRisk').value }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'hefboom toegepast'; }
+  catch (e) { $('mdInfo').textContent = e.message; }
+};
 async function postModel(model) {
   try { await autoPost('/api/desk/auto', { model }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'toegepast'; }
   catch (e) { $('mdInfo').textContent = e.message; }

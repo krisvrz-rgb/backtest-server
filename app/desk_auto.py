@@ -144,6 +144,8 @@ class Swarm:
         self.coins.update(saved.get("coins", {}))
         self.window_min: int = int(saved.get("window_min") or desk.num(cfg, "DESK_WINDOW_MIN", 60))
         self.min_edge: float | None = saved.get("min_edge")
+        self.max_lev: float | None = saved.get("max_lev")    # None = DESK_MAX_LEV; live nooit boven DESK_MAX_LEV
+        self.risk_pct: float | None = saved.get("risk_pct")  # None = DESK_RISK_PCT
         if saved.get("model"):
             MODEL.update(saved["model"])  # drempel in ¢ boven break-even; None = DESK_MIN_EDGE
         start = desk.num(cfg, "DESK_PAPER_START", 1000)
@@ -174,7 +176,7 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "min_edge": self.min_edge, "model": MODEL, "paper": self.paper, "history": list(self.history)}))
+                                          "min_edge": self.min_edge, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "model": MODEL, "paper": self.paper, "history": list(self.history)}))
 
     def log(self, agent: str, act: str, text: str, val: str = "", coin: str = "") -> None:
         self.seq += 1
@@ -315,6 +317,13 @@ class Swarm:
         e = self.min_edge if self.min_edge is not None else desk.num(cfg, "DESK_MIN_EDGE", 2)
         return max(e, 0.0) if live else e
 
+    def lev_limits(self, cfg: dict, live: bool) -> tuple[float, float]:
+        """Max hefboom en risico per trade. Op papier vrij in te stellen; live nooit boven DESK_MAX_LEV uit desk.env."""
+        env_cap = desk.num(cfg, "DESK_MAX_LEV", 3)
+        cap = self.max_lev if self.max_lev is not None else env_cap
+        risk = self.risk_pct if self.risk_pct is not None else desk.num(cfg, "DESK_RISK_PCT", 10)
+        return (min(cap, env_cap) if live else cap), risk
+
     def kelly(self, m: Market, cfg: dict, live: bool) -> tuple[int, float] | None:
         """Hefboom uit de volatiliteit: een tegenvaller van 2σ tot het einde van het venster mag hooguit
         DESK_RISK_PCT (10%) van de marge kosten, begrensd door DESK_MAX_LEV en de max van de markt.
@@ -324,11 +333,12 @@ class Swarm:
             self.log("kelly", "VOL", f"al {len(pf['open'])} posities open, geen nieuwe", coin=m.coin)
             return None
         sd = max(m.model.get("sd", 0.0), 1e-5)
-        cap = desk.num(cfg, "DESK_MAX_LEV", 3)
+        cap, risk = self.lev_limits(cfg, live)
         market_max = desk.universe().get(m.coin, {}).get("maxLeverage")
         if market_max:
             cap = min(cap, market_max)
-        lev = int(_clamp(math.floor(desk.num(cfg, "DESK_RISK_PCT", 10) / 100 / (2 * sd)), 1, max(1, cap)))
+        want = math.floor(risk / 100 / (2 * sd))
+        lev = int(_clamp(want, 1, max(1, cap)))
         margin = min(desk.num(cfg, "DESK_ORDER_USD", 20), pf["free"] / 4)
         usd = margin * lev
         if live:
@@ -336,7 +346,8 @@ class Swarm:
         if usd < 10:  # Hyperliquid weigert orders onder $10
             self.log("kelly", "TE KLEIN", f"vrije marge ${pf['free']:,.2f} te klein voor een order", coin=m.coin)
             return None
-        self.log("kelly", "SIZE", f"σ venster {sd * 1e4:.0f}bp → hefboom {lev}x · marge ${usd / lev:,.2f} → positie ${usd:,.2f} "
+        self.log("kelly", "SIZE", f"σ venster {sd * 1e4:.0f}bp → hefboom {lev}x"
+                                  + (f" (wil {want}x, max {cap:g}x)" if want > lev else "") + f" · marge ${usd / lev:,.2f} → positie ${usd:,.2f} "
                                   f"(vrij ${pf['free']:,.0f})", coin=m.coin)
         return lev, round(usd, 2)
 
@@ -582,7 +593,7 @@ class Swarm:
 
     def set(self, on: bool | None = None, confirm: bool | None = None, coins: dict | None = None,
             window_min: int | None = None, reset_paper: float | None = None, min_edge: float | None = None,
-            model: dict | None = None) -> None:
+            model: dict | None = None, max_lev: float | None = None, risk_pct: float | None = None) -> None:
         """Markten volgen, venster en papier mogen altijd; aan/uit en bevestigen vragen live-toestemming."""
         if on is not None or confirm is not None:
             if not desk.status()["auto_allowed"]:
@@ -626,6 +637,18 @@ class Swarm:
                     raise ValueError("Drempel moet tussen 0¢ en 10¢ liggen")
                 self.min_edge = float(min_edge)
                 self.log("edge", "DREMPEL", f"edge-drempel {self.min_edge:+g}¢ boven break-even")
+            if max_lev is not None or risk_pct is not None:
+                if max_lev is not None and not 1 <= float(max_lev) <= 20:
+                    raise ValueError("Max hefboom moet tussen 1x en 20x liggen")
+                if risk_pct is not None and not 1 <= float(risk_pct) <= 50:
+                    raise ValueError("Risico per trade moet tussen 1% en 50% van de marge liggen")
+                if max_lev is not None:
+                    self.max_lev = float(max_lev)
+                if risk_pct is not None:
+                    self.risk_pct = float(risk_pct)
+                cap, risk = self.lev_limits(cfg, False)
+                self.log("kelly", "HEFBOOM", f"max {cap:g}x (live hooguit {desk.num(cfg, 'DESK_MAX_LEV', 3):g}x uit desk.env) · "
+                                             f"risico {risk:g}% van de marge bij 2σ tegen")
             if model is not None:
                 new = json.loads(json.dumps(MODEL_DEFAULT if model.get("reset") else MODEL))
                 if not model.get("reset"):
@@ -705,7 +728,8 @@ class Swarm:
                        for c, m in self.markets.items()}
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
-                "coins": self.coins, "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "model": MODEL, "windows": WINDOWS, "costs": costs(cfg),
+                "coins": self.coins, "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "model": MODEL,
+                "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)), "windows": WINDOWS, "costs": costs(cfg),
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,
                 "portfolio": self.portfolio(), "history": list(self.history)[-200:],
                 "trace": [t for t in self.trace if t["id"] > since], "seq": self.seq,
