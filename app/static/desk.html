@@ -424,6 +424,7 @@
       <label>max marge (% pf)<input id="lvMarg" type="number" step="0.5" min="0.5" max="25"></label>
       <label>stop-loss (σ, 0 = uit)<input id="lvSl" type="number" step="0.5" min="0" max="6"></label>
       <label>take-profit (σ, 0 = uit)<input id="lvTp" type="number" step="0.5" min="0" max="6"></label>
+      <label title="Op het einde van het venster kijkt de zwerm of hij nu opnieuw in dezelfde richting zou instappen. Zo ja, dan loopt de trade door (scheelt fees). 0 = altijd sluiten">doorlopen (max vensters)<input id="lvHold" type="number" step="1" min="0" max="12"></label>
       <button class="btn" id="lvSave">Toepassen</button>
     </div>
   </fieldset>
@@ -1267,7 +1268,8 @@ function explain(t, sm) {
       ${w.capped ? `afgetopt op ${w.max_margin_pct}% marge` : 'binnen de grens'} → ${usd(w.margin, 2)} marge, ${usd(w.usd, 2)} positie.</p>
     ${w.wall ? `<p>Ruimte: de eerste ${t.side === 'long' ? 'weerstand' : 'steun'} lag op ${fmt(w.wall, pxD())} (${w.wall_n}x geraakt), ${fmt(w.room, 2)}σ verder. Genoeg ruimte om in te stappen (minstens 0,3σ).</p>` : ''}
     ${t.sl || t.tp ? `<p>Uitstap: stop ${t.sl ? fmt(t.sl, pxD()) : 'uit'}${t.plan ? ` (${t.plan.sl})` : ''}, take-profit ${t.tp ? fmt(t.tp, pxD()) : 'uit'}${t.plan ? ` (${t.plan.tp})` : ''}.
-      Raakt hij geen van beide, dan sluit hij aan het einde van het venster van ${(st.auto && st.auto.window_min) || '?'} min: daarvoor is de voorspelling gemaakt.</p>` : ''}
+      Raakt hij geen van beide, dan kijkt hij op het einde van het venster van ${(st.auto && st.auto.window_min) || '?'} min of hij opnieuw dezelfde kant op zou gaan: zo ja, dan loopt de trade door${st.auto && st.auto.exits ? ` (max ${st.auto.exits.hold} vensters)` : ''}, zo nee, dan sluit hij.</p>` : ''}
+    ${t.holds ? `<p>Loopt al <b>${t.holds}</b> venster${t.holds > 1 ? 's' : ''} door: ${(t.holds_why || []).filter(x => x.hold).map(x => `${hhmmss(x.t).slice(0, 5)} ${cents(x.p)} vs ${cents(x.be)}`).join(', ')}.</p>` : ''}
     ${now != null ? `<p>Nu: <b class="${now >= .5 ? 'up' : 'down'}">${fmt(now * 100, 0)}%</b> kans dat het zijn kant op gaat${now < .5 ? ': het model twijfelt nu aan deze trade' : ''}.</p>` : ''}`;
 }
 
@@ -1279,6 +1281,8 @@ function exitStory(h) {
     'kill switch': 'jij drukte de kill switch', daglimiet: 'de daglimiet op verlies werd geraakt', 'venster gewijzigd': 'je koos een ander venster' }[r] || r;
   return `<p><b class="${win ? 'up' : 'down'}">${h.side.toUpperCase()} ${short(h.coin)} ${sgn(h.pnl, 2)}</b> · dicht om ${hhmmss(h.t).slice(0, 5)} omdat ${how}.
     ${e.held != null ? `Na ${fmt(e.held, 0)} min stond de koers ${sgn(e.move, 2)}σ ${e.move >= 0 ? 'in' : 'tegen'} zijn richting` : ''}${e.conf != null ? `, en het model gaf toen nog ${fmt(e.conf * 100, 0)}% kans voor zijn kant` : ''}.
+    ${h.holds ? `Liep ${h.holds} venster${h.holds > 1 ? 's' : ''} door omdat het model telkens dezelfde kant op bleef wijzen.` : ''}
+    ${(h.holds_why || []).filter(x => !x.hold).slice(-1).map(x => `Bij het laatste venster gaf het model nog ${cents(x.p)} tegen ${cents(x.be)} break-even: te weinig om door te lopen.`).join('')}
     ${e.fees ? `Kosten ${usd(e.fees, 2)}.` : ''} ${h.why ? `Instap: ${cents(h.why.p)} kans tegen ${cents(h.why.be)} break-even, gedragen door ${h.why.parts.slice(0, 2).map(x => x[0]).join(' en ')}.` : ''}</p>`;
 }
 
@@ -1611,12 +1615,12 @@ function fillModel() {
   const md = st.auto && st.auto.model; if (!md) { $('mdInfo').textContent = 'server niet bereikbaar'; return; }
   $('mdBeta').value = md.beta0; $('mdK').value = md.k; for (const k of MW) $('mdW_' + k).value = md.w[k];
   $('mdInfo').textContent = '';
-  if (st.auto.exits) { $('lvSl').value = st.auto.exits.sl; $('lvTp').value = st.auto.exits.tp; }
+  if (st.auto.exits) { $('lvSl').value = st.auto.exits.sl; $('lvTp').value = st.auto.exits.tp; $('lvHold').value = st.auto.exits.hold; }
   if (st.auto.size) { $('lvKelly').value = st.auto.size.kelly; $('lvMarg').value = st.auto.size.max_margin_pct; }
   if (st.auto.lev) { $('lvMax').value = st.auto.lev.max; $('lvRisk').value = st.auto.lev.risk; $('lvLive').textContent = st.auto.lev.live_max + 'x'; }
 }
 $('lvSave').onclick = async () => {
-  try { await autoPost('/api/desk/auto', { max_lev: +$('lvMax').value, risk_pct: +$('lvRisk').value, kelly_frac: +$('lvKelly').value, max_margin_pct: +$('lvMarg').value, sl_sigma: +$('lvSl').value, tp_sigma: +$('lvTp').value }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'hefboom toegepast'; }
+  try { await autoPost('/api/desk/auto', { max_lev: +$('lvMax').value, risk_pct: +$('lvRisk').value, kelly_frac: +$('lvKelly').value, max_margin_pct: +$('lvMarg').value, sl_sigma: +$('lvSl').value, tp_sigma: +$('lvTp').value, hold_max: +$('lvHold').value }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'hefboom toegepast'; }
   catch (e) { $('mdInfo').textContent = e.message; }
 };
 async function postModel(model) {
