@@ -76,7 +76,14 @@ class Market:
 
     def warm_up(self) -> None:
         """σ per seconde uit de 5m-candles van de afgelopen 2 dagen (ook nachten en weekends mee)."""
-        cs = desk.candles(self.coin, "5m", 2 * 24 * 60)
+        for attempt in range(4):  # Hyperliquid geeft 429 als veel markten tegelijk opwarmen
+            try:
+                cs = desk.candles(self.coin, "5m", 2 * 24 * 60)
+                break
+            except Exception:
+                if attempt == 3:
+                    raise
+                time.sleep(2 * 2 ** attempt)
         rs = [math.log(cs[i]["c"] / cs[i - 1]["c"]) for i in range(1, len(cs)) if cs[i - 1]["c"] > 0]
         self.var1 = sum(r * r for r in rs) / max(1, len(rs)) / 300
         if not self.px and cs:
@@ -566,7 +573,8 @@ class Swarm:
             self.log("closer", "FOUT", f"posities controleren mislukt: {e}")
 
     def loop(self) -> None:
-        for m in self.markets.values():
+        for m in list(self.markets.values()):
+            time.sleep(.3)  # gespreid opwarmen
             try:
                 m.warm_up()
             except Exception as e:
