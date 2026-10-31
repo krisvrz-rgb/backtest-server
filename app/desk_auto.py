@@ -144,6 +144,8 @@ class Swarm:
         self.coins.update(saved.get("coins", {}))
         self.window_min: int = int(saved.get("window_min") or desk.num(cfg, "DESK_WINDOW_MIN", 60))
         self.min_edge: float | None = saved.get("min_edge")
+        self.auto_scan: bool = bool(saved.get("auto_scan"))  # elke 5 min de top 25 van de scanner volgen
+        self.scan_at = 0.0
         self.max_lev: float | None = saved.get("max_lev")    # None = DESK_MAX_LEV; live nooit boven DESK_MAX_LEV
         self.risk_pct: float | None = saved.get("risk_pct")  # None = DESK_RISK_PCT
         if saved.get("model"):
@@ -176,7 +178,7 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "min_edge": self.min_edge, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "model": MODEL, "paper": self.paper, "history": list(self.history)}))
+                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "model": MODEL, "paper": self.paper, "history": list(self.history)}))
 
     def log(self, agent: str, act: str, text: str, val: str = "", coin: str = "") -> None:
         self.seq += 1
@@ -590,10 +592,64 @@ class Swarm:
             self.started = True
             threading.Thread(target=self.feed, daemon=True, name="desk-feed").start()
             threading.Thread(target=self.loop, daemon=True, name="desk-swarm").start()
+            threading.Thread(target=self.scanner, daemon=True, name="desk-scan").start()
+
+    def add_market(self, coin: str) -> Market:
+        """Nieuwe markt (uit de scanner): opwarmen en op de feed zetten, nog niet volgen."""
+        m = Market(coin)
+        try:
+            m.warm_up()
+        except Exception as e:
+            self.log("prior", "FOUT", f"opwarmen mislukt: {e}", coin=coin)
+        self.markets[coin] = m
+        self.coins[coin] = False
+        self.resubscribe = True
+        return m
+
+    def scanner(self) -> None:
+        """Auto-modus: elke 5 minuten volgt de zwerm precies de top 25 van de scanner. Wie eruit valt, krijgt
+        geen nieuwe trades meer; een open trade daarop loopt gewoon af."""
+        while True:
+            time.sleep(10)
+            if not self.auto_scan or time.time() - self.scan_at < 300:
+                continue
+            self.scan_at = time.time()
+            try:
+                top = [r["coin"] for r in desk.scan_cached(max_age=290)["rows"][:25]]
+            except Exception as e:
+                self.log("spotter", "FOUT", f"scanner mislukt: {e}")
+                continue
+            new = [c for c in top if c not in self.markets]
+            fresh = {}
+            for c in new:  # opwarmen buiten de lock: dat zijn HTTP-calls
+                m = Market(c)
+                try:
+                    m.warm_up()
+                except Exception:
+                    pass
+                fresh[c] = m
+            with self.lock:
+                if not self.auto_scan:
+                    continue
+                for c, m in fresh.items():
+                    self.markets[c], self.coins[c] = m, False
+                    self.resubscribe = True
+                aan = [c for c in top if not self.coins[c]]
+                uit = [c for c, v in self.coins.items() if v and c not in top]
+                for c in aan:
+                    self.coins[c] = True
+                for c in uit:
+                    self.coins[c] = False
+                    if self.pending and self.pending["coin"] == c:
+                        self.pending = None
+                self.log("spotter", "TOP 25", f"scanner: {len(top)} markten gevolgd · {len(aan)} erbij"
+                         + (f" ({', '.join(aan[:8])}{'…' if len(aan) > 8 else ''})" if aan else "")
+                         + f" · {len(uit)} eraf" + (f" ({', '.join(uit[:8])}{'…' if len(uit) > 8 else ''})" if uit else ""))
+                self.save()
 
     def set(self, on: bool | None = None, confirm: bool | None = None, coins: dict | None = None,
             window_min: int | None = None, reset_paper: float | None = None, min_edge: float | None = None,
-            model: dict | None = None, max_lev: float | None = None, risk_pct: float | None = None) -> None:
+            model: dict | None = None, auto_scan: bool | None = None, max_lev: float | None = None, risk_pct: float | None = None) -> None:
         """Markten volgen, venster en papier mogen altijd; aan/uit en bevestigen vragen live-toestemming."""
         if on is not None or confirm is not None:
             if not desk.status()["auto_allowed"]:
@@ -604,25 +660,14 @@ class Swarm:
             for coin, val in (coins or {}).items():
                 coin = desk._coin(coin)
                 if coin not in self.markets:  # nieuwe markt uit de scanner
-                    m = Market(coin)
-                    try:
-                        m.warm_up()
-                    except Exception as e:
-                        self.log("prior", "FOUT", f"opwarmen mislukt: {e}", coin=coin)
-                    self.markets[coin] = m
-                    self.coins[coin] = False
-                    self.resubscribe = True
+                    self.add_market(coin)
                 if bool(val) != self.coins[coin]:
                     self.coins[coin] = bool(val)
                     m = self.markets[coin]
-                    if not val:
-                        if self.pending and self.pending["coin"] == coin:
-                            self.pending = None
-                        if m.ticket:
-                            self.settle(m, cfg)
-                    else:
-                        self.resubscribe = True
-                    self.log("prior", "COIN", "zwerm volgt nu " + ("wel" if val else "niet meer"), coin=coin)
+                    if not val and self.pending and self.pending["coin"] == coin:
+                        self.pending = None
+                    self.log("prior", "COIN", "zwerm volgt nu " + ("wel" if val else "niet meer")
+                             + (" (open trade loopt af)" if not val and m.ticket else ""), coin=coin)
             if window_min is not None and int(window_min) != self.window_min:
                 if int(window_min) not in WINDOWS:
                     raise ValueError(f"Venster moet {', '.join(map(str, WINDOWS))} minuten zijn")
@@ -637,6 +682,9 @@ class Swarm:
                     raise ValueError("Drempel moet tussen 0¢ en 10¢ liggen")
                 self.min_edge = float(min_edge)
                 self.log("edge", "DREMPEL", f"edge-drempel {self.min_edge:+g}¢ boven break-even")
+            if auto_scan is not None and auto_scan != self.auto_scan:
+                self.auto_scan, self.scan_at = auto_scan, 0.0
+                self.log("spotter", "AUTO", "scanner-modus " + ("aan: elke 5 min de top 25" if auto_scan else "uit"))
             if max_lev is not None or risk_pct is not None:
                 if max_lev is not None and not 1 <= float(max_lev) <= 20:
                     raise ValueError("Max hefboom moet tussen 1x en 20x liggen")
@@ -729,6 +777,7 @@ class Swarm:
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
                 "coins": self.coins, "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "model": MODEL,
+                "auto_scan": self.auto_scan, "scan_at": int(self.scan_at * 1000),
                 "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)), "windows": WINDOWS, "costs": costs(cfg),
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,
                 "portfolio": self.portfolio(), "history": list(self.history)[-200:],
