@@ -1455,9 +1455,9 @@ function explain(t, sm) {
 // waarom een trade dicht ging, in gewone taal
 function exitStory(h) {
   const e = h.exit_why || {}, r = e.reason || h.reason || 'venster', win = h.pnl >= 0;  // oudere trades hebben nog geen reden: die sloten altijd aan het einde van het venster
-  const how = { SL: `de koers raakte de stop-loss${h.plan ? ' (' + h.plan.sl + ')' : ''}`, TP: `de koers raakte de take-profit${h.plan ? ' (' + h.plan.tp + ')' : ''}`,
+  const how = { SL: `de koers raakte de stop-loss${h.plan ? ' (' + h.plan.sl + ')' : ''}`, TP: `de koers raakte de take-profit${h.plan ? ' (' + h.plan.tp + ')' : ''}${e.maker ? ', die als limiet in het boek lag (maker)' : ''}`,
     venster: `het venster van ${e.window || '?'} min was voorbij: de voorspelling gold tot dan, dus de zwerm stapte uit ${e.maker ? 'als maker (goedkoop)' : 'met een marktorder'}`,
-    omgedraaid: 'het model draaide om: de kans voor de andere kant werd groot genoeg om die trade zelf te openen, dus stapte hij meteen uit', 'kill switch': 'jij drukte de kill switch', daglimiet: 'de daglimiet op verlies werd geraakt', 'venster gewijzigd': 'je koos een ander venster' }[r] || r;
+    omgedraaid: `het model draaide om: de kans voor de andere kant werd groot genoeg om die trade zelf te openen, dus stapte hij uit ${e.maker ? 'als maker (goedkoop)' : 'met een marktorder (de limiet werd niet binnen 30 s gevuld)'}`, 'kill switch': 'jij drukte de kill switch', daglimiet: 'de daglimiet op verlies werd geraakt', 'venster gewijzigd': 'je koos een ander venster' }[r] || r;
   return `<p><b class="${win ? 'up' : 'down'}">${h.side.toUpperCase()} ${short(h.coin)} ${sgn(h.pnl, 2)}</b> · dicht om ${hhmmss(h.t).slice(0, 5)} omdat ${how}.
     ${e.held != null ? `Na ${fmt(e.held, 0)} min stond de koers ${sgn(e.move, 2)}σ ${e.move >= 0 ? 'in' : 'tegen'} zijn richting` : ''}${e.conf != null ? `, en het model gaf toen nog ${fmt(e.conf * 100, 0)}% kans voor zijn kant` : ''}.
     ${h.holds ? `Liep ${h.holds} venster${h.holds > 1 ? 's' : ''} door omdat het model telkens dezelfde kant op bleef wijzen.` : ''}

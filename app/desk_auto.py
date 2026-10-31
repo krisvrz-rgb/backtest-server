@@ -45,10 +45,14 @@ def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+EXIT_MAKER = {"share": .5}  # gemeten aandeel maker-uitstappen (laatste 50 trades), bijgewerkt bij elke afrekening
+
+
 def costs(cfg: dict) -> dict:
-    """Kosten per ronde in bp: maker bij instap, uitstap half maker / half taker gerekend."""
+    """Kosten per ronde in bp: maker bij instap, uitstap gewogen naar hoe vaak die echt als maker lukt."""
     maker, taker = desk.num(cfg, "DESK_MAKER_BPS", 1.5), desk.num(cfg, "DESK_FEE_BPS", 4.5)
-    return {"maker": maker, "taker": taker, "round": maker + (maker + taker) / 2}
+    sh = EXIT_MAKER["share"]
+    return {"maker": maker, "taker": taker, "round": maker + sh * maker + (1 - sh) * taker, "maker_share": sh}
 
 
 def sr_levels(cs: list[dict], k: int = 6) -> list[dict]:
@@ -278,6 +282,7 @@ class Swarm:
         self.trace: deque = deque(maxlen=3000)
         self.seq = 0
         self.history: deque = deque(saved.get("history", []), maxlen=2000)
+        self.update_maker_share()
         self.lev: dict[str, int] = {}
         self.markets = {c: Market(c) for c in self.coins}
         for t in saved.get("tickets", []):  # open papiertrades overleven een herstart (live: close_orphans)
@@ -604,7 +609,7 @@ class Swarm:
             t.update(oid=r["oid"], size=size, limit=r["px"])
             m.ticket = t
             if r["filled"]:
-                self.filled_entry(m, r["px"])
+                self.filled_entry(m, r["px"], cfg)
             else:
                 self.log("taker", "LIMIET", f"LIVE {order['side']} ${order['usd']:g} ({order['lev']}x) limiet {r['px']:,.6g}", coin=m.coin)
         except Exception as e:
@@ -615,11 +620,13 @@ class Swarm:
                 self.log("closer", "STOP", "3 mislukte orders op rij: autonome handel uit")
                 self.save()
 
-    def filled_entry(self, m: Market, px: float) -> None:
+    def filled_entry(self, m: Market, px: float, cfg: dict | None = None) -> None:
         t = m.ticket
         t.update(state="open", entry=px, filled_at=time.time())
         # stop-loss en take-profit in σ van de rest van het venster, vanaf de instap
         self.plan_exits(m, t, px)
+        if not t["paper"] and cfg is not None:
+            self.place_tp(m, t, cfg)
         if t["paper"]:
             self.save()
         self.log("taker", "TAKE", f"{'papier' if t['paper'] else 'LIVE'} {t['side']} gevuld als maker @ {px:,.6g}",
@@ -660,6 +667,55 @@ class Swarm:
         t["plan"] = {"sl": e["sl_why"], "tp": e["tp_why"], "rr": round(e["rr"], 2),
                      "sl_sigma": round(e["sl_sigma"], 2), "tp_sigma": round(e["tp_sigma"], 2)}
 
+    def place_tp(self, m: Market, t: dict, cfg: dict) -> None:
+        """Take-profit meteen als limietorder in het boek (reduce-only, post-only): geraakt = maker, geen slippage."""
+        try:
+            size = abs(desk.position_size(cfg, m.coin))
+            r = desk.place_maker(cfg, m.coin, t["side"] == "short", size, t["tp"], reduce_only=True)
+            t["tp_oid"] = r["oid"]
+            if r.get("error"):
+                self.log("closer", "FOUT", f"TP-limiet geweigerd: {r['error']}; TP wordt een marktorder", coin=m.coin)
+        except Exception as e:
+            self.log("closer", "FOUT", f"TP-limiet plaatsen mislukt: {e}; TP wordt een marktorder", coin=m.coin)
+
+    def cancel_tp(self, m: Market, t: dict, cfg: dict) -> None:
+        if not t["paper"] and t.get("tp_oid"):
+            try:
+                desk.cancel(cfg, m.coin, t["tp_oid"])
+            except Exception:
+                pass
+            t["tp_oid"] = None
+
+    def maker_exit(self, m: Market, t: dict, now: float, cfg: dict, deadline: float) -> None:
+        """Uitstap als maker op de beste prijs aan onze kant van het boek. Elke 20 s bijstellen naar de nieuwe beste
+        prijs; niet gevuld voor de deadline: pas dan met een marktorder."""
+        bid, ask = m.best()
+        px = ask if t["side"] == "long" else bid
+        if not px:
+            return
+        first = t["state"] != "exiting"
+        if first:
+            self.cancel_tp(m, t, cfg)  # de uitstap-limiet ligt dichter dan de TP; twee reduce-only orders botsen
+        elif not t["paper"] and t.get("exit_oid"):
+            try:
+                desk.cancel(cfg, m.coin, t["exit_oid"])
+            except Exception:
+                pass
+        t.update(state="exiting", exit_limit=px, exit_quoted=now, exit_oid=None)
+        if first:
+            t.update(exit_started=now, exit_deadline=deadline)
+        if not t["paper"]:
+            try:
+                size = abs(desk.position_size(cfg, m.coin))
+                r = desk.place_maker(cfg, m.coin, t["side"] == "short", size, px, reduce_only=True)
+                t["exit_oid"] = r["oid"]
+                if r["filled"]:
+                    t["maker_exit"] = True
+            except Exception as e:
+                self.log("closer", "FOUT", f"maker-uitstap mislukt: {e}", coin=m.coin)
+        self.log("closer", "LIMIET", f"uitstap als maker @ {px:,.6g}" + ("" if first else " (bijgesteld)")
+                 + f", uiterlijk markt na {max(0, deadline - now):.0f} s", coin=m.coin)
+
     def manage(self, m: Market, now: float, cfg: dict) -> None:
         """Volgt een open ticket: maker-instap gevuld of verlopen, maker-uitstap op tijd plaatsen."""
         t = m.ticket
@@ -678,7 +734,7 @@ class Swarm:
                 except Exception:
                     filled = False
             if filled:
-                self.filled_entry(m, t["limit"])
+                self.filled_entry(m, t["limit"], cfg)
             elif now - t["opened"] > wait:
                 if not t["paper"]:
                     try:
@@ -689,7 +745,7 @@ class Swarm:
                         size = 0.0
                     if size:
                         t["usd"] = abs(size) * t["limit"]
-                        self.filled_entry(m, t["limit"])
+                        self.filled_entry(m, t["limit"], cfg)
                         return
                 m.ticket = None
                 self.log("taker", "VERLOPEN", f"limiet {t['limit']:,.6g} niet gevuld binnen {wait / 60:.0f} min, geen trade",
@@ -711,13 +767,30 @@ class Swarm:
             elif now - t.setdefault("against_since", now) >= 45:
                 t["exit_reason"], t["maker_exit"] = "omgedraaid", False
                 self.log("closer", "OMGEDRAAID", f"model wijst nu {mo['pDir'] * 100:.0f}¢ de andere kant op (break-even {mo['be'] * 100:.0f}¢): "
-                         f"{t['side']} meteen dicht", coin=m.coin)
-                self.settle(m, cfg)
+                         f"{t['side']} dicht, eerst als maker (30 s)", coin=m.coin)
+                self.maker_exit(m, t, now, cfg, now + 30)
                 return
-        if t["state"] in ("open", "exiting") and m.px:  # stop-loss of take-profit geraakt: meteen dicht met een marktorder
+        if t["state"] in ("open", "exiting") and m.px and t.get("tp"):  # take-profit: limiet in het boek, gevuld = maker
+            long = t["side"] == "long"
+            if t["paper"] or t.get("tp_oid"):
+                if t["paper"]:
+                    done = m.px >= t["tp"] if long else m.px <= t["tp"]  # er is door het TP-niveau gehandeld
+                else:
+                    done = False
+                    if int(now) % 5 == 0:
+                        try:
+                            done = desk.order_filled(cfg, t["tp_oid"])
+                        except Exception:
+                            pass
+                if done:
+                    t.update(exit_reason="TP", maker_exit=True, exit_limit=t["tp"], tp_oid=None)
+                    self.log("closer", "TP", f"take-profit gevuld als maker @ {t['tp']:,.6g}", coin=m.coin)
+                    self.settle(m, cfg)
+                    return
+        if t["state"] in ("open", "exiting") and m.px:  # stop-loss geraakt (of TP zonder limiet in het boek): meteen markt
             long = t["side"] == "long"
             hit = ("SL" if t.get("sl") and (m.px <= t["sl"] if long else m.px >= t["sl"]) else
-                   "TP" if t.get("tp") and (m.px >= t["tp"] if long else m.px <= t["tp"]) else None)
+                   "TP" if t.get("tp") and not t["paper"] and not t.get("tp_oid") and (m.px >= t["tp"] if long else m.px <= t["tp"]) else None)
             if hit:
                 t["exit_reason"], t["maker_exit"] = hit, False
                 self.log("closer", hit, ("stop-loss" if hit == "SL" else "take-profit") + f" geraakt @ {m.px:,.6g} "
@@ -725,34 +798,32 @@ class Swarm:
                 self.settle(m, cfg)
                 return
         end = m.win + W
-        if t["state"] == "open" and now >= end - wait and t.get("hold_win") != m.win + W and self.try_hold(m, t, now, cfg):
+        lead = min(.25 * W, 600)  # uitstap-limiet al een kwart venster voor het einde: meer kans op een maker-vulling
+        if t["state"] == "open" and now >= end - lead and t.get("hold_win") != m.win + W and self.try_hold(m, t, now, cfg):
             return
-        if t["state"] == "open" and now >= end - wait and t.get("hold_win") != m.win + W:  # uitstap als maker proberen
-            bid, ask = m.best()
-            t["exit_limit"] = ask if t["side"] == "long" else bid
-            t["state"] = "exiting"
-            t["exit_started"] = now
-            if not t["paper"]:
-                try:
-                    size = abs(desk.position_size(cfg, m.coin))
-                    r = desk.place_maker(cfg, m.coin, t["side"] == "short", size, t["exit_limit"], reduce_only=True)
-                    t["exit_oid"] = r["oid"]
-                    if r["filled"]:
-                        t["maker_exit"] = True
-                except Exception as e:
-                    self.log("closer", "FOUT", f"maker-uitstap mislukt: {e}", coin=m.coin)
-            self.log("closer", "LIMIET", f"uitstap als maker @ {t['exit_limit']:,.6g}", coin=m.coin)
-        elif t["state"] == "exiting" and not t["maker_exit"]:
+        if t["state"] == "open" and now >= end - lead and t.get("hold_win") != m.win + W:  # uitstap als maker proberen
+            self.maker_exit(m, t, now, cfg, end - 5)
+        elif t["state"] == "exiting" and not t.get("maker_exit"):
             if t["paper"]:
-                t["maker_exit"] = any(tt[0] >= t["exit_started"] and ((tt[3] >= t["exit_limit"]) if t["side"] == "long"
+                t["maker_exit"] = any(tt[0] >= t.get("exit_quoted", t["exit_started"]) and ((tt[3] >= t["exit_limit"]) if t["side"] == "long"
                                                                       else (tt[3] <= t["exit_limit"])) for tt in m.trades)
             elif t["exit_oid"] and int(now) % 5 == 0:
                 try:
                     t["maker_exit"] = desk.order_filled(cfg, t["exit_oid"])
                 except Exception:
                     pass
-            if t["maker_exit"]:
+            if t.get("maker_exit"):
                 self.settle(m, cfg)
+            elif now >= t.get("exit_deadline", end):
+                self.log("closer", "MARKT", "maker-uitstap niet gevuld voor de deadline: dicht met een marktorder", coin=m.coin)
+                self.settle(m, cfg)
+            elif now - t.get("exit_quoted", now) >= 20:
+                self.maker_exit(m, t, now, cfg, t.get("exit_deadline", end))
+
+    def update_maker_share(self) -> None:
+        last = [h for h in self.history if h.get("maker_exit") is not None][-50:]
+        if len(last) >= 10:
+            EXIT_MAKER["share"] = sum(1 for h in last if h["maker_exit"]) / len(last)
 
     def try_hold(self, m: Market, t: dict, now: float, cfg: dict) -> bool:
         """Einde venster: zou de zwerm nu opnieuw in dezelfde richting instappen voor een vol venster?
@@ -804,6 +875,7 @@ class Swarm:
                 exit_px, exit_fee = t["exit_limit"], c["maker"]
             else:
                 if not t["paper"]:
+                    self.cancel_tp(m, t, cfg)
                     if t.get("exit_oid"):
                         try:
                             desk.cancel(cfg, m.coin, t["exit_oid"])
@@ -834,6 +906,7 @@ class Swarm:
                                  "why": t.get("why"), "sl": t.get("sl"), "tp": t.get("tp"), "plan": t.get("plan"), "exit_why": exit_why,
                                  "holds": t.get("holds", 0), "holds_why": t.get("holds_why", [])[-12:]})
             desk_learn.record_trade(self.history[-1])
+            self.update_maker_share()
             self.log("closer", "AFREK", f"{'papier' if t['paper'] else 'LIVE'} {t['side']} {t['entry']:,.6g} → {exit_px:,.6g} "
                                         f"({'maker' if t.get('maker_exit') else 'markt'})", f"{pnl:+.2f}", m.coin)
             self.save()
