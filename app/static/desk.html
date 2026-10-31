@@ -1273,7 +1273,7 @@ function explain(t, sm) {
 
 // waarom een trade dicht ging, in gewone taal
 function exitStory(h) {
-  const e = h.exit_why || {}, r = e.reason || h.reason, win = h.pnl >= 0;
+  const e = h.exit_why || {}, r = e.reason || h.reason || 'venster', win = h.pnl >= 0;  // oudere trades hebben nog geen reden: die sloten altijd aan het einde van het venster
   const how = { SL: `de koers raakte de stop-loss${h.plan ? ' (' + h.plan.sl + ')' : ''}`, TP: `de koers raakte de take-profit${h.plan ? ' (' + h.plan.tp + ')' : ''}`,
     venster: `het venster van ${e.window || '?'} min was voorbij: de voorspelling gold tot dan, dus de zwerm stapte uit ${e.maker ? 'als maker (goedkoop)' : 'met een marktorder'}`,
     'kill switch': 'jij drukte de kill switch', daglimiet: 'de daglimiet op verlies werd geraakt', 'venster gewijzigd': 'je koos een ander venster' }[r] || r;
