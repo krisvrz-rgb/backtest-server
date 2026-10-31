@@ -158,6 +158,8 @@ class Swarm:
         self.max_lev: float | None = saved.get("max_lev")    # None = DESK_MAX_LEV; live nooit boven DESK_MAX_LEV
         self.risk_pct: float | None = saved.get("risk_pct")  # None = DESK_RISK_PCT
         self.kelly_frac: float | None = saved.get("kelly_frac")
+        self.sl_sigma: float | None = saved.get("sl_sigma")
+        self.tp_sigma: float | None = saved.get("tp_sigma")
         self.max_margin_pct: float | None = saved.get("max_margin_pct")
         if saved.get("model"):
             MODEL.update(saved["model"])  # drempel in ¢ boven break-even; None = DESK_MIN_EDGE
@@ -194,7 +196,7 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac,
+                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac, "sl_sigma": self.sl_sigma, "tp_sigma": self.tp_sigma,
                                           "max_margin_pct": self.max_margin_pct, "model": MODEL, "paper": self.paper, "history": list(self.history),
                                           "tickets": [m.ticket for m in self.markets.values() if m.ticket and m.ticket["paper"]]}))
 
@@ -258,7 +260,8 @@ class Swarm:
             if t["state"] in ("open", "exiting") and t.get("entry"):
                 upnl = t["usd"] * (1 if t["side"] == "long" else -1) * (m.px - t["entry"]) / t["entry"]
             tickets.append({"coin": t["coin"], "side": t["side"], "usd": t["usd"], "lev": t["lev"], "margin": t["usd"] / t["lev"],
-                            "state": t["state"], "entry": t.get("entry"), "px": m.px, "upnl": round(upnl, 4), "paper": t["paper"]})
+                            "state": t["state"], "entry": t.get("entry"), "px": m.px, "upnl": round(upnl, 4), "paper": t["paper"],
+                            "sl": t.get("sl"), "tp": t.get("tp")})
         used = sum(t["margin"] for t in tickets)
         upnl = sum(t["upnl"] for t in tickets)
         live = self.is_live()
@@ -336,6 +339,10 @@ class Swarm:
         """Drempel boven break-even. Op papier mag hij negatief (meer trades om van te leren); live nooit onder 0."""
         e = self.min_edge if self.min_edge is not None else desk.num(cfg, "DESK_MIN_EDGE", 2)
         return max(e, 0.0) if live else e
+
+    def exit_limits(self) -> tuple[float, float]:
+        """Stop-loss en take-profit in σ (van de rest van het venster bij instap); 0 = uit."""
+        return (self.sl_sigma if self.sl_sigma is not None else 2.0, self.tp_sigma if self.tp_sigma is not None else 2.0)
 
     def size_limits(self) -> tuple[float, float]:
         """Kelly-fractie (0,25 = kwart-Kelly) en max marge per trade in % van de portefeuille."""
@@ -424,6 +431,11 @@ class Swarm:
     def filled_entry(self, m: Market, px: float) -> None:
         t = m.ticket
         t.update(state="open", entry=px, filled_at=time.time())
+        # stop-loss en take-profit in σ van de rest van het venster, vanaf de instap
+        sl_k, tp_k = self.exit_limits()
+        sd, sign = max(m.model.get("sd", 0.0), 1e-5), 1 if t["side"] == "long" else -1
+        t["sl"] = px * (1 - sign * sl_k * sd) if sl_k else None
+        t["tp"] = px * (1 + sign * tp_k * sd) if tp_k else None
         if t["paper"]:
             self.save()
         self.log("taker", "TAKE", f"{'papier' if t['paper'] else 'LIVE'} {t['side']} gevuld als maker @ {px:,.6g}",
@@ -464,6 +476,16 @@ class Swarm:
                 self.log("taker", "VERLOPEN", f"limiet {t['limit']:,.6g} niet gevuld binnen {wait / 60:.0f} min, geen trade",
                          coin=m.coin)
             return
+        if t["state"] in ("open", "exiting") and m.px:  # stop-loss of take-profit geraakt: meteen dicht met een marktorder
+            long = t["side"] == "long"
+            hit = ("SL" if t.get("sl") and (m.px <= t["sl"] if long else m.px >= t["sl"]) else
+                   "TP" if t.get("tp") and (m.px >= t["tp"] if long else m.px <= t["tp"]) else None)
+            if hit:
+                t["exit_reason"], t["maker_exit"] = hit, False
+                self.log("closer", hit, ("stop-loss" if hit == "SL" else "take-profit") + f" geraakt @ {m.px:,.6g} "
+                         f"(niveau {t['sl' if hit == 'SL' else 'tp']:,.6g})", coin=m.coin)
+                self.settle(m, cfg)
+                return
         end = m.win + W
         if t["state"] == "open" and now >= end - wait:  # uitstap als maker proberen
             bid, ask = m.best()
@@ -526,7 +548,7 @@ class Swarm:
             self.history.append({"t": int(time.time() * 1000), "opened": int(t.get("filled_at", t["opened"]) * 1000),
                                  "coin": t["coin"], "side": t["side"], "entry": t["entry"], "exit": exit_px, "usd": t["usd"],
                                  "lev": t["lev"], "pnl": round(pnl, 4), "edge": round(t["edge"], 2), "paper": t["paper"],
-                                 "maker_exit": bool(t.get("maker_exit"))})
+                                 "maker_exit": bool(t.get("maker_exit")), "reason": t.get("exit_reason") or "venster"})
             self.log("closer", "AFREK", f"{'papier' if t['paper'] else 'LIVE'} {t['side']} {t['entry']:,.6g} → {exit_px:,.6g} "
                                         f"({'maker' if t.get('maker_exit') else 'markt'})", f"{pnl:+.2f}", m.coin)
             self.save()
@@ -694,7 +716,8 @@ class Swarm:
     def set(self, on: bool | None = None, confirm: bool | None = None, coins: dict | None = None,
             window_min: int | None = None, reset_paper: float | None = None, min_edge: float | None = None,
             model: dict | None = None, auto_scan: bool | None = None, scan_n: int | None = None, max_lev: float | None = None, risk_pct: float | None = None,
-            kelly_frac: float | None = None, max_margin_pct: float | None = None) -> None:
+            kelly_frac: float | None = None, max_margin_pct: float | None = None,
+            sl_sigma: float | None = None, tp_sigma: float | None = None) -> None:
         """Markten volgen, venster en papier mogen altijd; aan/uit en bevestigen vragen live-toestemming."""
         if on is not None or confirm is not None:
             if not desk.status()["auto_allowed"]:
@@ -737,6 +760,17 @@ class Swarm:
                 self.auto_scan, self.scan_at = auto_scan, 0.0
                 self.drop.clear()
                 self.log("spotter", "AUTO", "scanner-modus " + ("aan: elke 5 min de top 25" if auto_scan else "uit"))
+            if sl_sigma is not None or tp_sigma is not None:
+                for v in (sl_sigma, tp_sigma):
+                    if v is not None and not (float(v) == 0 or 0.5 <= float(v) <= 6):
+                        raise ValueError("Stop-loss en take-profit: 0 (uit) of 0,5σ tot 6σ")
+                if sl_sigma is not None:
+                    self.sl_sigma = float(sl_sigma)
+                if tp_sigma is not None:
+                    self.tp_sigma = float(tp_sigma)
+                sl, tp = self.exit_limits()
+                self.log("closer", "SL/TP", f"stop-loss {f'{sl:g}σ' if sl else 'uit'} · take-profit {f'{tp:g}σ' if tp else 'uit'} "
+                                            "(geldt voor nieuwe trades)")
             if kelly_frac is not None or max_margin_pct is not None:
                 if kelly_frac is not None and not 0.05 <= float(kelly_frac) <= 1:
                     raise ValueError("Kelly-fractie moet tussen 0,05 en 1 liggen")
@@ -810,6 +844,28 @@ class Swarm:
                 self.log("closer", "AAN" if on else "UIT", "live handel " + ("aan" if on else "uit, alles gesloten"))
             self.save()
 
+    def set_level(self, coin: str, kind: str, price: float | None) -> dict:
+        """Stop-loss of take-profit van een open trade met de hand verschuiven (of met None weghalen)."""
+        if kind not in ("sl", "tp"):
+            raise ValueError("kind moet sl of tp zijn")
+        with self.lock:
+            m = self.markets.get(coin)
+            t = m and m.ticket
+            if not t or t["state"] not in ("open", "exiting"):
+                raise ValueError(f"Geen open trade op {coin}")
+            if price is not None:
+                price, long = float(price), t["side"] == "long"
+                below = (kind == "sl") == long  # long: SL onder de koers, TP erboven; short omgekeerd
+                if (below and price >= m.px) or (not below and price <= m.px):
+                    raise ValueError(f"{'Stop-loss' if kind == 'sl' else 'Take-profit'} moet {'onder' if below else 'boven'} "
+                                     f"de huidige koers {m.px:,.6g} liggen")
+            t[kind] = price
+            self.log("closer", kind.upper(), f"{'stop-loss' if kind == 'sl' else 'take-profit'} met de hand "
+                     + (f"verschoven naar {price:,.6g}" if price is not None else "weggehaald"), coin=coin)
+            if t["paper"]:
+                self.save()
+            return {"ok": True, kind: price}
+
     def approve(self, order_id: int, yes: bool) -> dict:
         cfg = desk.live_config()
         with self.lock:
@@ -842,7 +898,8 @@ class Swarm:
                 "coins": self.coins, "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "model": MODEL,
                 "auto_scan": self.auto_scan, "scan_n": self.scan_n, "scan_at": int(self.scan_at * 1000),
                 "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)),
-                "size": dict(zip(("kelly", "max_margin_pct"), self.size_limits())), "windows": WINDOWS, "costs": costs(cfg),
+                "size": dict(zip(("kelly", "max_margin_pct"), self.size_limits())),
+                "exits": dict(zip(("sl", "tp"), self.exit_limits())), "windows": WINDOWS, "costs": costs(cfg),
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,
                 "portfolio": self.portfolio(), "history": list(self.history)[-200:],
                 "trace": [t for t in self.trace if t["id"] > since], "seq": self.seq,

@@ -403,11 +403,13 @@
     <legend class="cap">Hefboom (Kelly)</legend>
     <p class="muted" style="font-size:11px;margin:2px 0 6px">Kelly kiest per trade: hefboom = risico ÷ (2 × σ van het venster), afgerond naar beneden en begrensd door de max hieronder en de max van de markt. Een tegenvaller van 2σ kost dan hooguit "risico" % van de marge. Live geldt bovendien DESK_MAX_LEV uit desk.env als plafond (<span id="lvLive">–</span>).</p>
     <p class="muted" style="font-size:11px;margin:2px 0 6px">Grootte: Kelly rekent hoeveel positie de edge waard is (μ ÷ σ² × portefeuille) en neemt daar een fractie van. De marge is nooit meer dan "max marge" % van de portefeuille.</p>
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;align-items:end">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;align-items:end">
       <label>max hefboom (x)<input id="lvMax" type="number" step="1" min="1" max="20"></label>
       <label>risico bij 2σ (% marge)<input id="lvRisk" type="number" step="1" min="1" max="50"></label>
       <label>Kelly-fractie<input id="lvKelly" type="number" step="0.05" min="0.05" max="1"></label>
       <label>max marge (% pf)<input id="lvMarg" type="number" step="0.5" min="0.5" max="25"></label>
+      <label>stop-loss (σ, 0 = uit)<input id="lvSl" type="number" step="0.5" min="0" max="6"></label>
+      <label>take-profit (σ, 0 = uit)<input id="lvTp" type="number" step="0.5" min="0" max="6"></label>
       <button class="btn" id="lvSave">Toepassen</button>
     </div>
   </fieldset>
@@ -517,10 +519,45 @@ const chart = LightweightCharts.createChart($('chart'), {
   rightPriceScale: { borderVisible: false }, timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
   crosshair: { mode: 0 },
 });
-const cs = chart.addCandlestickSeries({ upColor: '#16b364', downColor: '#ef3a5d', borderVisible: false, wickUpColor: '#16b364', wickDownColor: '#ef3a5d' });
+const cs = chart.addCandlestickSeries({ upColor: '#16b364', downColor: '#ef3a5d', borderVisible: false, wickUpColor: '#16b364', wickDownColor: '#ef3a5d',
+  autoscaleInfoProvider: orig => {  // stop-loss en take-profit altijd in beeld houden
+    const r = orig(); if (!r || !r.priceRange) return r;
+    const sm = srvMarket(), t = sm && sm.ticket;
+    for (const v of [t && t.sl, t && t.tp, st.drag && st.drag.price]) if (v) { r.priceRange.minValue = Math.min(r.priceRange.minValue, v); r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v); }
+    return r;
+  } });
 const vwapS = chart.addLineSeries({ color: '#2463eb', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
 const openLine = cs.createPriceLine({ price: 0, color: '#f08c00', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'open venster' });
 let candles = [];
+// SL/TP-lijn verslepen: muis binnen 6 px van de lijn, slepen, loslaten = naar de server
+$('chart').addEventListener('mousedown', e => {
+  const sm = srvMarket(), t = sm && sm.ticket; if (!t || !t.entry) return;
+  const y = e.clientY - $('chart').getBoundingClientRect().top;
+  for (const k of ['sl', 'tp']) {
+    const ly = t[k] && cs.priceToCoordinate(t[k]);
+    if (ly != null && Math.abs(ly - y) < 6) {
+      st.drag = { k, coin: t.coin, price: t[k] }; chart.applyOptions({ handleScroll: false, handleScale: false });
+      e.preventDefault(); e.stopPropagation(); return;
+    }
+  }
+}, true);
+addEventListener('mousemove', e => {
+  if (!st.drag) {  // cursor tonen boven een lijn
+    const sm = srvMarket(), t = sm && sm.ticket, b = $('chart').getBoundingClientRect(), y = e.clientY - b.top;
+    const near = t && t.entry && e.clientX >= b.left && e.clientX <= b.right && ['sl', 'tp'].some(k => t[k] && Math.abs(cs.priceToCoordinate(t[k]) - y) < 6);
+    $('chart').style.cursor = near ? 'ns-resize' : ''; return;
+  }
+  const p = cs.coordinateToPrice(e.clientY - $('chart').getBoundingClientRect().top); if (p) st.drag.price = p;
+  drawLevels();
+});
+addEventListener('mouseup', async () => {
+  if (!st.drag) return; const d = st.drag;
+  chart.applyOptions({ handleScroll: true, handleScale: true });
+  try { await (await fetch('/api/desk/auto/level', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: S.token, coin: d.coin, kind: d.k, price: d.price }) })).json().then(j => { if (j.detail) alert(j.detail); }); }
+  catch (err) { alert(err.message); }
+  await pollAuto(); st.drag = null;
+});
 chart.timeScale().subscribeVisibleLogicalRangeChange(() => drawHeat());
 new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, height: 400 })).observe($('chart'));
 
@@ -1029,6 +1066,29 @@ function drawBook() {
     + asks.map(l => row(l, '#ef3a5d')).join('') + `<span class="spread">spread ${fmt(spr, 2)} · ${fmt(spr / st.px * 1e4, 2)}bp</span>` + bids.map(l => row(l, '#16b364')).join('');
 }
 
+function drawLevels() {
+  const sm = srvMarket(), srvT = sm && sm.ticket;
+  // instaplijn: groen voor long, rood voor short, met de lopende winst of verlies
+  const lp = srvT ? (srvT.entry || srvT.limit) : null;
+  if (lp) {
+    const col = srvT.side === 'long' ? '#16b364' : '#ef3a5d', e = srvT.entry;
+    const up = e ? srvT.usd * (sm.px - e) / e * (srvT.side === 'long' ? 1 : -1) : 0;
+    const title = `${srvT.side.toUpperCase()} ${srvT.lev}x ${usd(srvT.usd)} · ${e ? (up >= 0 ? 'WINST ' : 'VERLIES ') + sgn(up, 2) + ' (' + sgn(up / (srvT.usd / srvT.lev) * 100, 1) + '%)' : 'limiet wacht'}`;
+    const opt = { price: lp, color: col, lineWidth: 2, lineStyle: e ? 0 : 2, axisLabelVisible: true, title };
+    if (st.entryLine) st.entryLine.applyOptions(opt); else st.entryLine = cs.createPriceLine(opt);
+  } else if (st.entryLine) { cs.removePriceLine(st.entryLine); st.entryLine = null; }
+  for (const k of ['sl', 'tp']) {  // stop-loss en take-profit: stippellijn, met de muis te verslepen
+    const lv = st.drag && st.drag.k === k ? st.drag.price : srvT && srvT.entry ? srvT[k] : null, key = k + 'Line';
+    if (lv) {
+      const e = srvT.entry, pnl = srvT.usd * (lv - e) / e * (srvT.side === 'long' ? 1 : -1);
+      const opt = { price: lv, color: k === 'sl' ? '#ff4d6d' : '#2fbf4a', lineWidth: 2, lineStyle: 1, axisLabelVisible: true,
+        title: `${k === 'sl' ? 'STOP' : 'TAKE PROFIT'} ${sgn(pnl, 2)} · sleep om te verplaatsen` };
+      if (st[key]) st[key].applyOptions(opt); else st[key] = cs.createPriceLine(opt);
+    } else if (st[key]) { cs.removePriceLine(st[key]); st[key] = null; }
+  }
+
+}
+
 // ---------- hoofdlus, elke seconde ----------
 let lastSec = 0;
 function tick() {
@@ -1088,15 +1148,7 @@ function tick() {
   $('tapeStats').textContent = `${fmt(f.tps, 1)} TR/S · VWAP ${fmt(vw, d)} · FLOW ${sgn(f.flow30, 2)}`;
   drawBook(); drawDist(m);
 
-  // instaplijn: groen voor long, rood voor short, met de lopende winst of verlies
-  const lp = srvT ? (srvT.entry || srvT.limit) : null;
-  if (lp) {
-    const col = srvT.side === 'long' ? '#16b364' : '#ef3a5d', e = srvT.entry;
-    const up = e ? srvT.usd * (sm.px - e) / e * (srvT.side === 'long' ? 1 : -1) : 0;
-    const title = `${srvT.side.toUpperCase()} ${srvT.lev}x ${usd(srvT.usd)} · ${e ? (up >= 0 ? 'WINST ' : 'VERLIES ') + sgn(up, 2) + ' (' + sgn(up / (srvT.usd / srvT.lev) * 100, 1) + '%)' : 'limiet wacht'}`;
-    const opt = { price: lp, color: col, lineWidth: 2, lineStyle: e ? 0 : 2, axisLabelVisible: true, title };
-    if (st.entryLine) st.entryLine.applyOptions(opt); else st.entryLine = cs.createPriceLine(opt);
-  } else if (st.entryLine) { cs.removePriceLine(st.entryLine); st.entryLine = null; }
+  drawLevels();
 
   // ticket van de server-zwerm voor deze markt: limiet staat, open, of maker-uitstap
   if (srvT) {
@@ -1144,7 +1196,7 @@ async function setCoin(c) {
   renderCoinSeg();
   $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
   Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
-  if (st.entryLine) { cs.removePriceLine(st.entryLine); st.entryLine = null; }
+  for (const key of ['entryLine', 'slLine', 'tpLine']) if (st[key]) { cs.removePriceLine(st[key]); st[key] = null; }
   st.passes = {}; st.heat = {}; st.heatStep = 0; st.featMin = {};
   for (const f of Object.keys(featSeries)) { chart.removeSeries(featSeries[f]); delete featSeries[f]; }
   stopSim(); await loadHistory(); connect(); drawBalance(); renderMarks(); syncFeatSeries(); pollHeat();
@@ -1339,11 +1391,12 @@ function fillModel() {
   const md = st.auto && st.auto.model; if (!md) { $('mdInfo').textContent = 'server niet bereikbaar'; return; }
   $('mdBeta').value = md.beta0; $('mdK').value = md.k; for (const k of MW) $('mdW_' + k).value = md.w[k];
   $('mdInfo').textContent = '';
+  if (st.auto.exits) { $('lvSl').value = st.auto.exits.sl; $('lvTp').value = st.auto.exits.tp; }
   if (st.auto.size) { $('lvKelly').value = st.auto.size.kelly; $('lvMarg').value = st.auto.size.max_margin_pct; }
   if (st.auto.lev) { $('lvMax').value = st.auto.lev.max; $('lvRisk').value = st.auto.lev.risk; $('lvLive').textContent = st.auto.lev.live_max + 'x'; }
 }
 $('lvSave').onclick = async () => {
-  try { await autoPost('/api/desk/auto', { max_lev: +$('lvMax').value, risk_pct: +$('lvRisk').value, kelly_frac: +$('lvKelly').value, max_margin_pct: +$('lvMarg').value }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'hefboom toegepast'; }
+  try { await autoPost('/api/desk/auto', { max_lev: +$('lvMax').value, risk_pct: +$('lvRisk').value, kelly_frac: +$('lvKelly').value, max_margin_pct: +$('lvMarg').value, sl_sigma: +$('lvSl').value, tp_sigma: +$('lvTp').value }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'hefboom toegepast'; }
   catch (e) { $('mdInfo').textContent = e.message; }
 };
 async function postModel(model) {

@@ -235,6 +235,8 @@ class DeskAuto(BaseModel):
     scan_n: int | None = None
     kelly_frac: float | None = None
     max_margin_pct: float | None = None
+    sl_sigma: float | None = None
+    tp_sigma: float | None = None
     risk_pct: float | None = None
 
 
@@ -259,8 +261,28 @@ def desk_auto_set(req: DeskAuto):
         swarm.set(on=req.on, confirm=req.confirm, coins=req.coins,
                   window_min=req.window_min, reset_paper=req.reset_paper, min_edge=req.min_edge, model=req.model,
                   max_lev=req.max_lev, risk_pct=req.risk_pct, auto_scan=req.auto_scan, scan_n=req.scan_n,
-                  kelly_frac=req.kelly_frac, max_margin_pct=req.max_margin_pct)
+                  kelly_frac=req.kelly_frac, max_margin_pct=req.max_margin_pct,
+                  sl_sigma=req.sl_sigma, tp_sigma=req.tp_sigma)
         return swarm.snapshot(swarm.seq)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class DeskLevel(BaseModel):
+    token: str | None = None
+    coin: str
+    kind: str
+    price: float | None = None
+
+
+@app.post("/api/desk/auto/level")
+def desk_auto_level(req: DeskLevel):
+    try:
+        if desk.status()["live"]:
+            desk.check_token(req.token)
+        return swarm.set_level(req.coin, req.kind, req.price)
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:
