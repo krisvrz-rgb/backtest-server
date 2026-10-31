@@ -146,6 +146,7 @@ class Swarm:
         self.min_edge: float | None = saved.get("min_edge")
         self.auto_scan: bool = bool(saved.get("auto_scan"))  # elke 5 min de top 25 van de scanner volgen
         self.scan_at = 0.0
+        self.drop: set = set()  # uit de top 25 gevallen, maar nog een open trade: gaat uit zodra die afgerekend is
         self.max_lev: float | None = saved.get("max_lev")    # None = DESK_MAX_LEV; live nooit boven DESK_MAX_LEV
         self.risk_pct: float | None = saved.get("risk_pct")  # None = DESK_RISK_PCT
         if saved.get("model"):
@@ -162,6 +163,11 @@ class Swarm:
         self.history: deque = deque(saved.get("history", []), maxlen=2000)
         self.lev: dict[str, int] = {}
         self.markets = {c: Market(c) for c in self.coins}
+        for t in saved.get("tickets", []):  # open papiertrades overleven een herstart (live: close_orphans)
+            m = self.markets.get(t["coin"])
+            if m and t.get("paper"):
+                m.ticket, m.win, m.decided = t, t["win"], True
+                m.open0 = t.get("entry") or t.get("limit")
         self.pending: dict | None = None
         self.errors = 0
         self.feed_ok = False
@@ -178,7 +184,8 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "model": MODEL, "paper": self.paper, "history": list(self.history)}))
+                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "model": MODEL, "paper": self.paper, "history": list(self.history),
+                                          "tickets": [m.ticket for m in self.markets.values() if m.ticket and m.ticket["paper"]]}))
 
     def log(self, agent: str, act: str, text: str, val: str = "", coin: str = "") -> None:
         self.seq += 1
@@ -362,6 +369,7 @@ class Swarm:
             m.ticket = t
             self.log("taker", "LIMIET", f"papier {order['side']} ${order['usd']:g} ({order['lev']}x) limiet {order['limit']:,.6g}",
                      coin=m.coin)
+            self.save()
             return
         try:
             if self.lev.get(m.coin) != order["lev"]:
@@ -391,6 +399,8 @@ class Swarm:
     def filled_entry(self, m: Market, px: float) -> None:
         t = m.ticket
         t.update(state="open", entry=px, filled_at=time.time())
+        if t["paper"]:
+            self.save()
         self.log("taker", "TAKE", f"{'papier' if t['paper'] else 'LIVE'} {t['side']} gevuld als maker @ {px:,.6g}",
                  f"{t['lev']}x ${t['usd']:g}", m.coin)
 
@@ -584,6 +594,11 @@ class Swarm:
                 m.feat = m.features(now)
                 m.model = m.compute(m.feat, now, cfg, self.window)
                 self.manage(m, now, cfg)
+                if m.coin in self.drop and not m.ticket:  # uit de top 25 en de trade is afgerekend: nu uit
+                    self.drop.discard(m.coin)
+                    self.coins[m.coin] = False
+                    self.log("spotter", "COIN", "uit de top 25, trade afgerekend: zwerm volgt niet meer", coin=m.coin)
+                    self.save()
                 self.decide(m, now, cfg)
 
     # ---------- bediening vanaf /desk ----------
@@ -635,7 +650,9 @@ class Swarm:
                     self.markets[c], self.coins[c] = m, False
                     self.resubscribe = True
                 aan = [c for c in top if not self.coins[c]]
-                uit = [c for c, v in self.coins.items() if v and c not in top]
+                uit = [c for c, v in self.coins.items() if v and c not in top and not self.markets[c].ticket]
+                later = [c for c, v in self.coins.items() if v and c not in top and self.markets[c].ticket]
+                self.drop = set(later)  # terug in de top 25 = blijft gewoon aan
                 for c in aan:
                     self.coins[c] = True
                 for c in uit:
@@ -644,7 +661,8 @@ class Swarm:
                         self.pending = None
                 self.log("spotter", "TOP 25", f"scanner: {len(top)} markten gevolgd · {len(aan)} erbij"
                          + (f" ({', '.join(aan[:8])}{'…' if len(aan) > 8 else ''})" if aan else "")
-                         + f" · {len(uit)} eraf" + (f" ({', '.join(uit[:8])}{'…' if len(uit) > 8 else ''})" if uit else ""))
+                         + f" · {len(uit)} eraf" + (f" ({', '.join(uit[:8])}{'…' if len(uit) > 8 else ''})" if uit else "")
+                         + (f" · {len(later)} gaan uit na hun trade ({', '.join(later)})" if later else ""))
                 self.save()
 
     def set(self, on: bool | None = None, confirm: bool | None = None, coins: dict | None = None,
@@ -661,6 +679,7 @@ class Swarm:
                 coin = desk._coin(coin)
                 if coin not in self.markets:  # nieuwe markt uit de scanner
                     self.add_market(coin)
+                self.drop.discard(coin)  # handmatig gezet: de scanner-regel vervalt
                 if bool(val) != self.coins[coin]:
                     self.coins[coin] = bool(val)
                     m = self.markets[coin]
@@ -684,6 +703,7 @@ class Swarm:
                 self.log("edge", "DREMPEL", f"edge-drempel {self.min_edge:+g}¢ boven break-even")
             if auto_scan is not None and auto_scan != self.auto_scan:
                 self.auto_scan, self.scan_at = auto_scan, 0.0
+                self.drop.clear()
                 self.log("spotter", "AUTO", "scanner-modus " + ("aan: elke 5 min de top 25" if auto_scan else "uit"))
             if max_lev is not None or risk_pct is not None:
                 if max_lev is not None and not 1 <= float(max_lev) <= 20:

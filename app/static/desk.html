@@ -764,6 +764,7 @@ async function pollAuto() {
     allFeed(a.trace);
     const changed = a.trace.some(t => ['TAKE', 'AFREK', 'PASS', 'EDGE'].includes(t.act));
     const coinsChanged = JSON.stringify(a.coins) !== JSON.stringify(st.auto && st.auto.coins);
+    if (st.auto && a.auto_scan && a.scan_at !== st.auto.scan_at) loadScan();  // scanner op de server liep: zelfde top 25 tonen
     const winChanged = !st.auto || st.auto.window_min !== a.window_min || st.auto.min_edge !== a.min_edge;
     st.autoSeq = a.seq; st.auto = a; if (changed) renderMarks(); if (coinsChanged && scanRows.length) renderScan();
     if (winChanged) renderWinSeg();
