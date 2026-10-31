@@ -216,7 +216,7 @@ class DeskAuto(BaseModel):
     token: str | None = None
     on: bool | None = None
     confirm: bool | None = None
-    coin: str | None = None
+    coins: dict[str, bool] | None = None
 
 
 class DeskApproval(BaseModel):
@@ -234,7 +234,7 @@ def desk_auto_state(since: int = 0):
 def desk_auto_set(req: DeskAuto):
     try:
         desk.check_token(req.token)
-        swarm.set(on=req.on, confirm=req.confirm, coin=req.coin)
+        swarm.set(on=req.on, confirm=req.confirm, coins=req.coins)
         return swarm.snapshot(swarm.seq)
     except PermissionError as e:
         raise HTTPException(403, str(e))

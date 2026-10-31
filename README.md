@@ -128,6 +128,7 @@ Standaard is alles papier (saldo per coin in de browser). Echt geld loopt via de
    ```
 4. Herstart de server, vul op `/desk` → Instellingen het token in en zet met **Zwerm live** de zwerm aan.
 
+Met de coinknoppen naast **Zwerm live** kies je op welke coins (BTC, ETH, SOL) de zwerm tegelijk handelt; de limieten gelden voor alle coins samen.
 Met **Bevestigen: AAN** wacht elke nieuwe positie 20 seconden op jouw klik; met **UIT** handelt de zwerm zelf.
 Posities gaan altijd dicht aan het einde van het venster (reduce-only). Na 3 mislukte orders op rij of bij het
 raken van de daglimiet stopt hij. De kill switch zet de zwerm uit en sluit BTC, ETH en SOL.

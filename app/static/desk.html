@@ -130,7 +130,8 @@
   .prc4 div span { display: block; font: 9px system-ui; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
   .spec { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 8px; }
   .feat { font: 10px var(--mono); }
-  .feat div { display: grid; grid-template-columns: 60px 1fr; gap: 5px; align-items: center; margin: 2px 0; }
+  .feat { display: grid; grid-template-rows: repeat(12, 1fr); height: 230px; }
+  .feat div { display: grid; grid-template-columns: 60px 1fr; gap: 5px; align-items: center; }
   .feat i { height: 5px; border-radius: 2px; display: block; }
 
   .foot { position: sticky; bottom: 0; background: #15171c; color: #cfd3db; font: 11px var(--mono); padding: 6px 18px; display: flex; gap: 26px; flex-wrap: wrap; }
@@ -161,6 +162,7 @@
   <span class="badge paper" id="modeBadge">PAPER</span>
   <span class="badge sim" id="feedBadge" style="display:none">SIMULATIE</span>
   <button class="btn" id="autoBtn" style="display:none" title="Zet de zwerm op de server aan of uit (echt geld)">Zwerm live</button>
+  <span class="seg" id="coinAuto" style="display:none" title="Op welke coins handelt de zwerm (echt geld)?"></span>
   <button class="btn" id="confBtn" style="display:none" title="Moet elke echte order eerst door jou goedgekeurd worden?">Bevestigen</button>
   <button class="btn" id="setBtn">Instellingen</button>
   <button class="btn danger" id="killBtn" title="Sluit alle posities en zet de desk op pauze">Kill switch</button>
@@ -256,7 +258,7 @@
       </div>
     </section>
     <section class="panel">
-      <div class="ph"><h2>Signal Spectrogram</h2><span class="sub">12 kenmerken · sterkte door de tijd</span></div>
+      <div class="ph"><h2>Signal Spectrogram</h2><span class="sub">12 kenmerken · sterkte door de tijd</span><span class="right">rechts: nu, -1 tot +1</span></div>
       <div class="spec"><canvas id="spec" class="fill" height="230"></canvas><div class="feat" id="feat"></div></div>
     </section>
   </div>
@@ -597,16 +599,18 @@ async function pollAuto() {
 let notified = 0;
 function renderAuto() {
   const a = st.auto, ok = a && a.allowed;
-  $('autoBtn').style.display = ok ? '' : 'none'; $('confBtn').style.display = ok ? '' : 'none';
+  $('autoBtn').style.display = ok ? '' : 'none'; $('confBtn').style.display = ok ? '' : 'none'; if (!ok) $('coinAuto').style.display = 'none';
   if (!ok) { $('approve').classList.remove('on'); return; }
-  $('autoBtn').textContent = 'Zwerm live: ' + (a.on ? 'AAN' : 'UIT') + ' · ' + a.coin;
+  $('autoBtn').textContent = 'Zwerm live: ' + (a.on ? 'AAN' : 'UIT');
+  $('coinAuto').style.display = '';
+  $('coinAuto').innerHTML = Object.entries(a.coins).map(([c, v]) => `<button data-c="${c}" class="${v ? 'on' : ''}" title="${c}: zwerm ${v ? 'handelt' : 'handelt niet'}">${v ? '●' : '○'} ${c}</button>`).join('');
   $('autoBtn').className = 'btn ' + (a.on ? 'danger' : '');
   $('confBtn').textContent = 'Bevestigen: ' + (a.confirm ? 'AAN' : 'UIT');
   $('confBtn').className = 'btn ' + (a.confirm ? '' : 'danger');
   $('modeBadge').textContent = a.on ? (a.halted ? 'LIVE · GESTOPT' : 'LIVE') : 'PAPER';
   $('modeBadge').className = 'badge ' + (a.on ? 'live' : 'paper');
   $('sAppr').textContent = a.on ? (a.confirm ? 'ELKE ORDER' : 'UIT · AGENTS AUTONOOM') : 'ZWERM UIT';
-  $('fLive').innerHTML = a.on ? `<b style="color:#ff6b81">LIVE ${a.coin}</b> · max $${st.server ? st.server.max_usd : '?'}/order · ${st.server ? st.server.account : ''}${st.server && st.server.subaccount ? ' (sub-account)' : ''}`
+  $('fLive').innerHTML = a.on ? `<b style="color:#ff6b81">LIVE ${Object.keys(a.coins).filter(c => a.coins[c]).join(' + ') || 'geen coin'}</b> · max $${st.server ? st.server.max_usd : '?'}/order · ${st.server ? st.server.account : ''}${st.server && st.server.subaccount ? ' (sub-account)' : ''}`
     + (a.halted ? ` · <b style="color:#ff6b81">${a.halted}</b>` : '') + (a.feed ? '' : ' · <b style="color:#ff6b81">server zonder koersfeed</b>') : 'LIVE UIT · papier';
   const p = a.pending;
   if (p) {
@@ -718,7 +722,7 @@ function drawDist(m) {
 
 function drawSpec() {
   const c = $('spec'), [x, w, h] = canvasCtx(c), cols = st.specCols, nF = FEATS.length;
-  const LW = 74, cw = (w - LW) / 120, ch = h / nF;  // links een kolom met de naam van elk kenmerk
+  const LW = 74, cw = (w - LW) / Math.max(cols.length, 20), ch = h / nF;  // rekt uit tot er 120 kolommen zijn  // links een kolom met de naam van elk kenmerk
   const col = v => { const t = clamp((v + 1) / 2, 0, 1); // blauw → groen → geel
     const r = Math.round(t < .5 ? 30 + t * 2 * 20 : 50 + (t - .5) * 2 * 200), g = Math.round(t < .5 ? 60 + t * 2 * 130 : 190 + (t - .5) * 2 * 40), b = Math.round(t < .5 ? 160 - t * 2 * 60 : 100 - (t - .5) * 2 * 80); return `rgb(${r},${g},${b})`; };
   const x0 = w - cols.length * cw;  // nieuwste kolom rechts
@@ -727,7 +731,7 @@ function drawSpec() {
   FEATS.forEach((n, j) => { x.fillStyle = j % 2 ? '#f3f5f9' : '#ffffff'; x.fillRect(0, j * ch, LW - 4, Math.ceil(ch) - 1);
     x.fillStyle = '#15171c'; x.fillText(n, 4, j * ch + ch / 2); });
   const last = cols[cols.length - 1] || [];
-  $('feat').innerHTML = `<div class="cap" style="display:block;margin-bottom:4px">nu · -1 tot +1</div>` + FEATS.map((f, j) => `<div title="${FEAT_INFO[j]}"><span>${f}</span><i style="width:${Math.abs(last[j] || 0) * 100}%;background:${(last[j] || 0) >= 0 ? '#16b364' : '#ef3a5d'}"></i></div>`).join('');
+  $('feat').innerHTML = FEATS.map((f, j) => `<div title="${FEAT_INFO[j]}"><span>${f}</span><i style="width:${Math.abs(last[j] || 0) * 100}%;background:${(last[j] || 0) >= 0 ? '#16b364' : '#ef3a5d'}"></i></div>`).join('');
 }
 
 function drawBook() {
@@ -795,9 +799,9 @@ function tick() {
   drawBook(); drawDist(m);
 
   // ticket: een live ticket van de server-zwerm gaat voor het papierticket
-  const srvT = st.auto && st.auto.ticket;
-  const t = srvT ? { coin: srvT.coin, side: srvT.side, notional: srvT.usd, entry: srvT.entry, p: srvT.p, be: st.auto.model.be || 0, live: true } : st.ticket;
-  const tpx = srvT ? st.auto.px : st.px;
+  const sm = st.auto && st.auto.markets && st.auto.markets[st.coin], srvT = sm && sm.ticket;
+  const t = srvT ? { coin: srvT.coin, side: srvT.side, notional: srvT.usd, entry: srvT.entry, p: srvT.p, be: srvT.be || 0, live: true } : st.ticket;
+  const tpx = srvT ? sm.px : st.px;
   if (t) {
     const ret = (tpx - t.entry) / t.entry * (t.side === 'long' ? 1 : -1), upnl = t.notional * ret;
     $('ticket').innerHTML = `<div class="kv"><span>${t.coin} ${t.side.toUpperCase()} 5M ${t.live ? '· LIVE' : '· papier'}</span><span>${usd(t.notional)}</span></div>
@@ -836,17 +840,22 @@ async function setCoin(c) {
   $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
   Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
   stopSim(); await loadHistory(); connect(); drawBalance();
-  if (st.auto && st.auto.allowed && S.token && st.auto.coin !== c) {  // de server-zwerm volgt de gekozen coin
-    try { await autoPost('/api/desk/auto', { coin: c }); } catch (e) { trace('prior', null, 'FOUT', 'zwerm wisselt niet van coin: ' + e.message); }
-  }
+
 }
 $('coinSeg').onclick = e => e.target.dataset.c && e.target.dataset.c !== st.coin && setCoin(e.target.dataset.c);
 $('apYes').onclick = () => answer(true); $('apNo').onclick = () => answer(false);
 $('autoBtn').onclick = async () => {
   const on = !st.auto.on;
-  if (on && !confirm(`Zwerm live aanzetten op ${st.auto.coin}? Hij handelt met echt geld op Hyperliquid, ook als deze pagina dicht is.`)) return;
+  const act = Object.keys(st.auto.coins).filter(c => st.auto.coins[c]).join(', ') || 'geen coin (zet er eerst een aan)';
+  if (on && !confirm(`Zwerm live aanzetten op ${act}? Hij handelt met echt geld op Hyperliquid, ook als deze pagina dicht is.`)) return;
   try { await autoPost('/api/desk/auto', { on }); if (on && window.Notification && Notification.permission === 'default') Notification.requestPermission(); }
   catch (e) { alert(e.message); } pollAuto();
+};
+$('coinAuto').onclick = async e => {
+  const c = e.target.closest('button') && e.target.closest('button').dataset.c; if (!c) return;
+  const v = !st.auto.coins[c];
+  if (v && st.auto.on && !confirm(`Zwerm ook laten handelen op ${c}? Echt geld.`)) return;
+  try { await autoPost('/api/desk/auto', { coins: { [c]: v } }); } catch (err) { alert(err.message); } pollAuto();
 };
 $('confBtn').onclick = async () => {
   const c = !st.auto.confirm;
