@@ -27,8 +27,7 @@ WS_URL = "wss://api.hyperliquid.xyz/ws"
 WINDOWS = (15, 60, 240)
 # Prijsmodel, instelbaar op /desk → Instellingen: gewichten van de Spotter-score en hoe snel Prior zijn β uit de data haalt.
 BETA_MAX = 1.0       # het prijsmodel mag nooit zekerder worden dan Φ(β · score) met β ≤ 1
-TRUST_TRADES = 200   # tot zoveel afgesloten trades op papier: hefboom hooguit 3x, nog niets bewezen
-TRUST_LEV = 3
+TRUST_TRADES = 200   # pas na zoveel afgesloten trades telt het volle vertrouwen mee in de hefboom
 MAX_EXPOSURE = 2.0   # alle open posities samen hooguit 2× de portefeuille
 MODEL_DEFAULT = {"beta0": 0.25, "k": 30, "w": {"flow30": .35, "flow10": .2, "book": .25, "bookDeep": .1, "mom": .1}}
 MODEL: dict = json.loads(json.dumps(MODEL_DEFAULT))
@@ -508,6 +507,22 @@ class Swarm:
         risk = self.risk_pct if self.risk_pct is not None else desk.num(cfg, "DESK_RISK_PCT", 10)
         return (min(cap, env_cap) if live else cap), risk
 
+    def trust(self, live: bool) -> tuple[float, str]:
+        """Hoeveel de zwerm zichzelf mag geloven, uit wat hij al bewezen heeft. Geen vaste grens op de hefboom:
+        weinig trades of verlies op de laatste 50 → voorzichtig, een lange winnende reeks → het volle vertrouwen."""
+        hs = [h for h in self.history if h.get("paper", True) != live]
+        n = len(hs)
+        t = .3 + .7 * min(1.0, n / TRUST_TRADES)  # 0 trades: 30%, 200 trades: 100%
+        why = f"{n}/{TRUST_TRADES} trades"
+        if n >= 20:
+            last = hs[-50:]
+            pnl = sum(h["pnl"] for h in last)
+            win = sum(1 for h in last if h["pnl"] > 0) / len(last)
+            if pnl < 0:  # de laatste trades kosten geld: halveren
+                t *= .5
+                why += f", laatste {len(last)} {pnl:+.2f}$ (winrate {win * 100:.0f}%)"
+        return _clamp(t, .1, 1.0), why
+
     def kelly(self, m: Market, cfg: dict, live: bool, plan: dict | None = None) -> tuple[int, float] | None:
         """Hefboom uit de volatiliteit: een tegenvaller van 2σ tot het einde van het venster mag hooguit
         risico % (10%) van de marge kosten, begrensd door de max hefboom en de max van de markt.
@@ -519,9 +534,6 @@ class Swarm:
             return None
         sd = max(m.model.get("sd", 0.0), 1e-5)
         cap, risk = self.lev_limits(cfg, live)
-        proven = sum(1 for h in self.history if h.get("paper", True) != live)
-        if proven < TRUST_TRADES:  # eerst bewijzen dat de signalen iets waard zijn, dan pas hoger
-            cap = min(cap, TRUST_LEV)
         market_max = desk.universe().get(m.coin, {}).get("maxLeverage")
         if market_max:
             cap = min(cap, market_max)
@@ -530,8 +542,13 @@ class Swarm:
         # (edge 0¢ → 25% van die hefboom, edge ≥ 8¢ → 100%)
         sl_d = plan["sl_d"] if plan else 2 * sd
         conf = _clamp(mo["edge"] / 8, .25, 1.0)
+        trust, trust_why = self.trust(live)
+        # trefzekerheid van deze markt: hoe vaak de eigen voorspelling juist zat, boven 50%, gekrompen bij weinig vensters
+        pr = mo.get("prior") or {}
+        n_w, hit = pr.get("n", 0), pr.get("hit") or .5
+        skill = .25 + .75 * max(0.0, (hit - .5) * 2) * n_w / (n_w + 75)
         want_risk = math.floor(risk / 100 / max(sl_d, 1e-6))
-        want = max(1, math.floor(want_risk * conf))
+        want = max(1, math.floor(want_risk * conf * skill * trust))
         lev = int(_clamp(want, 1, max(1, cap)))
         mu = (2 * mo["pDir"] - 1) * sd * math.sqrt(2 / math.pi) - costs(cfg)["round"] / 1e4
         kelly_notional = max(0.0, kf * mu / (sd * sd)) * pf["equity"]
@@ -552,10 +569,10 @@ class Swarm:
             self.log("kelly", "TE KLEIN", f"vrije marge ${pf['free']:,.2f} te klein voor een order", coin=m.coin)
             return None
         self.kelly_info = {"sd": round(sd * 1e4, 1), "lev": lev, "want_lev": want, "lev_cap": cap, "kelly": kf,
-                           "lev_risk": want_risk, "lev_conf": round(conf, 2), "sl_bp": round(sl_d * 1e4, 1), "risk_pct": risk,
+                           "lev_risk": want_risk, "lev_conf": round(conf, 2), "lev_trust": round(trust, 2), "lev_skill": round(skill, 2), "trust_why": trust_why, "sl_bp": round(sl_d * 1e4, 1), "risk_pct": risk,
                            "kelly_usd": round(kelly_notional, 2), "margin": round(usd / lev, 2), "usd": round(usd, 2),
                            "capped": "marge" if kelly_notional / lev > cap_margin else None, "max_margin_pct": mpct}
-        self.log("kelly", "SIZE", f"stop op {sl_d * 1e4:.0f}bp, max {risk:g}% van de marge → {want_risk}x, × vertrouwen {conf:.2f} → hefboom {lev}x"
+        self.log("kelly", "SIZE", f"stop op {sl_d * 1e4:.0f}bp, max {risk:g}% van de marge → {want_risk}x, × vertrouwen {conf:.2f} × trefzekerheid {skill:.2f} ({hit * 100:.0f}% juist op {n_w} vensters) × staat van dienst {trust:.2f} ({trust_why}) → hefboom {lev}x"
                                   + (f" (wil {want}x, max {cap:g}x)" if want > lev else "")
                                   + f" · Kelly ×{kf:g} wil ${kelly_notional:,.0f} positie"
                                   + (f", max marge {mpct:g}%" if kelly_notional / lev > cap_margin else "")

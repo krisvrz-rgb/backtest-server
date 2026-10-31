@@ -1439,7 +1439,7 @@ function explain(t, sm) {
     <p>${w.src === 'geleerd' ? 'Het <b>geleerde model</b>' : 'Prior'} zette dat om in <b>${cents(w.p)}</b> kans (β ${fmt(w.beta, 2)}, ${w.n} vensters geleerd). Break-even na ${fmt(w.cost, 1)} bp kosten
       op een verwachte beweging van ${fmt(w.emove, 1)} bp was ${cents(w.be)}, dus edge <b>${sgn(w.edge, 1, '¢')}</b>.</p>
     <p>${w.lev_risk != null ? `Hefboom: de stop ligt ${fmt(w.sl_bp, 0)} bp weg; om daar hooguit ${w.risk_pct}% van de marge te verliezen mag het ${w.lev_risk}x zijn,
-      maal vertrouwen ${fmt(w.lev_conf * 100, 0)}% (edge ${sgn(w.edge, 1, '¢')}) = <b>${w.lev}x</b>${w.want_lev > w.lev ? ` (begrensd op max ${w.lev_cap}x)` : ''}.` : `Kelly: σ ${fmt(w.sd, 0)} bp → hefboom ${w.lev}x.`}
+      maal vertrouwen ${fmt(w.lev_conf * 100, 0)}% (edge ${sgn(w.edge, 1, '¢')})${w.lev_skill != null ? `, maal trefzekerheid van deze markt ${fmt(w.lev_skill * 100, 0)}%, maal staat van dienst ${fmt(w.lev_trust * 100, 0)}% (${w.trust_why})` : ''} = <b>${w.lev}x</b>${w.want_lev > w.lev ? ` (begrensd op max ${w.lev_cap}x)` : ''}.` : `Kelly: σ ${fmt(w.sd, 0)} bp → hefboom ${w.lev}x.`}
       Kelly ×${w.kelly} wilde ${usd(w.kelly_usd)} positie,
       ${w.capped ? `afgetopt op ${w.max_margin_pct}% marge` : 'binnen de grens'} → ${usd(w.margin, 2)} marge, ${usd(w.usd, 2)} positie.</p>
     ${w.bt ? `<p>Dag-backtests: ${w.bt.open} van de ${w.bt.prof} winstgevende strategieën hebben nu een open koopsignaal (${w.bt.trend}), beste is ${w.bt.best || '–'}.
