@@ -244,7 +244,7 @@
   <span class="badge sim" id="feedBadge" style="display:none">SIMULATIE</span>
   <label class="mpct" title="Marge per trade in % van de huidige portefeuillewaarde (na winst of verlies telkens herrekend). Kelly neemt minder als de edge klein is."><span class="cap">marge/trade</span>
     <input id="hdMarg" type="number" step="0.5" min="0.5" max="25">%<b class="num" id="hdMargUsd">–</b></label>
-  <div class="clock num" id="clock">--:--:--</div><span class="cap">utc</span>
+  <div class="clock num" id="clock">--:--:--</div><span class="cap">lokaal</span>
   <button class="btn danger" id="killBtn" title="Sluit alle posities en zet de desk op pauze">Kill switch</button>
 </div>
 <div class="ctlbar">
@@ -521,7 +521,12 @@ const BASE = ['BTC', 'ETH', 'SOL'];
 const watch = () => JSON.parse(localStorage.getItem('desk.watch') || '[]');
 const short = c => c.includes(':') ? c.split(':')[1] : c;
 const chainCoin = () => st.coin === 'ETH' ? 'BTC' : 'ETH';  // CHAIN: beweegt de rest van de markt mee?
-const hhmmss = t => new Date(t).toISOString().slice(11, 19);
+const hhmmss = t => new Date(t).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });  // lokale tijd
+// grafieken in lokale tijd (lightweight-charts rekent in UTC)
+const LOCAL_TIME = { localization: { timeFormatter: t => new Date(t * 1000).toLocaleString('nl-BE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) },
+  timeScale: { tickMarkFormatter: (t, k) => { const d = new Date(t * 1000);
+    return k === 0 ? String(d.getFullYear()) : k === 1 ? d.toLocaleDateString('nl-BE', { month: 'short' }) : k === 2 ? String(d.getDate())
+      : d.toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit', hour12: false }); } } };
 function erf(x) { const t = 1 / (1 + .3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - .284496736) * t + .254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; }
 const Phi = z => .5 * (1 + erf(z / Math.SQRT2));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -559,6 +564,7 @@ const chart = LightweightCharts.createChart($('chart'), {
   rightPriceScale: { borderVisible: false }, timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
   crosshair: { mode: 0 },
 });
+chart.applyOptions(LOCAL_TIME);
 const cs = chart.addCandlestickSeries({ upColor: '#16b364', downColor: '#ef3a5d', borderVisible: false, wickUpColor: '#16b364', wickDownColor: '#ef3a5d',
   autoscaleInfoProvider: orig => {  // stop-loss en take-profit altijd in beeld houden
     const r = orig(); if (!r || !r.priceRange) return r;
@@ -731,6 +737,7 @@ function miniFor(t) {
     grid: { vertLines: { visible: false }, horzLines: { color: TH.dark ? '#10142a' : '#eef0f4' } },
     rightPriceScale: { borderVisible: false }, timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
     handleScroll: false, handleScale: false, crosshair: { mode: 0 } });
+  ch.applyOptions(LOCAL_TIME);
   m = minis[t.coin] = { box, host, ch, lines: {}, candles: [], loaded: 0, book: null, bookAt: 0, t };
   m.ser = ch.addCandlestickSeries({ upColor: '#16b364', downColor: '#ef3a5d', borderVisible: false, wickUpColor: '#16b364', wickDownColor: '#ef3a5d',
     autoscaleInfoProvider: orig => { const r = orig(); if (!r || !r.priceRange) return r;
@@ -924,10 +931,11 @@ function renderPnl() {
       grid: { vertLines: { visible: false }, horzLines: { color: TH.dark ? '#10142a' : '#eef0f4' } },
       rightPriceScale: { borderVisible: false }, leftPriceScale: { visible: true, borderVisible: false },
       timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false } });
+    pnlS.chart.applyOptions(LOCAL_TIME);
     pnlS.bars = pnlS.chart.addHistogramSeries({ priceScaleId: 'right', priceFormat: { type: 'price', precision: 2, minMove: .01 }, title: 'per periode' });
     pnlS.cum = pnlS.chart.addLineSeries({ priceScaleId: 'left', color: '#16b364', lineWidth: 3, lineType: 2, priceFormat: { type: 'price', precision: 2, minMove: .01 }, title: 'totaal' });
   }
-  const tz = -new Date().getTimezoneOffset() * 60;  // grafiek toont lokale tijd
+  const tz = 0;  // lokale tijd via LOCAL_TIME
   const rows = pnlS.rows.filter(r => r[2] === (pnlS.m === 'paper')), b = pnlS.b, agg = new Map();
   rows.forEach(([t, p, , coin, side, why], i) => { const k = b === 'a' ? t + i / 1000 : bucketStart(t, b),  // per trade: twee trades in dezelfde ms blijven apart
       a = agg.get(k) || { n: 0, w: 0, p: 0, best: -1e9, worst: 1e9, coins: new Map() };
@@ -1678,7 +1686,7 @@ async function loadScan() {
   $('scanInfo').textContent = 'scannen… (kan 20 s duren)';
   try {
     const r = await fetch('/api/desk/scan'); const j = await r.json(); if (!r.ok) throw new Error(j.detail);
-    scanRows = j.rows; $('scanInfo').textContent = `bijgewerkt ${hhmmss(j.updated)} UTC · ${scanRows.length} markten`;
+    scanRows = j.rows; $('scanInfo').textContent = `bijgewerkt ${hhmmss(j.updated)} · ${scanRows.length} markten`;
   } catch (e) { $('scanInfo').textContent = 'scanner mislukt: ' + e.message; }
   renderScan();
 }
