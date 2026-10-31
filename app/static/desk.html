@@ -1209,7 +1209,7 @@ async function pollAuto() {
   } catch (e) { st.auto = null; }
   renderAuto();
 }
-const EDGES = [[2, 'streng'], [1, 'normaal'], [0, 'los']];
+const EDGES = [[2, 'streng'], [1, 'normaal'], [0, 'los'], [-2, 'leren']];
 function renderEdgeSeg() {
   const a = st.auto, cur = a ? a.min_edge : 2;
   $('edgeSeg').innerHTML = EDGES.map(([v, n]) => `<button data-e="${v}" class="${cur === v ? 'on' : ''}" title="instappen vanaf ${sgn(v, 0, '¢')} boven break-even">${n}</button>`).join('');

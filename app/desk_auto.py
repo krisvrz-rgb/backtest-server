@@ -646,6 +646,8 @@ class Swarm:
         lev = int(_clamp(want, 1, max(1, cap)))
         mu = (2 * mo["pDir"] - 1) * sd * math.sqrt(2 / math.pi) - costs(cfg)["round"] / 1e4
         kelly_notional = max(0.0, kf * mu / (sd * sd)) * pf["equity"]
+        if not live and self.edge_floor(cfg, live) < 0:  # leren op papier: ook zonder verwachte winst een kleine positie
+            kelly_notional = max(kelly_notional, pf["equity"] * .03)
         cap_margin = min(pf["equity"] * mpct / 100, pf["free"] / 4)
         margin = min(kelly_notional / lev, cap_margin)
         if 0 < margin * lev < 10 <= cap_margin * lev:  # Hyperliquid wil minstens $10: kleinste order
@@ -1287,8 +1289,8 @@ class Swarm:
                 self.window_min = int(window_min)
                 self.log("prior", "VENSTER", f"vensters van {self.window_min} minuten")
             if min_edge is not None and float(min_edge) != self.min_edge:
-                if not 0 <= float(min_edge) <= 10:  # onder 0 = bewust trades met verwacht verlies
-                    raise ValueError("Drempel moet tussen 0¢ en 10¢ liggen")
+                if not -3 <= float(min_edge) <= 10:  # onder 0 = bewust trades met verwacht verlies, alleen op papier
+                    raise ValueError("Drempel moet tussen -3¢ en 10¢ liggen")
                 self.min_edge = float(min_edge)
                 self.log("edge", "DREMPEL", f"edge-drempel {self.min_edge:+g}¢ boven break-even")
             if scan_n is not None and int(scan_n) != self.scan_n:
