@@ -606,11 +606,14 @@ new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, hei
 const FCOL = ['#ff4d6d', '#ff8c42', '#ffd166', '#06d6a0', '#4cc9f0', '#4361ee', '#b5179e', '#f72585', '#90be6d', '#43aa8b', '#c77dff', '#ffffff'];
 const layerOn = new Set(JSON.parse(localStorage.getItem('desk.layers') || '["heat","score","sr","trend","ma"]'));
 if (!localStorage.getItem('desk.layers.ma')) { layerOn.add('ma'); localStorage.setItem('desk.layers.ma', '1'); }
+if (!localStorage.getItem('desk.layers.osc')) { layerOn.add('rsi'); layerOn.add('macd'); localStorage.setItem('desk.layers.osc', '1'); }
 if (!localStorage.getItem('desk.layers.sr')) { layerOn.add('sr'); layerOn.add('trend'); localStorage.setItem('desk.layers.sr', '1'); }
 const featSeries = {}; st.featMin = {};
 function renderLayers() {
   $('layers').innerHTML = `<button data-l="sr" style="--c:#c77dff" class="${layerOn.has('sr') ? 'on' : ''}" title="Steun en weerstand: prijzen waar de koers de afgelopen 2 dagen meermaals keerde (dikker = vaker geraakt). De zwerm gebruikt ze ook voor stop-loss, take-profit en om niet tegen een muur in te stappen">steun/weerstand</button>`
     + `<button data-l="ma" style="--c:#f72585" class="${layerOn.has('ma') ? 'on' : ''}" title="Voortschrijdende gemiddelden EMA 20, 50 en 200 op 5 minuten. De zwerm telt ze mee als steun of weerstand: niet instappen vlak voor een EMA, en stop-loss en take-profit erop afstemmen">EMA 20/50/200</button>`
+    + `<button data-l="rsi" style="--c:#b5e48c" class="${layerOn.has('rsi') ? 'on' : ''}" title="RSI 14 op 5 minuten, onderaan (30 en 70 gestippeld). Telt mee in het leermodel: alleen als het bewijsbaar iets voorspelt">RSI</button>`
+    + `<button data-l="macd" style="--c:#48cae4" class="${layerOn.has('macd') ? 'on' : ''}" title="MACD 12/26/9 op 5 minuten, onderaan: lijn, signaal en histogram. Telt mee in het leermodel: alleen als het bewijsbaar iets voorspelt">MACD</button>`
     + `<button data-l="trend" style="--c:#4cc9f0" class="${layerOn.has('trend') ? 'on' : ''}" title="Trendlijnen door de laatste twee toppen en de laatste twee bodems op 15 minuten">trendlijnen</button>`
     + `<button data-l="heat" style="--c:#f5a524" class="${layerOn.has('heat') ? 'on' : ''}" title="Waar staan veel kopers en verkopers in het orderboek, door de tijd: hoe feller, hoe meer volume">heatmap boek</button>`
     + FEATS.map((f, j) => `<button data-l="${f}" style="--c:${FCOL[j]}" class="${layerOn.has(f) ? 'on' : ''}" title="${FEAT_INFO[j]}">${f}</button>`).join('');
@@ -637,7 +640,7 @@ function drawFeats() {
   if (!st.featPts.length) { x.fillStyle = TH.muted; x.font = '11px ui-monospace, monospace'; x.fillText('kenmerken verzamelen… (vanaf het openen van de pagina, elke 2 s)', 8, mid - 6); }
 }
 $('layers').onclick = e => { const l = e.target.dataset.l; if (!l) return;
-  layerOn.has(l) ? layerOn.delete(l) : layerOn.add(l); localStorage.setItem('desk.layers', JSON.stringify([...layerOn])); renderLayers(); syncFeatSeries(); drawHeat(); drawSR(); drawTrend(); drawMA(); };
+  layerOn.has(l) ? layerOn.delete(l) : layerOn.add(l); localStorage.setItem('desk.layers', JSON.stringify([...layerOn])); renderLayers(); syncFeatSeries(); drawHeat(); drawSR(); drawTrend(); drawMA(); drawOsc(); };
 function pushFeatures(vals, now) {
   st.featPts.push([now / 1000, vals]); if (st.featPts.length > 3600) st.featPts.shift();
   drawFeats();
@@ -841,6 +844,43 @@ function drawMA() {
       crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
     s.setData(d); st.maS.push(s);
   });
+}
+// RSI en MACD op 5m in een strook onderaan de grafiek
+st.oscS = [];
+function drawOsc() {
+  for (const s of st.oscS.splice(0)) chart.removeSeries(s);
+  const r = layerOn.has('rsi'), mc = layerOn.has('macd'), n = (r ? 1 : 0) + (mc ? 1 : 0);
+  chart.priceScale('right').applyOptions({ scaleMargins: { top: .08, bottom: n ? .1 + .16 * n : .08 } });
+  if (!n || candles.length < 60) return;
+  const b = []; for (const c of candles) { const t = Math.floor(c.t / 3e5) * 3e5, l = b[b.length - 1];
+    if (l && l.t === t) l.c = c.c; else b.push({ t, c: c.c }); }
+  const T = i => b[i].t / 1000, opt = (id, top, bot) => ({ priceScaleId: id, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: true });
+  let slot = 0;
+  const band = () => { const top = 1 - .16 * (n - slot), bot = .16 * (n - slot - 1) + .02; slot++; return { top: top + .02, bottom: bot }; };
+  if (r && b.length > 16) {
+    let up = 0, dn = 0; const d = [];
+    for (let i = 1; i < b.length; i++) { const x = b[i].c - b[i - 1].c;
+      if (i <= 14) { up += Math.max(x, 0) / 14; dn += Math.max(-x, 0) / 14; } else { up = (up * 13 + Math.max(x, 0)) / 14; dn = (dn * 13 + Math.max(-x, 0)) / 14; }
+      if (i >= 14) d.push({ time: T(i), value: dn ? 100 - 100 / (1 + up / dn) : 100 }); }
+    const s = chart.addLineSeries({ ...opt('rsi'), color: '#b5e48c', lineWidth: 1, title: 'RSI' }); s.setData(d);
+    chart.priceScale('rsi').applyOptions({ scaleMargins: band(), autoScale: false });
+    s.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
+    s.createPriceLine({ price: 70, color: 'rgba(239,58,93,.5)', lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
+    s.createPriceLine({ price: 30, color: 'rgba(22,179,100,.5)', lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
+    st.oscS.push(s);
+  }
+  if (mc && b.length > 40) {
+    let e12 = b[0].c, e26 = b[0].c, sig = 0; const ml = [], sl = [], hs = [];
+    for (let i = 1; i < b.length; i++) { e12 += 2 / 13 * (b[i].c - e12); e26 += 2 / 27 * (b[i].c - e26);
+      const m = e12 - e26; sig = i === 1 ? m : sig + .2 * (m - sig);
+      if (i >= 26) { ml.push({ time: T(i), value: m }); sl.push({ time: T(i), value: sig });
+        hs.push({ time: T(i), value: m - sig, color: m - sig >= 0 ? 'rgba(22,179,100,.6)' : 'rgba(239,58,93,.6)' }); } }
+    const h = chart.addHistogramSeries({ ...opt('macd'), title: '' }); h.setData(hs);
+    const a = chart.addLineSeries({ ...opt('macd'), color: '#48cae4', lineWidth: 1, title: 'MACD' }); a.setData(ml);
+    const c = chart.addLineSeries({ ...opt('macd'), color: '#f5a524', lineWidth: 1, lastValueVisible: false }); c.setData(sl);
+    chart.priceScale('macd').applyOptions({ scaleMargins: band() });
+    st.oscS.push(h, a, c);
+  }
 }
 // afgesloten trades: lijn van instap naar uitstap, groen bij winst en rood bij verlies
 st.tradeS = [];
@@ -1056,7 +1096,7 @@ async function loadHistory() {
   st.vwapPV = 0; st.vwapV = 0;
   const vw = [];  // volume-gewogen gemiddelde prijs sinds 00:00 UTC, als lijn vanaf het begin van de dag
   for (const c of candles) if (c.t >= day) { const tp = (c.h + c.l + c.c) / 3; st.vwapPV += tp * c.v; st.vwapV += c.v; if (st.vwapV) vw.push({ time: c.t / 1000, value: st.vwapPV / st.vwapV }); }
-  vwapS.setData(vw); drawTrend(); drawMA();
+  vwapS.setData(vw); drawTrend(); drawMA(); drawOsc();
 }
 
 // ---------- kenmerken ----------

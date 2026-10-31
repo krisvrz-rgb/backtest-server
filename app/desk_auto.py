@@ -73,6 +73,36 @@ def ema_state(cs: list[dict]) -> dict:
     return out
 
 
+def rsi(cl: list[float], n: int = 14) -> float | None:
+    """RSI van Wilder op slotkoersen, 0..100."""
+    if len(cl) < n + 2:
+        return None
+    up = dn = 0.0
+    for i in range(1, n + 1):
+        d = cl[i] - cl[i - 1]
+        up, dn = up + max(d, 0), dn + max(-d, 0)
+    up, dn = up / n, dn / n
+    for i in range(n + 1, len(cl)):
+        d = cl[i] - cl[i - 1]
+        up, dn = (up * (n - 1) + max(d, 0)) / n, (dn * (n - 1) + max(-d, 0)) / n
+    return 100.0 if dn == 0 else 100 - 100 / (1 + up / dn)
+
+
+def macd_hist(cl: list[float]) -> float | None:
+    """MACD 12/26/9: histogram = MACD-lijn min signaallijn."""
+    if len(cl) < 40:
+        return None
+    e12 = e26 = cl[0]
+    sig, first = 0.0, True
+    for c in cl[1:]:
+        e12 += 2 / 13 * (c - e12)
+        e26 += 2 / 27 * (c - e26)
+        m = e12 - e26
+        sig = m if first else sig + 2 / 10 * (m - sig)
+        first = False
+    return m - sig
+
+
 def sr_levels(cs: list[dict], k: int = 6) -> list[dict]:
     """Steun en weerstand uit 5m-candles: draaipunten (hoogste/laagste van k candles links en rechts),
     gebundeld als ze dicht bij elkaar liggen. Meer raakpunten = sterker niveau."""
@@ -176,6 +206,7 @@ class Market:
         self.trends: list[dict] = []
         self.levels_at = 0.0
         self.ema: dict = {}
+        self.c5: list[list[float]] = []  # [begin 5 min (s), slot] voor RSI en MACD
 
     def prior_file(self, window: int):
         return DATA_DIR / f"desk-prior-{self.coin.replace(':', '_')}-{window // 60}m.json"
@@ -198,6 +229,7 @@ class Market:
         self.var1 = sum(r * r for r in rs) / max(1, len(rs)) / 300
         self.levels, self.trends, self.levels_at = sr_levels(cs), trend_lines(cs), time.time()
         self.ema = ema_state(cs)
+        self.c5 = [[c["t"] / 1000, c["c"]] for c in cs[-120:]]
         if not self.px and cs:
             self.px = cs[-1]["c"]
 
@@ -250,6 +282,19 @@ class Market:
             f["book"], f["bookDeep"] = imb(5), imb(20)
         el = max(1.0, now - self.win)
         f["mom"] = math.log(self.px / self.open0) / math.sqrt(self.var1 * el) if self.open0 and self.var1 else 0.0
+        # RSI en MACD op 5m: de lopende candle sluit voorlopig op de huidige koers
+        if self.px:
+            b = int(now // 300) * 300
+            if self.c5 and self.c5[-1][0] == b:
+                self.c5[-1][1] = self.px
+            elif not self.c5 or self.c5[-1][0] < b:
+                self.c5.append([b, self.px])
+                del self.c5[:-120]
+        cl = [c for _, c in self.c5]
+        r, h = rsi(cl), macd_hist(cl)
+        f["rsi"] = (r - 50) / 50 if r is not None else 0.0
+        s5 = self.px * math.sqrt(self.var1 * 300) if self.px and self.var1 else 0.0
+        f["macd"] = _clamp(h / s5 / 2, -1, 1) if h is not None and s5 else 0.0
         w = MODEL["w"]
         f["score"] = _clamp(w["flow30"] * f["flow30"] + w["flow10"] * f["flow10"] + w["book"] * f["book"]
                             + w["bookDeep"] * f["bookDeep"] + w["mom"] * _clamp(f["mom"] / 2, -1, 1), -1, 1)
@@ -1111,6 +1156,7 @@ class Swarm:
                     cs = desk.candles(m.coin, "5m", 2 * 24 * 60)
                     m.levels, m.trends, m.levels_at = sr_levels(cs), trend_lines(cs), time.time()
                     m.ema = ema_state(cs)
+                    m.c5 = [[c["t"] / 1000, c["c"]] for c in cs[-120:]]
                 except Exception:
                     m.levels_at = time.time() - 3000  # over 10 min opnieuw proberen
                 time.sleep(3)

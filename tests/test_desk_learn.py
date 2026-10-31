@@ -13,7 +13,7 @@ def _setup(tmp_path, monkeypatch):
 def _rows(n, signal, coin="BTC"):
     rnd = random.Random(1)
     for i in range(n):
-        f = [rnd.uniform(-1, 1) for _ in range(5)]
+        f = [rnd.uniform(-1, 1) for _ in range(len(desk_learn.FEATS))]
         z = signal * (2 * f[2] - f[0])          # orderboek voorspelt, koopdruk 3 min werkt tegen
         y = z + rnd.gauss(0, 1)
         desk_learn.record({"t": i, "coin": coin, "window": 900, "f": f, "s": 0, "p": 0.5, "y": y or 0.01})
@@ -43,3 +43,10 @@ def test_too_little_data(tmp_path, monkeypatch):
     _rows(100, 1.0, coin="xyz:TSLA")
     g = desk_learn.train(900)["groups"]["stock"]
     assert g == {"n": 100, "use": False}
+
+
+def test_old_rows_without_rsi_macd_are_skipped(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    for i in range(400):
+        desk_learn.record({"t": i, "coin": "BTC", "window": 900, "f": [0.1] * 5, "s": 0, "p": 0.5, "y": 1})
+    assert desk_learn.train(900)["n"] == 0

@@ -15,8 +15,8 @@ import numpy as np
 
 from .data import DATA_DIR
 
-FEATS = ("flow30", "flow10", "book", "bookDeep", "mom")
-NAMES = ("koopdruk 3 min", "koopdruk 30 s", "orderboek top 5", "orderboek top 20", "momentum")
+FEATS = ("flow30", "flow10", "book", "bookDeep", "mom", "rsi", "macd")
+NAMES = ("koopdruk 3 min", "koopdruk 30 s", "orderboek top 5", "orderboek top 20", "momentum", "RSI 14 (5m)", "MACD 12/26/9 (5m)")
 LEARN_FILE = DATA_DIR / "desk-learn.jsonl"
 TRADES_FILE = DATA_DIR / "desk-trades.jsonl"
 STATE_FILE = DATA_DIR / "desk-learn-state.json"
@@ -32,7 +32,7 @@ def group(coin: str) -> str:
 
 def fvec(f: dict) -> list[float]:
     return [f.get("flow30", 0.0), f.get("flow10", 0.0), f.get("book", 0.0), f.get("bookDeep", 0.0),
-            max(-1.0, min(1.0, f.get("mom", 0.0) / 2))]
+            max(-1.0, min(1.0, f.get("mom", 0.0) / 2)), f.get("rsi", 0.0), f.get("macd", 0.0)]
 
 
 def _append(path, row: dict) -> None:
@@ -96,7 +96,8 @@ def _design(rows: list[dict]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 def train(window: int) -> dict:
     """Train per groep op de vensters van deze lengte. Oudste 70% om te leren, nieuwste 30% om te toetsen."""
-    rows = [r for r in _read(LEARN_FILE) if r.get("window") == window and r.get("y") and r.get("f") and r.get("p") is not None]
+    rows = [r for r in _read(LEARN_FILE) if r.get("window") == window and r.get("y") and r.get("f") and r.get("p") is not None
+            and len(r["f"]) == len(FEATS)]  # vensters van vóór RSI/MACD hebben minder kenmerken
     rows.sort(key=lambda r: r["t"])
     res = {"window": window, "n": len(rows), "at": int(time.time() * 1000), "groups": {}}
     for g in ("crypto", "stock"):
@@ -125,7 +126,7 @@ def train(window: int) -> dict:
 def predict(window: int, coin: str, f: dict) -> float | None:
     """Kans dat de koers stijgt volgens het geleerde model, of None als het (nog) niet beter is dan het vaste."""
     g = STATE.get(str(window), {}).get("groups", {}).get(group(coin))
-    if not g or not g.get("use") or "w" not in g:
+    if not g or not g.get("use") or "w" not in g or len(g["w"]) != len(FEATS):
         return None
     z = sum(w * x for w, x in zip(g["w"], fvec(f))) + g["b"]
     return 1 / (1 + math.exp(-max(-30.0, min(30.0, z))))
