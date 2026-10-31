@@ -113,8 +113,11 @@
   .stats4 b { font: 700 17px var(--mono); display: block; }
   .stats4 span { font-size: 9px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
   canvas.fill { width: 100%; display: block; }
+  /* vaste CSS-hoogte, anders schaalt een canvas mee met de breedte en wordt hij op brede schermen metershoog */
+  #balChart { height: 150px; } #pnlBars { height: 50px; } #dist { height: 190px; } #spec { height: 230px; } #plasma { height: 50px; }
+  .spark canvas { height: 40px; }
   .tape { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 10px; }
-  #chart { height: 330px; }
+  #chart { height: 400px; }
   .book { font: 11px var(--mono); }
   .book div { display: grid; grid-template-columns: 1fr 1fr; position: relative; padding: 1px 4px; }
   .book div i { position: absolute; right: 0; top: 1px; bottom: 1px; opacity: .22; border-radius: 2px; }
@@ -369,7 +372,7 @@ const cs = chart.addCandlestickSeries({ upColor: '#16b364', downColor: '#ef3a5d'
 const vwapS = chart.addLineSeries({ color: '#2463eb', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
 const openLine = cs.createPriceLine({ price: 0, color: '#f08c00', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'open venster' });
 let candles = [];
-new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, height: 330 })).observe($('chart'));
+new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, height: 400 })).observe($('chart'));
 
 // ---------- trace / wire ----------
 function trace(from, to, act, text, val = '') {
@@ -539,7 +542,7 @@ function decide(f, m, now) {
   trace('prior', 'edge', 'PRIJS', `β ${fmt(m.pr.beta, 3)} · P(stijgt) ${cents(m.p)} · σ rest ${fmt(m.sd * 1e4, 1)}bp`);
   if (m.edge < S.edge) {
     trace('edge', null, 'PASS', `${m.side} ${cents(m.pDir)} < break-even ${cents(m.be)} + ${S.edge}¢`, sgn(m.edge, 1, '¢'));
-    if (el >= DECIDE_UNTIL - 15) { st.decided = true; wire('edge', `geen edge dit venster (${sgn(m.edge, 1, '¢')})`); }
+    if (el >= DECIDE_UNTIL - 15) { st.decided = true; st.passes.push({ t: now, edge: m.edge }); renderMarks(); wire('edge', `geen edge dit venster (${sgn(m.edge, 1, '¢')})`); }
     return;
   }
   trace('edge', 'kelly', 'EDGE', `${m.side} ${cents(m.pDir)} vs break-even ${cents(m.be)}`, sgn(m.edge, 1, '¢'));
@@ -552,11 +555,30 @@ function decide(f, m, now) {
   fill(ticket);
 }
 
+// ---------- signalen op de grafiek ----------
+// pijl = instap (long onder de candle, short erboven), bolletje = afgerekend met pnl, grijs vierkant = PASS-venster
+st.passes = [];
+function renderMarks() {
+  const mt = ms => Math.floor(ms / 60000) * 60, out = [];
+  const entry = (opened, side, live) => out.push({ time: mt(opened), position: side === 'long' ? 'belowBar' : 'aboveBar',
+    color: side === 'long' ? '#16b364' : '#ef3a5d', shape: side === 'long' ? 'arrowUp' : 'arrowDown', text: (live ? 'LIVE ' : '') + side.toUpperCase() });
+  const exit = h => out.push({ time: mt(h.t), position: 'inBar', color: h.pnl >= 0 ? '#16b364' : '#ef3a5d', shape: 'circle', text: sgn(h.pnl, 2) });
+  for (const h of book().hist) { if (h.opened) entry(h.opened, h.side, false); exit(h); }
+  if (st.ticket) entry(st.ticket.opened, st.ticket.side, false);
+  if (st.auto && st.auto.history) for (const h of st.auto.history) if (h.coin === st.coin) { if (h.opened) entry(h.opened, h.side, true); exit(h); }
+  const sm = st.auto && st.auto.markets && st.auto.markets[st.coin];
+  if (sm && sm.ticket) entry(sm.ticket.opened * 1000, sm.ticket.side, true);
+  for (const p of st.passes) out.push({ time: mt(p.t), position: 'aboveBar', color: '#b8bfcc', shape: 'square', text: 'PASS' });
+  const first = candles.length ? candles[0].t / 1000 : 0;
+  cs.setMarkers(out.filter(m => m.time >= first).sort((a, b) => a.time - b.time));
+}
+
 function fill(t) {
   const slip = 1e-4 * (t.side === 'long' ? 1 : -1);
   t.entry = t.entry * (1 + slip); st.ticket = t;
   trace('taker', 'closer', 'TAKE', `${t.live ? 'LIVE' : 'papier'} ${t.side} ${usd(t.notional)} @ ${fmt(t.entry, pxD())}`);
   wire('taker', `${t.side} ${t.coin} ${usd(t.notional)} @ ${fmt(t.entry, pxD())}`, sgn(t.edge, 1, '¢'));
+  renderMarks();
 }
 
 function settle(now) {
@@ -566,11 +588,12 @@ function settle(now) {
   const pnl = t.notional * ret - t.notional * 2 * S.fee / 1e4;
   const bk = book();
   if (!t.live) { bk.bal += pnl; bk.curve.push([now, bk.bal]); if (bk.curve.length > 3000) bk.curve.shift(); }
-  bk.hist.push({ t: now, side: t.side, entry: t.entry, exit, notional: t.notional, pnl, edge: t.edge, live: t.live });
+  bk.hist.push({ t: now, opened: t.opened, side: t.side, entry: t.entry, exit, notional: t.notional, pnl, edge: t.edge, live: t.live });
   if (bk.hist.length > 3000) bk.hist.shift();
   saveBook(); st.ticket = null;
   trace('closer', null, 'AFREK', `${t.side} ${fmt(t.entry, pxD())} → ${fmt(exit, pxD())}`, `<span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 2)}</span>`);
   wire('closer', `afgerekend ${t.side} ${t.coin}`, sgn(pnl, 2));
+  renderMarks();
 }
 
 // ---------- live: de zwerm op de server ----------
@@ -592,7 +615,8 @@ async function pollAuto() {
       trace(ag, null, t.act, `<b style="color:var(--down)">LIVE</b> ${t.text}`, t.val);
       if (['TAKE', 'AFREK', 'STOP', 'AAN', 'UIT'].includes(t.act)) wire(ag, 'live: ' + t.text, t.val || null);
     }
-    st.autoSeq = a.seq; st.auto = a;
+    const changed = a.trace.some(t => ['TAKE', 'AFREK'].includes(t.act));
+    st.autoSeq = a.seq; st.auto = a; if (changed) renderMarks();
   } catch (e) { st.auto = null; }
   renderAuto();
 }
@@ -839,7 +863,8 @@ async function setCoin(c) {
   document.querySelectorAll('#coinSeg button').forEach(b => b.classList.toggle('on', b.dataset.c === c));
   $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
   Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
-  stopSim(); await loadHistory(); connect(); drawBalance();
+  st.passes = [];
+  stopSim(); await loadHistory(); connect(); drawBalance(); renderMarks();
 
 }
 $('coinSeg').onclick = e => e.target.dataset.c && e.target.dataset.c !== st.coin && setCoin(e.target.dataset.c);

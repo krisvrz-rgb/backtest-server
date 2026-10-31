@@ -261,7 +261,7 @@ class Swarm:
             desk.do_close(cfg, t["coin"], by="zwerm")
             sign = 1 if t["side"] == "long" else -1
             pnl = t["usd"] * sign * (m.px - t["entry"]) / t["entry"] - t["usd"] * 2 * desk.num(cfg, "DESK_FEE_BPS", 4.5) / 1e4
-            self.history.append({"t": int(time.time() * 1000), "coin": t["coin"], "side": t["side"], "entry": t["entry"],
+            self.history.append({"t": int(time.time() * 1000), "opened": int(t["opened"] * 1000), "coin": t["coin"], "side": t["side"], "entry": t["entry"],
                                  "exit": m.px, "usd": t["usd"], "pnl": round(pnl, 4), "edge": round(t["edge"], 2)})
             self.log("closer", "AFREK", f"{t['side']} {t['entry']:,.2f} → {m.px:,.2f} (geschat)", f"{pnl:+.2f}", m.coin)
             self.save()
