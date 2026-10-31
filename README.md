@@ -98,7 +98,7 @@ Keltner, Donchian, `crosses_above`/`crosses_below`, `expr[n]` (n bars terug) en 
 ## Swarm Desk (`/desk`)
 
 Een live dashboard waarop zes agents (Spotter, Prior, Edge, Kelly, Taker, Closer) per venster van 5 minuten
-beslissen of ze BTC of ETH long of short gaan op Hyperliquid. Koersen, trades en orderboek komen rechtstreeks
+beslissen of ze BTC, ETH of SOL long of short gaan op Hyperliquid. Koersen, trades en orderboek komen rechtstreeks
 van de openbare Hyperliquid-websocket; zonder verbinding valt de pagina terug op een gesimuleerde koers.
 
 - **Spotter** combineert koopdruk (trades), orderboek en momentum tot een score tussen -1 en 1.
@@ -130,7 +130,7 @@ Standaard is alles papier (saldo per coin in de browser). Echt geld loopt via de
 
 Met **Bevestigen: AAN** wacht elke nieuwe positie 20 seconden op jouw klik; met **UIT** handelt de zwerm zelf.
 Posities gaan altijd dicht aan het einde van het venster (reduce-only). Na 3 mislukte orders op rij of bij het
-raken van de daglimiet stopt hij. De kill switch zet de zwerm uit en sluit BTC en ETH.
+raken van de daglimiet stopt hij. De kill switch zet de zwerm uit en sluit BTC, ETH en SOL.
 
 **Privacy.** Hyperliquid vraagt geen KYC, maar alles staat openbaar on-chain onder je adres. Wil je de
 zwerm los van jezelf: gebruik een nieuwe wallet die je nergens anders voor gebruikt, of minstens een sub-account.

@@ -33,7 +33,7 @@ from .data import DATA_DIR
 HL_INFO = "https://api.hyperliquid.xyz/info"
 ENV_FILE = DATA_DIR / "desk.env"
 LOG_FILE = DATA_DIR / "desk-orders.jsonl"
-COINS = ("BTC", "ETH")
+COINS = ("BTC", "ETH", "SOL")
 _lock = threading.Lock()
 
 

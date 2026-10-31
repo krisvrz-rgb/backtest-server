@@ -152,7 +152,7 @@
   <div class="brand"><div class="logo"><i></i><i></i></div>
     <div><b>SWARM DESK</b><small>zes agents · één boek · <span id="coinLbl">BTC</span> 5m · hyperliquid</small></div></div>
   <div class="nav"><a href="/">Overzicht</a><a href="/tool">Backtest</a><a href="/watchlist">Watchlist</a><a href="/aanraders">Aanraders</a></div>
-  <div class="seg" id="coinSeg"><button data-c="BTC" class="on">BTC</button><button data-c="ETH">ETH</button></div>
+  <div class="seg" id="coinSeg"><button data-c="BTC" class="on">BTC</button><button data-c="ETH">ETH</button><button data-c="SOL">SOL</button></div>
   <div class="stat"><b class="num" id="hdSpot">–</b><span>spot · hyperliquid</span></div>
   <div class="stat"><b class="num" id="hdPnl">–</b><span>swarm pnl</span></div>
   <div class="stat"><b class="num" id="hdTickets">0</b><span>tickets</span></div>
@@ -332,6 +332,8 @@ const usd = (v, d = 0) => (v < 0 ? '-$' : '$') + fmt(Math.abs(v), d);
 const sgn = (v, d = 2, suf = '') => (v >= 0 ? '+' : '') + fmt(v, d) + suf;
 const cents = p => (p * 100).toFixed(1) + '¢';
 const pxD = () => st.coin === 'BTC' ? 0 : 2;
+const SIM_PX = { BTC: 81500, ETH: 3900, SOL: 190 };
+const chainCoin = () => st.coin === 'ETH' ? 'BTC' : 'ETH';  // CHAIN: beweegt de rest van de markt mee?
 const hhmmss = t => new Date(t).toISOString().slice(11, 19);
 function erf(x) { const t = 1 / (1 + .3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - .284496736) * t + .254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; }
 const Phi = z => .5 * (1 + erf(z / Math.SQRT2));
@@ -398,7 +400,7 @@ function connect() {
     if (m.channel === 'trades') { wsOk = true; stopSim(); for (const t of m.data) if (t.coin === st.coin) onTrade(+t.px, +t.sz, t.side === 'B', t.time); }
     else if (m.channel === 'l2Book' && m.data.coin === st.coin) st.bookL = m.data.levels.map(side => side.map(l => [+l.px, +l.sz]));
     else if (m.channel === 'candle' && m.data.s === st.coin) onCandle({ t: m.data.t, o: +m.data.o, h: +m.data.h, l: +m.data.l, c: +m.data.c, v: +m.data.v });
-    else if (m.channel === 'allMids') { const e = +m.data.mids.ETH, b = +m.data.mids.BTC; st.eth = st.coin === 'BTC' ? e : b; }
+    else if (m.channel === 'allMids') { st.eth = +m.data.mids[chainCoin()]; }
   };
   ws.onclose = () => setTimeout(connect, 3000);
   setTimeout(() => { if (!wsOk) startSim(); }, 7000);
@@ -422,15 +424,15 @@ function onTrade(px, sz, buy, t) {
 function startSim() {
   if (st.sim) return; st.sim = true; $('feedBadge').style.display = '';
   $('fFeed').textContent = 'geen verbinding met Hyperliquid · gesimuleerde koers';
-  if (!st.px) st.px = st.coin === 'BTC' ? 81500 : 3900;
-  if (!st.eth) st.eth = st.coin === 'BTC' ? 3900 : 81500;
+  if (!st.px) st.px = SIM_PX[st.coin];
+  if (!st.eth) st.eth = SIM_PX[chainCoin()];
   let drift = 0;
   simTimer = setInterval(() => {
     drift = .97 * drift + (Math.random() - .5) * 2e-5;
     const n = 1 + Math.floor(Math.random() * 6);
     for (let i = 0; i < n; i++) {
       const r = drift / n + (Math.random() - .5) * 2.4e-4 / Math.sqrt(n), px = st.px * Math.exp(r);
-      onTrade(px, Math.random() ** 3 * (st.coin === 'BTC' ? 2 : 30), r > 0 || Math.random() < .3, Date.now());
+      onTrade(px, Math.random() ** 3 * (st.coin === 'BTC' ? 2 : st.coin === 'ETH' ? 30 : 600), r > 0 || Math.random() < .3, Date.now());
     }
     st.eth *= Math.exp(drift / 2 + (Math.random() - .5) * 2e-4);
     const step = st.px * 1e-5, bids = [], asks = [];
@@ -447,7 +449,7 @@ async function loadHistory() {
     if (!r.ok) throw new Error(await r.text());
     candles = await r.json();
   } catch (e) {
-    let p = st.coin === 'BTC' ? 81500 : 3900, t = Math.floor(Date.now() / 60000) * 60000 - 240 * 60000;
+    let p = SIM_PX[st.coin], t = Math.floor(Date.now() / 60000) * 60000 - 240 * 60000;
     for (let i = 0; i < 240; i++) { const o = p; p *= Math.exp((Math.random() - .5) * .003); candles.push({ t: t + i * 60000, o, h: Math.max(o, p) * 1.0004, l: Math.min(o, p) * .9996, c: p, v: Math.random() * 50 }); }
   }
   cs.setData(candles.map(c => ({ time: c.t / 1000, open: c.o, high: c.h, low: c.l, close: c.c })));
@@ -827,6 +829,9 @@ async function setCoin(c) {
   $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
   Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
   stopSim(); await loadHistory(); connect(); drawBalance();
+  if (st.auto && st.auto.allowed && S.token && st.auto.coin !== c) {  // de server-zwerm volgt de gekozen coin
+    try { await autoPost('/api/desk/auto', { coin: c }); } catch (e) { trace('prior', null, 'FOUT', 'zwerm wisselt niet van coin: ' + e.message); }
+  }
 }
 $('coinSeg').onclick = e => e.target.dataset.c && e.target.dataset.c !== st.coin && setCoin(e.target.dataset.c);
 $('apYes').onclick = () => answer(true); $('apNo').onclick = () => answer(false);
