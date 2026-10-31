@@ -701,13 +701,18 @@ function drawRing(time) {
     x.fillText(a.n, px, py + r + 14);
   });
   // ticket dat over de ring rijdt
-  const rt = srvMarket() && srvMarket().ticket;
-  if (rt) {
-    const el = Date.now() / 1000 - rt.opened, ang = -Math.PI / 2 + el / 20 * Math.PI * 2;
+  // elke open trade van de gedeelde portefeuille rijdt als cirkel over de ring, met de ticker erbij
+  const open = (st.auto && st.auto.portfolio && st.auto.portfolio.open) || [];
+  open.forEach((rt, i) => {
+    const ang = -Math.PI / 2 + (i / Math.max(1, open.length) + tm / 40) * Math.PI * 2;
     const px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang), col = rt.side === 'long' ? '#16b364' : '#ef3a5d';
-    x.beginPath(); x.arc(px, py, 9, 0, 7); x.fillStyle = col; x.globalAlpha = rt.state === 'entering' ? .45 : 1; x.fill(); x.globalAlpha = 1;
-    x.font = '700 10px ui-monospace, monospace'; x.fillText(rt.side.toUpperCase(), px, py - 14);
-  }
+    const focus = rt.coin === st.coin, r = focus ? 13 : 10;
+    x.globalAlpha = rt.state === 'entering' ? .45 : 1;
+    x.beginPath(); x.arc(px, py, r + 3, 0, 7); x.fillStyle = tColor(rt.coin); x.fill();
+    x.beginPath(); x.arc(px, py, r, 0, 7); x.fillStyle = col; x.fill(); x.globalAlpha = 1;
+    x.font = '700 10px ui-monospace, monospace'; x.textAlign = 'center'; x.fillStyle = '#15171c';
+    x.fillText(`${short(rt.coin)} ${rt.side === 'long' ? '▲' : '▼'}${rt.state === 'entering' ? ' limiet' : ' ' + sgn(rt.upnl, 2)}`, px, py - r - 7);
+  });
   // kern
   const pr = 48 + (st.feat.score ? Math.abs(st.feat.score) * 14 : 0) + Math.sin(tm * 2) * 2;
   const g = x.createRadialGradient(cx, cy, pr * .3, cx, cy, pr * 1.8); g.addColorStop(0, 'rgba(36,99,235,.18)'); g.addColorStop(1, 'rgba(36,99,235,0)');
@@ -951,7 +956,7 @@ function renderAll() {
     + (allState.filter.size ? '<button style="--c:#8a92a3" data-c="">alles tonen</button>' : '');
   $('allCards').innerHTML = coins.map(c => {
     const m = a.markets[c] || {}, mo = m.model || {}, tk = m.ticket, h = a.history.filter(x => x.coin === c), pnl = h.reduce((s, x) => s + x.pnl, 0);
-    return `<div class="card" style="--c:${tColor(c)}"><div class="kv"><b class="t">${short(c)}</b><span>${m.px ? fmt(m.px, m.px >= 100 ? 2 : 4) : '–'}</span></div>
+    return `<div class="card" style="--c:${tColor(c)}"><div class="kv"><b class="t"><span title="${tk ? tk.side + ' ' + tk.state : 'geen trade'}" style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;background:${tk ? (tk.side === 'long' ? '#16b364' : '#ef3a5d') : '#e6e9f0'};box-shadow:${tk ? '0 0 0 3px ' + tColor(c) + '55' : 'none'}"></span>${short(c)}</b><span>${m.px ? fmt(m.px, m.px >= 100 ? 2 : 4) : '–'}</span></div>
       <div class="kv"><span>score</span><span>${m.score == null ? '–' : sgn(m.score, 2)}</span></div>
       <div class="kv"><span>edge</span><span class="${(mo.edge || 0) >= 0 ? 'up' : 'down'}">${mo.edge == null ? '–' : sgn(mo.edge, 1, '¢')}</span></div>
       <div class="kv"><span>Prior</span><span>${m.prior && m.prior.n ? `β ${fmt(m.prior.beta, 2)} · ${m.prior.hit == null ? '–' : fmt(m.prior.hit * 100, 0) + '%'} · n ${m.prior.n}` : 'leert…'}</span></div>
