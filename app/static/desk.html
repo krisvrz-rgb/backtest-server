@@ -218,6 +218,15 @@
   .layers { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; font: 600 10px var(--mono); }
   .layers button { border: 1px solid var(--border); background: var(--panel); color: var(--muted); border-radius: 10px; padding: 2px 8px; cursor: pointer; font: inherit; }
   .layers button.on { color: #04050b; background: var(--c); border-color: var(--c); box-shadow: 0 0 8px -2px var(--c); }
+  .tape.nobook { grid-template-columns: 1fr; } .tape.nobook #book { display: none; }
+  .depth { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 2; }
+  .minis { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px; margin-top: 10px; }
+  .minis:empty { display: none; }
+  .mc { border: 1px solid var(--border); border-radius: 8px; padding: 6px 6px 2px; background: var(--panel-2); cursor: pointer; min-width: 0; }
+  .mc.sel { border-color: var(--accent); }
+  .mc .mh { display: flex; gap: 8px; align-items: baseline; font: 600 12px var(--mono); margin-bottom: 4px; white-space: nowrap; overflow: hidden; }
+  .mc .mh .r { margin-left: auto; }
+  .mc .mw { position: relative; height: 190px; } .mc .mw > div { position: absolute; inset: 0; z-index: 1; } .mc .mw > canvas { z-index: 2; }
   .chartwrap { position: relative; } .chartwrap #heat { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 0; } .chartwrap #chart { position: relative; z-index: 1; }
   .pfo .bar{height:6px;border-radius:3px;background:var(--panel-2);overflow:hidden}.pfo .bar i{display:block;height:100%}
 </style>
@@ -343,10 +352,11 @@
     <section class="panel">
       <div class="ph"><h2>The Tape</h2><span class="sub"><span id="tapeCoin">BTC</span> 1m · vwap · live orderboek</span>
         <span class="right" id="tapeStats">–</span></div>
-      <div class="tape">
+      <div class="tape nobook">
         <div><div class="big num" id="tapePx" style="font:700 26px var(--mono)">–</div>
           <div class="layers" id="layers" title="Lagen op de grafiek aan of uit"></div>
-          <div class="chartwrap"><canvas id="heat"></canvas><div id="chart"></div></div></div>
+          <div class="chartwrap"><canvas id="heat"></canvas><div id="chart"></div><canvas id="featc" class="depth"></canvas><canvas id="depth" class="depth"></canvas></div>
+          <div class="minis" id="minis" title="Eén grafiek per open trade · klik om groot te openen"></div></div>
         <div class="book" id="book"></div>
       </div>
     </section>
@@ -530,7 +540,7 @@ const cs = chart.addCandlestickSeries({ upColor: '#16b364', downColor: '#ef3a5d'
     for (const v of [t && t.sl, t && t.tp, st.drag && st.drag.price]) if (v) { r.priceRange.minValue = Math.min(r.priceRange.minValue, v); r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v); }
     return r;
   } });
-const vwapS = chart.addLineSeries({ color: '#2463eb', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+const vwapS = chart.addLineSeries({ color: '#2463eb', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'VWAP' });
 const openLine = cs.createPriceLine({ price: 0, color: '#f08c00', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'open venster' });
 let candles = [];
 // SL/TP-lijn verslepen: muis binnen 6 px van de lijn, slepen, loslaten = naar de server
@@ -562,7 +572,7 @@ addEventListener('mouseup', async () => {
   catch (err) { alert(err.message); }
   await pollAuto(); st.drag = null;
 });
-chart.timeScale().subscribeVisibleLogicalRangeChange(() => drawHeat());
+chart.timeScale().subscribeVisibleLogicalRangeChange(() => { drawHeat(); drawDepthMain(); drawFeats(); });
 new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth, height: 400 })).observe($('chart'));
 
 // ---------- lagen op de grafiek: 12 kenmerken + liquiditeitsheatmap (zoals Bookmap) ----------
@@ -574,29 +584,39 @@ function renderLayers() {
   $('layers').innerHTML = `<button data-l="heat" style="--c:#f5a524" class="${layerOn.has('heat') ? 'on' : ''}" title="Waar staan veel kopers en verkopers in het orderboek, door de tijd: hoe feller, hoe meer volume">heatmap boek</button>`
     + FEATS.map((f, j) => `<button data-l="${f}" style="--c:${FCOL[j]}" class="${layerOn.has(f) ? 'on' : ''}" title="${FEAT_INFO[j]}">${f}</button>`).join('');
 }
-function syncFeatSeries() {
-  FEATS.forEach((f, j) => {
-    if (layerOn.has(f) && !featSeries[f]) {
-      featSeries[f] = chart.addLineSeries({ color: FCOL[j], lineWidth: 1.5, priceScaleId: 'feat', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-        autoscaleInfoProvider: () => ({ priceRange: { minValue: -1, maxValue: 1 } }) });
-      featSeries[f].setData(Object.entries(st.featMin).map(([t, v]) => ({ time: +t, value: v[j] })).sort((a, b) => a.time - b.time));
-    } else if (!layerOn.has(f) && featSeries[f]) { chart.removeSeries(featSeries[f]); delete featSeries[f]; }
+// de kenmerken als lijnen onderin de grafiek, elke 2 s een punt (-1 onderaan, +1 bovenaan de strook)
+st.featPts = [];
+function syncFeatSeries() { drawFeats(); }
+function drawFeats() {
+  const c = $('featc'), el = $('chart'); c.style.width = el.clientWidth + 'px'; c.style.height = el.clientHeight + 'px';
+  const [x, w, h] = canvasCtx(c), on = FEATS.map((f, j) => layerOn.has(f) ? j : -1).filter(j => j >= 0);
+  if (!on.length) return;
+  const ts = chart.timeScale(), bs = ts.options().barSpacing, right = w - (chart.priceScale('right').width() || 0);
+  const top = h * .68, bot = h - 30, mid = (top + bot) / 2, yOf = v => mid - clamp(v, -1, 1) * (bot - top) / 2;
+  x.fillStyle = TH.dark ? 'rgba(10,14,30,.55)' : 'rgba(255,255,255,.6)'; x.fillRect(0, top - 4, right, bot - top + 8);
+  x.strokeStyle = TH.dark ? '#262c48' : '#d8dce6'; x.setLineDash([3, 3]); x.beginPath(); x.moveTo(0, mid); x.lineTo(right, mid); x.stroke(); x.setLineDash([]);
+  const xs = st.featPts.map(([t]) => { const m = Math.floor(t / 60) * 60, cx = ts.timeToCoordinate(m); return cx == null ? null : cx - bs / 2 + (t - m) / 60 * bs; });
+  on.forEach((j, k) => {
+    x.strokeStyle = FCOL[j]; x.lineWidth = 1.5; x.beginPath(); let started = false, lastX = 0, lastY = 0;
+    st.featPts.forEach(([, v], i) => { const px = xs[i]; if (px == null || px < 0 || px > right) return;
+      const py = yOf(v[j]); started ? x.lineTo(px, py) : x.moveTo(px, py); started = true; lastX = px; lastY = py; });
+    x.stroke();
+    if (started) { x.fillStyle = FCOL[j]; x.font = '600 10px ui-monospace, monospace'; x.fillText(FEATS[j], Math.min(lastX + 4, right - 60), lastY - 3 + (k % 2) * 10); }
   });
-  chart.priceScale('feat').applyOptions({ scaleMargins: { top: .72, bottom: .02 }, visible: false });
+  if (!st.featPts.length) { x.fillStyle = TH.muted; x.font = '11px ui-monospace, monospace'; x.fillText('kenmerken verzamelen… (vanaf het openen van de pagina, elke 2 s)', 8, mid - 6); }
 }
 $('layers').onclick = e => { const l = e.target.dataset.l; if (!l) return;
   layerOn.has(l) ? layerOn.delete(l) : layerOn.add(l); localStorage.setItem('desk.layers', JSON.stringify([...layerOn])); renderLayers(); syncFeatSeries(); drawHeat(); };
 function pushFeatures(vals, now) {
-  const m = Math.floor(now / 60000) * 60; st.featMin[m] = vals;
-  const keys = Object.keys(st.featMin); if (keys.length > 400) delete st.featMin[keys[0]];
-  FEATS.forEach((f, j) => featSeries[f] && featSeries[f].update({ time: m, value: vals[j] }));
+  st.featPts.push([now / 1000, vals]); if (st.featPts.length > 3600) st.featPts.shift();
+  drawFeats();
 }
 
 // heatmap: per minuut het grootste volume per prijsbucket in het (gegroepeerde) orderboek
 st.heat = {}; st.heatStep = 0;
 function sigFigs(px) { for (let n = 5; n >= 2; n--) { if (Math.pow(10, Math.floor(Math.log10(px)) - n + 1) / px >= 4e-4) return n; } return 2; }
 async function pollHeat() {
-  if (!st.px || !layerOn.has('heat')) return;
+  if (!st.px) return;
   let levels = null;
   if (!st.sim) {
     try {
@@ -607,6 +627,8 @@ async function pollHeat() {
   }
   if (!levels && st.bookL) levels = st.bookL;   // simulatie of geen verbinding: het fijne boek
   if (!levels) return;
+  st.depth = levels; drawDepthMain();
+  if (!layerOn.has('heat')) return;
   const all = levels[0].concat(levels[1]); if (all.length < 2) return;
   const ps = all.map(l => l[0]).sort((a, b) => a - b); let step = Infinity;
   for (let i = 1; i < ps.length; i++) if (ps[i] - ps[i - 1] > 1e-12) step = Math.min(step, ps[i] - ps[i - 1]);
@@ -639,6 +661,99 @@ function drawHeat() {
       x.fillRect(cx - bs / 2, Math.min(y1, y2), Math.max(1, bs), Math.max(1.5, Math.abs(y2 - y1)));
     }
   }
+}
+
+// orderboek als balkjes tegen de prijsas: hoe langer de balk, hoe meer volume op dat prijsniveau (rood = verkopers, groen = kopers)
+function drawDepth(c, el, ch, ser, levels) {
+  c.style.width = el.clientWidth + 'px'; c.style.height = el.clientHeight + 'px';
+  const [x, w, h] = canvasCtx(c); if (!levels) return;
+  const axis = ch.priceScale('right').width() || 0, right = w - axis, maxW = Math.min(90, right * .2);
+  const rows = []; for (const [i, side] of levels.entries()) for (const [p, sz] of side.slice(0, 20)) rows.push([p, sz * p, i]);
+  if (!rows.length) return;
+  const ps = rows.map(r => r[0]).sort((a, b) => a - b); let step = Infinity;
+  for (let i = 1; i < ps.length; i++) if (ps[i] - ps[i - 1] > 1e-12) step = Math.min(step, ps[i] - ps[i - 1]);
+  const mx = Math.max(...rows.map(r => r[1]));
+  for (const [p, v, i] of rows) {
+    const y = ser.priceToCoordinate(p); if (y == null || y < 0 || y > h) continue;
+    const dy = isFinite(step) ? Math.abs(ser.priceToCoordinate(p - step / 2) - ser.priceToCoordinate(p + step / 2)) : 3;
+    const bh = clamp(dy - 1, 1.5, 14), bw = Math.max(2, Math.sqrt(v / mx) * maxW);
+    x.fillStyle = i ? 'rgba(239,58,93,.55)' : 'rgba(22,179,100,.55)';
+    x.fillRect(right - bw, y - bh / 2, bw, bh);
+  }
+}
+function drawDepthMain() { drawDepth($('depth'), $('chart'), chart, cs, st.depth || st.bookL); }
+
+// ---------- kleine grafieken: één per open trade ----------
+const minis = {};
+const pxPrec = p => p >= 1000 ? 1 : p >= 10 ? 2 : p >= 1 ? 4 : p >= .01 ? 5 : 7;
+function miniFor(t) {
+  let m = minis[t.coin]; if (m) return m;
+  const box = document.createElement('div'); box.className = 'mc'; box.dataset.c = t.coin;
+  box.innerHTML = `<div class="mh"></div><div class="mw"><div></div><canvas class="depth"></canvas></div>`;
+  $('minis').appendChild(box);
+  const host = box.querySelector('.mw > div');
+  const ch = LightweightCharts.createChart(host, { autoSize: true,
+    layout: { background: { color: 'transparent' }, textColor: TH.muted, fontFamily: 'ui-monospace, monospace', fontSize: 10 },
+    grid: { vertLines: { visible: false }, horzLines: { color: TH.dark ? '#10142a' : '#eef0f4' } },
+    rightPriceScale: { borderVisible: false }, timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+    handleScroll: false, handleScale: false, crosshair: { mode: 0 } });
+  m = minis[t.coin] = { box, host, ch, lines: {}, candles: [], loaded: 0, book: null, bookAt: 0, t };
+  m.ser = ch.addCandlestickSeries({ upColor: '#16b364', downColor: '#ef3a5d', borderVisible: false, wickUpColor: '#16b364', wickDownColor: '#ef3a5d',
+    autoscaleInfoProvider: orig => { const r = orig(); if (!r || !r.priceRange) return r;
+      for (const v of [m.t.sl, m.t.tp, m.t.entry || m.t.limit]) if (v) { r.priceRange.minValue = Math.min(r.priceRange.minValue, v); r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v); }
+      return r; } });
+  box.onclick = () => { if (t.coin !== st.coin) setCoin(t.coin); $('chart').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+  return m;
+}
+async function miniLoad(m) {
+  m.loaded = Date.now();
+  try {
+    const r = await fetch(`/api/desk/candles?coin=${encodeURIComponent(m.t.coin)}&minutes=90`); if (!r.ok) return;
+    m.candles = (await r.json()).map(c => ({ time: c.t / 1000, open: c.o, high: c.h, low: c.l, close: c.c }));
+    const lc = m.candles.length ? m.candles[m.candles.length - 1].close : m.t.px || 1, pr = pxPrec(lc);
+    m.ser.applyOptions({ priceFormat: { type: 'price', precision: pr, minMove: Math.pow(10, -pr) } });
+    m.ser.setData(m.candles); m.ch.timeScale().fitContent();
+  } catch (e) {}
+}
+async function miniBook(m) {
+  m.bookAt = Date.now();
+  try {
+    const px = m.t.px || m.t.entry; if (!px) return;
+    const r = await fetch('https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'l2Book', coin: m.t.coin, nSigFigs: sigFigs(px) }) });
+    const j = await r.json(); if (j && j.levels) m.book = j.levels.map(side => side.map(l => [+l.px, +l.sz]));
+  } catch (e) {}
+}
+function miniLine(m, k, opt) {
+  if (opt && opt.price) { if (m.lines[k]) m.lines[k].applyOptions(opt); else m.lines[k] = m.ser.createPriceLine(opt); }
+  else if (m.lines[k]) { m.ser.removePriceLine(m.lines[k]); delete m.lines[k]; }
+}
+function renderMinis() {
+  const open = (st.auto && st.auto.portfolio && st.auto.portfolio.open) || [], now = Date.now(), seen = new Set();
+  open.forEach((t, i) => {
+    seen.add(t.coin); const m = miniFor(t); m.t = t; m.box.style.order = i; m.box.classList.toggle('sel', t.coin === st.coin);
+    if (now - m.loaded > 60000) miniLoad(m);
+    if (now - m.bookAt > 5000 + i * 300) miniBook(m);
+    const px = t.px, last = m.candles[m.candles.length - 1];
+    if (px && last) {  // laatste minuut live bijwerken met de prijs van de server
+      const tm = Math.floor(now / 60000) * 60;
+      const c = tm > last.time ? { time: tm, open: last.close, high: Math.max(last.close, px), low: Math.min(last.close, px), close: px }
+        : { ...last, high: Math.max(last.high, px), low: Math.min(last.low, px), close: px };
+      if (tm > last.time) m.candles.push(c); else m.candles[m.candles.length - 1] = c; m.ser.update(c);
+    }
+    const e = t.entry, long = t.side === 'long', col = long ? '#16b364' : '#ef3a5d';
+    const pnlAt = v => t.usd * (v - e) / e * (long ? 1 : -1), margin = t.usd / t.lev;
+    miniLine(m, 'entry', { price: e || t.limit, color: col, lineWidth: 2, lineStyle: e ? 0 : 2, axisLabelVisible: true,
+      title: e ? `${sgn(t.upnl, 2)} (${sgn(t.upnl / margin * 100, 1)}%)` : 'limiet' });
+    miniLine(m, 'sl', e && t.sl && { price: t.sl, color: '#ff4d6d', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `SL ${sgn(pnlAt(t.sl), 2)}` });
+    miniLine(m, 'tp', e && t.tp && { price: t.tp, color: '#2fbf4a', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `TP ${sgn(pnlAt(t.tp), 2)}` });
+    const c = tradeConf(t);
+    m.box.querySelector('.mh').innerHTML = `<b style="color:${tColor(t.coin)}">${short(t.coin)}</b><span class="${long ? 'up' : 'down'}">${long ? '▲ long' : '▼ short'} ${t.lev}x</span>
+      <span class="muted">${usd(t.usd)}</span>${c == null ? '' : `<span class="muted" title="huidig vertrouwen van het model">${fmt(c * 100, 0)}%</span>`}
+      <span class="r ${t.state === 'entering' ? 'muted' : t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? 'limiet wacht' : sgn(t.upnl, 2)}</span>`;
+    drawDepth(m.box.querySelector('canvas.depth'), m.host, m.ch, m.ser, m.book);
+  });
+  for (const k of Object.keys(minis)) if (!seen.has(k)) { minis[k].ch.remove(); minis[k].box.remove(); delete minis[k]; }
 }
 
 // ---------- trace / wire ----------
@@ -732,6 +847,7 @@ async function loadHistory() {
   cs.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: Math.pow(10, -prec) } });
   vwapS.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: Math.pow(10, -prec) } });
   cs.setData(candles.map(c => ({ time: c.t / 1000, open: c.o, high: c.h, low: c.l, close: c.c })));
+  chart.timeScale().setVisibleLogicalRange({ from: candles.length - 90, to: candles.length + 3 });  // laatste anderhalf uur, zodat de kenmerklijnen leesbaar zijn
   const last = candles[candles.length - 1]; if (last && !st.px) st.px = last.c;
   // σ per seconde uit de 1m-candles
   const rs = []; for (let i = 1; i < candles.length; i++) rs.push(Math.log(candles[i].c / candles[i - 1].c));
@@ -740,8 +856,9 @@ async function loadHistory() {
   // vwap van de sessie (sinds 00:00 UTC) uit de candles
   const day = Math.floor(Date.now() / 864e5) * 864e5;
   st.vwapPV = 0; st.vwapV = 0;
-  for (const c of candles) if (c.t >= day) { const tp = (c.h + c.l + c.c) / 3; st.vwapPV += tp * c.v; st.vwapV += c.v; }
-  vwapS.setData([]);
+  const vw = [];  // volume-gewogen gemiddelde prijs sinds 00:00 UTC, als lijn vanaf het begin van de dag
+  for (const c of candles) if (c.t >= day) { const tp = (c.h + c.l + c.c) / 3; st.vwapPV += tp * c.v; st.vwapV += c.v; if (st.vwapV) vw.push({ time: c.t / 1000, value: st.vwapPV / st.vwapV }); }
+  vwapS.setData(vw);
 }
 
 // ---------- kenmerken ----------
@@ -1177,7 +1294,7 @@ function tick() {
   $('tapeStats').textContent = `${fmt(f.tps, 1)} TR/S · VWAP ${fmt(vw, d)} · FLOW ${sgn(f.flow30, 2)}`;
   drawBook(); drawDist(m);
 
-  drawLevels();
+  drawLevels(); drawDepthMain(); renderMinis();
   const pfT = st.auto && st.auto.portfolio && st.auto.portfolio.open.find(o => o.coin === st.coin);
   if (now % 2000 < 1000) $('why').innerHTML = explain(pfT, srvMarket());
 
@@ -1226,10 +1343,9 @@ async function setCoin(c) {
   st.coin = c; localStorage.setItem('desk.coin', c);
   renderCoinSeg();
   $('coinLbl').textContent = c; $('tapeCoin').textContent = c; $('ringCoin').textContent = c + ' · hyperliquid perp';
-  Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
+  Object.assign(st, { px: 0, eth: 0, trades: [], bookL: null, depth: null, winStart: 0, open0: 0, lastPx: 0, series: {}, specCols: [], sample: null, decided: false });
   for (const key of ['entryLine', 'slLine', 'tpLine']) if (st[key]) { cs.removePriceLine(st[key]); st[key] = null; }
-  st.passes = {}; st.heat = {}; st.heatStep = 0; st.featMin = {};
-  for (const f of Object.keys(featSeries)) { chart.removeSeries(featSeries[f]); delete featSeries[f]; }
+  st.passes = {}; st.heat = {}; st.heatStep = 0; st.featPts = [];
   stopSim(); await loadHistory(); connect(); drawBalance(); renderMarks(); syncFeatSeries(); pollHeat();
 
 }
@@ -1451,7 +1567,7 @@ $('cfReset').onclick = async () => {
 
 renderCoinSeg(); loadScan();
 setCoin(st.coin).then(() => { setInterval(tick, 1000); requestAnimationFrame(drawRing); });
-renderLayers(); setInterval(pollHeat, 5000); placePnl('desk');
+renderLayers(); setInterval(pollHeat, 3000); placePnl('desk');
 for (const id of ['pfOpen', 'exhaust']) $(id).onclick = e => { const r = e.target.closest('[data-c]'); if (!r) return;
   if (r.dataset.c !== st.coin) setCoin(r.dataset.c); $('chart').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
 renderWinSeg(); refreshStatus(); setInterval(refreshStatus, 60000); pollAuto(); setInterval(pollAuto, 1000);

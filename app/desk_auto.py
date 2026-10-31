@@ -489,6 +489,14 @@ class Swarm:
                 self.log("taker", "VERLOPEN", f"limiet {t['limit']:,.6g} niet gevuld binnen {wait / 60:.0f} min, geen trade",
                          coin=m.coin)
             return
+        if t["state"] in ("open", "exiting") and t.get("entry") and "sl" not in t and m.model.get("sd"):
+            # trade van voor de stop-loss-versie: alsnog SL en TP zetten vanaf de instap
+            sl_k, tp_k = self.exit_limits()
+            sign = 1 if t["side"] == "long" else -1
+            t["sl"] = t["entry"] * (1 - sign * sl_k * m.model["sd"]) if sl_k else None
+            t["tp"] = t["entry"] * (1 + sign * tp_k * m.model["sd"]) if tp_k else None
+            if t["paper"]:
+                self.save()
         if t["state"] in ("open", "exiting") and m.px:  # stop-loss of take-profit geraakt: meteen dicht met een marktorder
             long = t["side"] == "long"
             hit = ("SL" if t.get("sl") and (m.px <= t["sl"] if long else m.px >= t["sl"]) else
