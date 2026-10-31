@@ -53,6 +53,10 @@
   .mpct { display: flex; align-items: center; gap: 5px; font: 600 12px var(--mono); }
   .mpct input { width: 54px; font: 600 13px var(--mono); padding: 4px 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
   .mpct b { color: var(--muted); font-size: 11px; }
+  .reactor.withpf { grid-template-columns: 230px minmax(0, 1fr) 420px 260px; }
+  .pfslot:empty { display: none; } .pfslot > .panel { border: 0; box-shadow: none; padding: 0; }
+  .pfslot #balChart { height: 110px; }
+  .row2.solo { grid-template-columns: 1fr; }
   .alltop { display: grid; grid-template-columns: minmax(0, 1fr) 440px; gap: 12px; align-items: start; }
   .alltop #pfSlot > .panel { border: 0; box-shadow: none; padding: 0; }
   @media (max-width: 1250px) { .alltop { grid-template-columns: 1fr; } }
@@ -298,6 +302,7 @@
           <div class="num" id="barVol">–</div><div class="num" id="barP">–</div><div class="num" id="barEdge">–</div>
         </div>
       </div>
+      <div id="pfSlotDesk" class="pfslot"></div>
       <div class="ctrl">
         <div class="approve" id="approve">
           <h3 style="color:var(--down)">Goedkeuring nodig · echte order</h3>
@@ -1235,12 +1240,22 @@ function renderAll() {
 }
 $('allChips').onclick = e => { const c = e.target.dataset.c; if (c === undefined) return;
   if (!c) allState.filter.clear(); else allState.filter.has(c) ? allState.filter.delete(c) : allState.filter.add(c); renderAll(); renderFeed(); };
+// de Swarm PnL staat altijd naast de ring: op het overzicht rechts van de ticker-ring, op de Desk tussen de
+// reactor-ring en de bediening (op smalle schermen onder de reactor, naast The Tape)
+function placePnl(t = $('tabAll').style.display === 'none' ? 'desk' : 'all') {
+  const wide = innerWidth >= 1500, row2 = document.querySelector('.row2');
+  if (t === 'all') $('pfSlot').append($('pnlPanel'));
+  else if (wide) $('pfSlotDesk').append($('pnlPanel'));
+  else row2.prepend($('pnlPanel'));
+  document.querySelector('.reactor').classList.toggle('withpf', t !== 'all' && wide);
+  row2.classList.toggle('solo', !row2.contains($('pnlPanel')));
+  drawBalance(); chart.applyOptions({ width: $('chart').clientWidth });
+}
+addEventListener('resize', () => placePnl());
 document.querySelector('.tabs').onclick = e => { const t = e.target.dataset.tab; if (!t) return;
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   $('tabDesk').style.display = t === 'desk' ? '' : 'none'; $('tabAll').style.display = t === 'all' ? '' : 'none';
-  // de Swarm PnL staat op het overzicht rechts naast de ring, op de Desk op zijn vaste plek
-  if (t === 'all') $('pfSlot').append($('pnlPanel')); else document.querySelector('.row2').prepend($('pnlPanel'));
-  drawBalance();
+  placePnl(t);
   if (t === 'all') { renderAll(); renderFeed(); } else chart.applyOptions({ width: $('chart').clientWidth }); };
 
 $('winSeg').onclick = async e => {
@@ -1320,7 +1335,7 @@ $('cfReset').onclick = async () => {
 
 renderCoinSeg(); loadScan();
 setCoin(st.coin).then(() => { setInterval(tick, 1000); requestAnimationFrame(drawRing); });
-renderLayers(); setInterval(pollHeat, 5000);
+renderLayers(); setInterval(pollHeat, 5000); placePnl('desk');
 for (const id of ['pfOpen', 'exhaust']) $(id).onclick = e => { const r = e.target.closest('[data-c]'); if (!r) return;
   if (r.dataset.c !== st.coin) setCoin(r.dataset.c); $('chart').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
 renderWinSeg(); refreshStatus(); setInterval(refreshStatus, 60000); pollAuto(); setInterval(pollAuto, 1000);
