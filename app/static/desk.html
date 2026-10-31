@@ -271,7 +271,17 @@
 
 <div class="agents" id="agents"></div>
 
-<div class="tabs"><button class="on" data-tab="desk">Desk</button><button data-tab="all">Overzicht · alle tickers</button></div>
+<div class="tabs"><button class="on" data-tab="desk">Desk</button><button data-tab="all">Overzicht · alle tickers</button><button data-tab="pnl">PnL · uur tot jaar</button></div>
+<section id="tabPnl" style="display:none">
+  <div class="panel">
+    <div class="ph"><h2>PnL</h2><span class="sub">afgesloten trades, na fees · balkje = winst of verlies in die periode · lijn = totaal</span>
+      <span class="right"><span class="seg" id="pnlSeg"><button data-b="h">uur</button><button data-b="d" class="on">dag</button><button data-b="w">week</button><button data-b="m">maand</button><button data-b="y">jaar</button><button data-b="a">alles</button></span>
+        <span class="seg" id="pnlMode" style="margin-left:8px"><button data-m="paper" class="on">papier</button><button data-m="live">live</button></span></span></div>
+    <div id="pnlSum" class="kv" style="display:flex;gap:26px;flex-wrap:wrap;margin:4px 0 10px;font:600 13px var(--mono)"></div>
+    <div id="pnlChart" style="height:380px"></div>
+    <div style="overflow:auto;margin-top:10px"><table class="scan" id="pnlTable"></table></div>
+  </div>
+</section>
 <section id="tabAll" class="allview" style="display:none">
   <div class="panel">
     <div class="ph"><h2>Alle tickers</h2><span class="sub">de zwerm op de server · elke markt in zijn eigen kleur · klik een ticker om te filteren</span>
@@ -435,8 +445,7 @@
       <label>risico bij 2σ (% marge)<input id="lvRisk" type="number" step="1" min="1" max="50"></label>
       <label>Kelly-fractie<input id="lvKelly" type="number" step="0.05" min="0.05" max="1"></label>
       <label>max marge (% pf)<input id="lvMarg" type="number" step="0.5" min="0.5" max="25"></label>
-      <label>stop-loss (σ, 0 = uit)<input id="lvSl" type="number" step="0.5" min="0" max="6"></label>
-      <label>take-profit (σ, 0 = uit)<input id="lvTp" type="number" step="0.5" min="0" max="6"></label>
+      <span class="muted" style="align-self:center;max-width:320px">Stop-loss, take-profit en hefboom kiest de zwerm per trade: stop net voorbij steun, weerstand of trendlijn (anders 1σ), take-profit net ervoor (anders 1,5σ), hefboom uit de afstand tot de stop × het vertrouwen. Je kunt ze op de grafiek nog verslepen.</span>
       <label title="Op het einde van het venster kijkt de zwerm of hij nu opnieuw in dezelfde richting zou instappen. Zo ja, dan loopt de trade door (scheelt fees). 0 = altijd sluiten">doorlopen (max vensters)<input id="lvHold" type="number" step="1" min="0" max="12"></label>
       <button class="btn" id="lvSave">Toepassen</button>
     </div>
@@ -825,6 +834,63 @@ function drawTradeSegs() {
   }
 }
 
+// ---------- tabblad PnL: per uur, dag, week, maand, jaar of per trade ----------
+const pnlS = { b: 'd', m: 'paper', rows: [], chart: null };
+function bucketStart(ms, b) {
+  const d = new Date(ms);
+  if (b === 'h') { d.setMinutes(0, 0, 0); return d.getTime(); }
+  d.setHours(0, 0, 0, 0);
+  if (b === 'd') return d.getTime();
+  if (b === 'w') { d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); }  // maandag
+  if (b === 'm') { d.setDate(1); return d.getTime(); }
+  if (b === 'y') { d.setMonth(0, 1); return d.getTime(); }
+  return ms;
+}
+const bucketLbl = (ms, b) => { const d = new Date(ms);
+  return b === 'h' ? d.toLocaleString('nl-BE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    : b === 'd' ? d.toLocaleDateString('nl-BE', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    : b === 'w' ? 'week van ' + d.toLocaleDateString('nl-BE', { day: 'numeric', month: 'short', year: 'numeric' })
+    : b === 'm' ? d.toLocaleDateString('nl-BE', { month: 'long', year: 'numeric' }) : b === 'y' ? String(d.getFullYear()) : hhmmss(ms); };
+async function loadPnl() {
+  try { pnlS.rows = (await (await fetch('/api/desk/pnl')).json()).trades || []; } catch (e) { pnlS.rows = []; }
+  renderPnl();
+}
+function renderPnl() {
+  if (!pnlS.chart) {
+    pnlS.chart = LightweightCharts.createChart($('pnlChart'), { autoSize: true,
+      layout: { background: { color: 'transparent' }, textColor: TH.muted, fontFamily: 'ui-monospace, monospace' },
+      grid: { vertLines: { visible: false }, horzLines: { color: TH.dark ? '#10142a' : '#eef0f4' } },
+      rightPriceScale: { borderVisible: false }, leftPriceScale: { visible: true, borderVisible: false },
+      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false } });
+    pnlS.bars = pnlS.chart.addHistogramSeries({ priceScaleId: 'right', priceFormat: { type: 'price', precision: 2, minMove: .01 }, title: 'per periode' });
+    pnlS.cum = pnlS.chart.addLineSeries({ priceScaleId: 'left', color: '#2463eb', lineWidth: 2, priceFormat: { type: 'price', precision: 2, minMove: .01 }, title: 'totaal' });
+  }
+  const tz = -new Date().getTimezoneOffset() * 60;  // grafiek toont lokale tijd
+  const rows = pnlS.rows.filter(r => r[2] === (pnlS.m === 'paper')), b = pnlS.b, agg = new Map();
+  for (const [t, p] of rows) { const k = bucketStart(t, b), a = agg.get(k) || { n: 0, w: 0, p: 0, best: -1e9, worst: 1e9 };
+    a.n++; a.w += p > 0 ? 1 : 0; a.p += p; a.best = Math.max(a.best, p); a.worst = Math.min(a.worst, p); agg.set(k, a); }
+  const ks = [...agg.keys()].sort((x, y) => x - y); let cum = 0, last = -1;
+  const bars = [], line = [];
+  for (const k of ks) { let ts = Math.floor(k / 1000) + tz; if (ts <= last) ts = last + 1; last = ts;
+    const a = agg.get(k); cum += a.p;
+    bars.push({ time: ts, value: +a.p.toFixed(4), color: a.p >= 0 ? 'rgba(22,179,100,.85)' : 'rgba(239,58,93,.85)' }); line.push({ time: ts, value: +cum.toFixed(4) }); }
+  pnlS.bars.setData(bars); pnlS.cum.setData(line); pnlS.chart.timeScale().fitContent();
+  const n = rows.length, w = rows.filter(r => r[1] > 0).length, tot = rows.reduce((s, r) => s + r[1], 0);
+  const pos = ks.filter(k => agg.get(k).p > 0).length, name = { h: 'uren', d: 'dagen', w: 'weken', m: 'maanden', y: 'jaren', a: 'trades' }[b];
+  $('pnlSum').innerHTML = `<span>totaal <b class="${tot >= 0 ? 'up' : 'down'}">${sgn(tot, 2)}</b></span><span>${n} trades · winrate ${n ? fmt(w / n * 100, 0) : '–'}%</span>
+    <span>${pos} van ${ks.length} ${name} in de plus</span>${ks.length ? `<span>beste ${sgn(Math.max(...ks.map(k => agg.get(k).p)), 2)} · slechtste ${sgn(Math.min(...ks.map(k => agg.get(k).p)), 2)}</span>` : ''}`;
+  $('pnlTable').innerHTML = `<tr><th>${{ h: 'uur', d: 'dag', w: 'week', m: 'maand', y: 'jaar', a: 'trade' }[b]}</th><th>trades</th><th>winrate</th><th>beste</th><th>slechtste</th><th>pnl</th><th>totaal</th></tr>`
+    + (ks.length ? ks.slice().reverse().slice(0, 60).map(k => { const a = agg.get(k), c = line[ks.indexOf(k)].value;
+      return `<tr><td>${bucketLbl(k, b)}</td><td>${a.n}</td><td>${fmt(a.w / a.n * 100, 0)}%</td><td>${sgn(a.best, 2)}</td><td>${sgn(a.worst, 2)}</td>
+        <td class="${a.p >= 0 ? 'up' : 'down'}">${sgn(a.p, 2)}</td><td class="${c >= 0 ? 'up' : 'down'}">${sgn(c, 2)}</td></tr>`; }).join('')
+      : `<tr><td colspan="7" class="muted">nog geen afgesloten ${pnlS.m === 'paper' ? 'papier' : 'live'}trades</td></tr>`);
+}
+$('pnlSeg').onclick = e => { const b = e.target.dataset.b; if (!b) return; pnlS.b = b;
+  $('pnlSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.b === b)); renderPnl(); };
+$('pnlMode').onclick = e => { const m = e.target.dataset.m; if (!m) return; pnlS.m = m;
+  $('pnlMode').querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.m === m)); renderPnl(); };
+setInterval(() => { if ($('tabPnl').style.display !== 'none') loadPnl(); }, 30000);
+
 // ---------- leren & coach ----------
 function renderLearn() {
   const L = st.auto && st.auto.learn; if (!L) return;
@@ -1019,7 +1085,7 @@ function renderMarks() {
   const entry = (opened, side, live) => out.push({ time: mt(opened), position: side === 'long' ? 'belowBar' : 'aboveBar',
     color: side === 'long' ? '#16b364' : '#ef3a5d', shape: side === 'long' ? 'arrowUp' : 'arrowDown', text: (live ? 'LIVE ' : '') + side.toUpperCase() });
   const exit = h => out.push({ time: mt(h.t), position: h.side === 'long' ? 'aboveBar' : 'belowBar', color: h.pnl >= 0 ? '#16b364' : '#ef3a5d',
-    shape: h.side === 'long' ? 'arrowDown' : 'arrowUp', text: `DICHT ${{ SL: 'stop', TP: 'TP', venster: 'einde' }[h.reason] || h.reason || ''} ${sgn(h.pnl, 2)}` });
+    shape: h.side === 'long' ? 'arrowDown' : 'arrowUp', text: `DICHT ${{ SL: 'stop', TP: 'TP', venster: 'einde', omgedraaid: 'omgedraaid' }[h.reason] || h.reason || ''} ${sgn(h.pnl, 2)}` });
   if (st.auto && st.auto.history) for (const h of st.auto.history) if (h.coin === st.coin) { if (h.opened) entry(h.opened, h.side, !h.paper); exit(h); }
   const sm = srvMarket(), tk = sm && sm.ticket;
   if (tk && tk.entry) entry((tk.filled_at || tk.opened) * 1000, tk.side, !tk.paper);
@@ -1322,10 +1388,13 @@ function explain(t, sm) {
     ${bars(w.parts)}
     <p>${w.src === 'geleerd' ? 'Het <b>geleerde model</b>' : 'Prior'} zette dat om in <b>${cents(w.p)}</b> kans (β ${fmt(w.beta, 2)}, ${w.n} vensters geleerd). Break-even na ${fmt(w.cost, 1)} bp kosten
       op een verwachte beweging van ${fmt(w.emove, 1)} bp was ${cents(w.be)}, dus edge <b>${sgn(w.edge, 1, '¢')}</b>.</p>
-    <p>Kelly: σ ${fmt(w.sd, 0)} bp → hefboom ${w.lev}x${w.want_lev > w.lev ? ` (wilde ${w.want_lev}x, max ${w.lev_cap}x)` : ''}; ${w.kelly}×Kelly wilde ${usd(w.kelly_usd)} positie,
+    <p>${w.lev_risk != null ? `Hefboom: de stop ligt ${fmt(w.sl_bp, 0)} bp weg; om daar hooguit ${w.risk_pct}% van de marge te verliezen mag het ${w.lev_risk}x zijn,
+      maal vertrouwen ${fmt(w.lev_conf * 100, 0)}% (edge ${sgn(w.edge, 1, '¢')}) = <b>${w.lev}x</b>${w.want_lev > w.lev ? ` (begrensd op max ${w.lev_cap}x)` : ''}.` : `Kelly: σ ${fmt(w.sd, 0)} bp → hefboom ${w.lev}x.`}
+      Kelly ×${w.kelly} wilde ${usd(w.kelly_usd)} positie,
       ${w.capped ? `afgetopt op ${w.max_margin_pct}% marge` : 'binnen de grens'} → ${usd(w.margin, 2)} marge, ${usd(w.usd, 2)} positie.</p>
     ${w.wall ? `<p>Ruimte: de eerste ${t.side === 'long' ? 'weerstand' : 'steun'} lag op ${fmt(w.wall, pxD())} (${w.wall_n}x geraakt), ${fmt(w.room, 2)}σ verder. Genoeg ruimte om in te stappen (minstens 0,3σ).</p>` : ''}
-    ${t.sl || t.tp ? `<p>Uitstap: stop ${t.sl ? fmt(t.sl, pxD()) : 'uit'}${t.plan ? ` (${t.plan.sl})` : ''}, take-profit ${t.tp ? fmt(t.tp, pxD()) : 'uit'}${t.plan ? ` (${t.plan.tp})` : ''}.
+    ${t.sl || t.tp ? `<p>Uitstap: stop ${t.sl ? fmt(t.sl, pxD()) : 'uit'}${t.plan ? ` (${t.plan.sl})` : ''}, take-profit ${t.tp ? fmt(t.tp, pxD()) : 'uit'}${t.plan ? ` (${t.plan.tp})` : ''}${t.plan && t.plan.rr ? `, winst/risico ${fmt(t.plan.rr, 2)}` : ''}.
+      Draait het model tijdens de trade om (de andere kant krijgt edge), dan sluit hij meteen.
       Raakt hij geen van beide, dan kijkt hij op het einde van het venster van ${(st.auto && st.auto.window_min) || '?'} min of hij opnieuw dezelfde kant op zou gaan: zo ja, dan loopt de trade door${st.auto && st.auto.exits ? ` (max ${st.auto.exits.hold} vensters)` : ''}, zo nee, dan sluit hij.</p>` : ''}
     ${t.holds ? `<p>Loopt al <b>${t.holds}</b> venster${t.holds > 1 ? 's' : ''} door: ${(t.holds_why || []).filter(x => x.hold).map(x => `${hhmmss(x.t).slice(0, 5)} ${cents(x.p)} vs ${cents(x.be)}`).join(', ')}.</p>` : ''}
     ${now != null ? `<p>Nu: <b class="${now >= .5 ? 'up' : 'down'}">${fmt(now * 100, 0)}%</b> kans dat het zijn kant op gaat${now < .5 ? ': het model twijfelt nu aan deze trade' : ''}.</p>` : ''}`;
@@ -1336,7 +1405,7 @@ function exitStory(h) {
   const e = h.exit_why || {}, r = e.reason || h.reason || 'venster', win = h.pnl >= 0;  // oudere trades hebben nog geen reden: die sloten altijd aan het einde van het venster
   const how = { SL: `de koers raakte de stop-loss${h.plan ? ' (' + h.plan.sl + ')' : ''}`, TP: `de koers raakte de take-profit${h.plan ? ' (' + h.plan.tp + ')' : ''}`,
     venster: `het venster van ${e.window || '?'} min was voorbij: de voorspelling gold tot dan, dus de zwerm stapte uit ${e.maker ? 'als maker (goedkoop)' : 'met een marktorder'}`,
-    'kill switch': 'jij drukte de kill switch', daglimiet: 'de daglimiet op verlies werd geraakt', 'venster gewijzigd': 'je koos een ander venster' }[r] || r;
+    omgedraaid: 'het model draaide om: de kans voor de andere kant werd groot genoeg om die trade zelf te openen, dus stapte hij meteen uit', 'kill switch': 'jij drukte de kill switch', daglimiet: 'de daglimiet op verlies werd geraakt', 'venster gewijzigd': 'je koos een ander venster' }[r] || r;
   return `<p><b class="${win ? 'up' : 'down'}">${h.side.toUpperCase()} ${short(h.coin)} ${sgn(h.pnl, 2)}</b> · dicht om ${hhmmss(h.t).slice(0, 5)} omdat ${how}.
     ${e.held != null ? `Na ${fmt(e.held, 0)} min stond de koers ${sgn(e.move, 2)}σ ${e.move >= 0 ? 'in' : 'tegen'} zijn richting` : ''}${e.conf != null ? `, en het model gaf toen nog ${fmt(e.conf * 100, 0)}% kans voor zijn kant` : ''}.
     ${h.holds ? `Liep ${h.holds} venster${h.holds > 1 ? 's' : ''} door omdat het model telkens dezelfde kant op bleef wijzen.` : ''}
@@ -1621,6 +1690,8 @@ addEventListener('resize', () => placePnl());
 document.querySelector('.tabs').onclick = e => { const t = e.target.dataset.tab; if (!t) return;
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   $('tabDesk').style.display = t === 'desk' ? '' : 'none'; $('tabAll').style.display = t === 'all' ? '' : 'none';
+  $('tabPnl').style.display = t === 'pnl' ? '' : 'none';
+  if (t === 'pnl') { loadPnl(); return; }
   placePnl(t);
   if (t === 'all') { renderAll(); renderFeed(); } else chart.applyOptions({ width: $('chart').clientWidth }); };
 
@@ -1673,12 +1744,12 @@ function fillModel() {
   const md = st.auto && st.auto.model; if (!md) { $('mdInfo').textContent = 'server niet bereikbaar'; return; }
   $('mdBeta').value = md.beta0; $('mdK').value = md.k; for (const k of MW) $('mdW_' + k).value = md.w[k];
   $('mdInfo').textContent = '';
-  if (st.auto.exits) { $('lvSl').value = st.auto.exits.sl; $('lvTp').value = st.auto.exits.tp; $('lvHold').value = st.auto.exits.hold; }
+  if (st.auto.exits) $('lvHold').value = st.auto.exits.hold;
   if (st.auto.size) { $('lvKelly').value = st.auto.size.kelly; $('lvMarg').value = st.auto.size.max_margin_pct; }
   if (st.auto.lev) { $('lvMax').value = st.auto.lev.max; $('lvRisk').value = st.auto.lev.risk; $('lvLive').textContent = st.auto.lev.live_max + 'x'; }
 }
 $('lvSave').onclick = async () => {
-  try { await autoPost('/api/desk/auto', { max_lev: +$('lvMax').value, risk_pct: +$('lvRisk').value, kelly_frac: +$('lvKelly').value, max_margin_pct: +$('lvMarg').value, sl_sigma: +$('lvSl').value, tp_sigma: +$('lvTp').value, hold_max: +$('lvHold').value }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'hefboom toegepast'; }
+  try { await autoPost('/api/desk/auto', { max_lev: +$('lvMax').value, risk_pct: +$('lvRisk').value, kelly_frac: +$('lvKelly').value, max_margin_pct: +$('lvMarg').value, hold_max: +$('lvHold').value }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'hefboom toegepast'; }
   catch (e) { $('mdInfo').textContent = e.message; }
 };
 async function postModel(model) {

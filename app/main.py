@@ -301,6 +301,22 @@ class DeskCoach(BaseModel):
     detect: bool = False
 
 
+@app.get("/api/desk/pnl")
+def desk_pnl():
+    """Alle afgesloten trades, compact, voor de PnL-grafieken per uur/dag/week/maand/jaar."""
+    from . import desk_learn
+    seen, rows = set(), []
+    for h in list(desk_learn.trades()) + list(swarm.history):
+        k = (h.get("t"), h.get("coin"))
+        if k in seen or h.get("pnl") is None:
+            continue
+        seen.add(k)
+        rows.append([h["t"], round(h["pnl"], 4), bool(h.get("paper", True)), h.get("coin"), h.get("side"),
+                     h.get("reason") or "venster"])
+    rows.sort()
+    return {"trades": rows, "paper_start": swarm.paper.get("start")}
+
+
 @app.get("/api/desk/coach")
 def desk_coach_get():
     """Je lokale taalmodel als dagelijkse coach: instellingen, of hij bezig is, en de laatste rapporten."""

@@ -76,6 +76,30 @@ def sr_levels(cs: list[dict], k: int = 6) -> list[dict]:
 LEARN = {"on": True}  # geleerde gewichten gebruiken als ze beter zijn dan de vaste (aan/uit vanaf /desk)
 
 
+def trend_lines(cs: list[dict], k: int = 6) -> list[dict]:
+    """Trendlijnen op 5m: door de laatste twee bodems als die stijgen (steunlijn) en door de laatste twee toppen
+    als die dalen (weerstandslijn). Waarde op elk moment = lineair doorgetrokken."""
+    if len(cs) < 2 * k + 5:
+        return []
+    hi, lo = [], []
+    for i in range(k, len(cs) - k):
+        win = cs[i - k:i + k + 1]
+        if cs[i]["h"] >= max(c["h"] for c in win):
+            hi.append((cs[i]["t"], cs[i]["h"]))
+        if cs[i]["l"] <= min(c["l"] for c in win):
+            lo.append((cs[i]["t"], cs[i]["l"]))
+    out = []
+    if len(lo) >= 2 and lo[-1][1] > lo[-2][1]:
+        out.append({"kind": "sup", "t1": lo[-2][0], "p1": lo[-2][1], "t2": lo[-1][0], "p2": lo[-1][1]})
+    if len(hi) >= 2 and hi[-1][1] < hi[-2][1]:
+        out.append({"kind": "res", "t1": hi[-2][0], "p1": hi[-2][1], "t2": hi[-1][0], "p2": hi[-1][1]})
+    return out
+
+
+def trend_at(tl: dict, t_ms: float) -> float:
+    return tl["p1"] + (tl["p2"] - tl["p1"]) * (t_ms - tl["t1"]) / max(1, tl["t2"] - tl["t1"])
+
+
 class Market:
     """Koersdata, venster en ticket van één markt."""
 
@@ -95,6 +119,7 @@ class Market:
         self.ticket: dict | None = None
         self.last_eval = 0
         self.levels: list[dict] = []
+        self.trends: list[dict] = []
         self.levels_at = 0.0
 
     def prior_file(self, window: int):
@@ -116,7 +141,7 @@ class Market:
                 time.sleep(2 * 2 ** attempt)
         rs = [math.log(cs[i]["c"] / cs[i - 1]["c"]) for i in range(1, len(cs)) if cs[i - 1]["c"] > 0]
         self.var1 = sum(r * r for r in rs) / max(1, len(rs)) / 300
-        self.levels, self.levels_at = sr_levels(cs), time.time()
+        self.levels, self.trends, self.levels_at = sr_levels(cs), trend_lines(cs), time.time()
         if not self.px and cs:
             self.px = cs[-1]["c"]
 
@@ -376,10 +401,20 @@ class Swarm:
             if el + every > .67 * W:
                 m.decided = True
             return
+        bid, ask = m.best()
+        plan = self.exit_plan(m, mo["side"], bid if mo["side"] == "long" else ask, sd)
+        if plan["rr"] < .7:
+            self.log("edge", "PASS", f"{mo['side']}: winst tot de take-profit ({plan['tp_sigma']:.2f}σ) is te klein tegenover het "
+                     f"risico tot de stop ({plan['sl_sigma']:.2f}σ), verhouding {plan['rr']:.2f}", f"{mo['edge']:+.1f}¢", m.coin)
+            if el + every > .67 * W:
+                m.decided = True
+            return
         m.decided = True
         self.log("edge", "EDGE", f"{mo['side']} {mo['pDir'] * 100:.1f}¢ vs break-even {mo['be'] * 100:.1f}¢",
                  f"{mo['edge']:+.1f}¢", m.coin)
-        sized = self.kelly(m, cfg, live)
+        self.log("closer", "PLAN", f"stop {plan['sl']:,.6g} ({plan['sl_why']}) · take-profit {plan['tp']:,.6g} ({plan['tp_why']}) · "
+                 f"verhouding {plan['rr']:.2f}", coin=m.coin)
+        sized = self.kelly(m, cfg, live, plan)
         if not sized:
             return
         lev, usd = sized
@@ -424,11 +459,11 @@ class Swarm:
     def lev_limits(self, cfg: dict, live: bool) -> tuple[float, float]:
         """Max hefboom en risico per trade. Op papier vrij in te stellen; live nooit boven DESK_MAX_LEV uit desk.env."""
         env_cap = desk.num(cfg, "DESK_MAX_LEV", 3)
-        cap = self.max_lev if self.max_lev is not None else env_cap
+        cap = self.max_lev if self.max_lev is not None else max(env_cap, 10)  # papier: tot 10x, live altijd begrensd door desk.env
         risk = self.risk_pct if self.risk_pct is not None else desk.num(cfg, "DESK_RISK_PCT", 10)
         return (min(cap, env_cap) if live else cap), risk
 
-    def kelly(self, m: Market, cfg: dict, live: bool) -> tuple[int, float] | None:
+    def kelly(self, m: Market, cfg: dict, live: bool, plan: dict | None = None) -> tuple[int, float] | None:
         """Hefboom uit de volatiliteit: een tegenvaller van 2σ tot het einde van het venster mag hooguit
         risico % (10%) van de marge kosten, begrensd door de max hefboom en de max van de markt.
         Grootte uit Kelly: positie / portefeuille = fractie × μ / σ², met μ = (2p − 1)·E|beweging| − kosten.
@@ -442,9 +477,14 @@ class Swarm:
         market_max = desk.universe().get(m.coin, {}).get("maxLeverage")
         if market_max:
             cap = min(cap, market_max)
-        want = math.floor(risk / 100 / (2 * sd))
-        lev = int(_clamp(want, 1, max(1, cap)))
         mo, (kf, mpct) = m.model, self.size_limits()
+        # hefboom per trade: de stop mag hooguit risico % van de marge kosten, en dat maal het vertrouwen
+        # (edge 0¢ → 25% van die hefboom, edge ≥ 8¢ → 100%)
+        sl_d = plan["sl_d"] if plan else 2 * sd
+        conf = _clamp(mo["edge"] / 8, .25, 1.0)
+        want_risk = math.floor(risk / 100 / max(sl_d, 1e-6))
+        want = max(1, math.floor(want_risk * conf))
+        lev = int(_clamp(want, 1, max(1, cap)))
         mu = (2 * mo["pDir"] - 1) * sd * math.sqrt(2 / math.pi) - costs(cfg)["round"] / 1e4
         kelly_notional = max(0.0, kf * mu / (sd * sd)) * pf["equity"]
         cap_margin = min(pf["equity"] * mpct / 100, pf["free"] / 4)
@@ -458,9 +498,10 @@ class Swarm:
             self.log("kelly", "TE KLEIN", f"vrije marge ${pf['free']:,.2f} te klein voor een order", coin=m.coin)
             return None
         self.kelly_info = {"sd": round(sd * 1e4, 1), "lev": lev, "want_lev": want, "lev_cap": cap, "kelly": kf,
+                           "lev_risk": want_risk, "lev_conf": round(conf, 2), "sl_bp": round(sl_d * 1e4, 1), "risk_pct": risk,
                            "kelly_usd": round(kelly_notional, 2), "margin": round(usd / lev, 2), "usd": round(usd, 2),
                            "capped": "marge" if kelly_notional / lev > cap_margin else None, "max_margin_pct": mpct}
-        self.log("kelly", "SIZE", f"σ venster {sd * 1e4:.0f}bp → hefboom {lev}x"
+        self.log("kelly", "SIZE", f"stop op {sl_d * 1e4:.0f}bp, max {risk:g}% van de marge → {want_risk}x, × vertrouwen {conf:.2f} → hefboom {lev}x"
                                   + (f" (wil {want}x, max {cap:g}x)" if want > lev else "")
                                   + f" · Kelly ×{kf:g} wil ${kelly_notional:,.0f} positie"
                                   + (f", max marge {mpct:g}%" if kelly_notional / lev > cap_margin else "")
@@ -513,28 +554,40 @@ class Swarm:
         self.log("taker", "TAKE", f"{'papier' if t['paper'] else 'LIVE'} {t['side']} gevuld als maker @ {px:,.6g}",
                  f"{t['lev']}x ${t['usd']:g}", m.coin)
 
-    def plan_exits(self, m: Market, t: dict, px: float) -> None:
-        """Stop-loss en take-profit: standaard in σ van de rest van het venster. Ligt er een steun of weerstand
-        binnen bereik, dan gaat de stop net voorbij dat niveau en de take-profit net ervoor."""
-        sl_k, tp_k = self.exit_limits()
-        sd, long = max(m.model.get("sd", 0.0), 1e-5), t["side"] == "long"
+    @staticmethod
+    def exit_plan(m: Market, side: str, px: float, sd: float) -> dict:
+        """Stop-loss en take-profit per trade, uit de structuur van de markt:
+        - stop net voorbij de dichtste steun (long) of weerstand (short) of trendlijn erachter, tussen 0,4σ en 2σ;
+          niets in dat bereik: 1σ (de beweging die het venster normaal maakt);
+        - take-profit net voor het dichtste niveau of de trendlijn ervoor, tussen 0,5σ en 3σ; niets: 1,5σ.
+        σ = verwachte schommeling tot het einde van het venster."""
+        long, sd = side == "long", max(sd, 1e-5)
         sign = 1 if long else -1
-        sup, res = m.near_levels(px)
-        back, front = (sup, res) if long else (res, sup)
-        plan = {}
-        t["sl"], plan["sl"] = (px * (1 - sign * sl_k * sd), f"{sl_k:g}σ") if sl_k else (None, "uit")
-        t["tp"], plan["tp"] = (px * (1 + sign * tp_k * sd), f"{tp_k:g}σ") if tp_k else (None, "uit")
-        if sl_k and back:
-            d = abs(px - back["px"]) / px / sd
-            if .3 <= d <= sl_k * 1.5:
-                t["sl"] = back["px"] * (1 - sign * .15 * sd)
-                plan["sl"] = f"net voorbij {'steun' if long else 'weerstand'} {back['px']:,.6g} ({back['n']}x geraakt)"
-        if tp_k and front:
-            d = abs(front["px"] - px) / px / sd
-            if .4 <= d <= tp_k:
-                t["tp"] = front["px"] * (1 - sign * .05 * sd)
-                plan["tp"] = f"net voor {'weerstand' if long else 'steun'} {front['px']:,.6g} ({front['n']}x geraakt)"
-        t["plan"] = plan
+        now_ms = time.time() * 1000
+        cand = [(l["px"], f"{'steun' if l['px'] < px else 'weerstand'} {l['px']:,.6g} ({l['n']}x geraakt)", l["n"]) for l in m.levels]
+        cand += [(trend_at(tl, now_ms), f"{'stijgende steunlijn' if tl['kind'] == 'sup' else 'dalende weerstandslijn'} "
+                  f"(nu {trend_at(tl, now_ms):,.6g})", 2) for tl in m.trends]
+        d = lambda p: sign * (p - px) / px / sd  # >0 = in de richting van de trade, in σ
+        back = sorted([c for c in cand if -2.0 <= d(c[0]) <= -.4], key=lambda c: -d(c[0]))
+        front = sorted([c for c in cand if .5 <= d(c[0]) <= 3.0], key=lambda c: d(c[0]))
+        if back:
+            sl, sl_why = back[0][0] * (1 - sign * .15 * sd), "net voorbij " + back[0][1]
+        else:
+            sl, sl_why = px * (1 - sign * sd), "1σ: geen steun of weerstand binnen 2σ, dus de normale schommeling van het venster"
+        if front:
+            tp, tp_why = front[0][0] * (1 - sign * .05 * sd), "net voor " + front[0][1]
+        else:
+            tp, tp_why = px * (1 + sign * 1.5 * sd), "1,5σ: vrije baan tot 3σ, dus anderhalve keer de normale schommeling"
+        sl_d, tp_d = abs(px - sl) / px, abs(tp - px) / px
+        return {"sl": sl, "tp": tp, "sl_why": sl_why, "tp_why": tp_why, "sl_d": sl_d, "tp_d": tp_d,
+                "rr": tp_d / max(sl_d, 1e-9), "sl_sigma": sl_d / sd, "tp_sigma": tp_d / sd}
+
+    def plan_exits(self, m: Market, t: dict, px: float) -> None:
+        """Stop-loss en take-profit bij de instap vastleggen, op de echte instapprijs."""
+        e = self.exit_plan(m, t["side"], px, m.model.get("sd", 0.0))
+        t["sl"], t["tp"] = e["sl"], e["tp"]
+        t["plan"] = {"sl": e["sl_why"], "tp": e["tp_why"], "rr": round(e["rr"], 2),
+                     "sl_sigma": round(e["sl_sigma"], 2), "tp_sigma": round(e["tp_sigma"], 2)}
 
     def manage(self, m: Market, now: float, cfg: dict) -> None:
         """Volgt een open ticket: maker-instap gevuld of verlopen, maker-uitstap op tijd plaatsen."""
@@ -576,6 +629,19 @@ class Swarm:
             self.plan_exits(m, t, t["entry"])
             if t["paper"]:
                 self.save()
+        if t["state"] == "open" and m.model.get("p") is not None and now - t.get("filled_at", now) > 60:
+            # het model draait om: is de kans voor de andere kant zo groot dat hij die trade zelf zou openen,
+            # en blijft dat 20 s zo, dan meteen sluiten in plaats van het venster uit te zitten
+            mo = m.model
+            against = mo["side"] != t["side"] and mo["edge"] >= 0
+            if not against:
+                t.pop("against_since", None)
+            elif now - t.setdefault("against_since", now) >= 20:
+                t["exit_reason"], t["maker_exit"] = "omgedraaid", False
+                self.log("closer", "OMGEDRAAID", f"model wijst nu {mo['pDir'] * 100:.0f}¢ de andere kant op (break-even {mo['be'] * 100:.0f}¢): "
+                         f"{t['side']} meteen dicht", coin=m.coin)
+                self.settle(m, cfg)
+                return
         if t["state"] in ("open", "exiting") and m.px:  # stop-loss of take-profit geraakt: meteen dicht met een marktorder
             long = t["side"] == "long"
             hit = ("SL" if t.get("sl") and (m.px <= t["sl"] if long else m.px >= t["sl"]) else
@@ -831,7 +897,8 @@ class Swarm:
             stale = [m for m in list(self.markets.values()) if time.time() - m.levels_at > 3600]
             for m in stale[:3]:
                 try:
-                    m.levels, m.levels_at = sr_levels(desk.candles(m.coin, "5m", 2 * 24 * 60)), time.time()
+                    cs = desk.candles(m.coin, "5m", 2 * 24 * 60)
+                    m.levels, m.trends, m.levels_at = sr_levels(cs), trend_lines(cs), time.time()
                 except Exception:
                     m.levels_at = time.time() - 3000  # over 10 min opnieuw proberen
                 time.sleep(3)
@@ -957,9 +1024,8 @@ class Swarm:
                     self.sl_sigma = float(sl_sigma)
                 if tp_sigma is not None:
                     self.tp_sigma = float(tp_sigma)
-                sl, tp = self.exit_limits()
-                self.log("closer", "SL/TP", f"stop-loss {f'{sl:g}σ' if sl else 'uit'} · take-profit {f'{tp:g}σ' if tp else 'uit'} "
-                                            "(geldt voor nieuwe trades)")
+                self.log("closer", "SL/TP", "stop-loss en take-profit worden nu per trade bepaald (structuur + verwachte beweging); "
+                                            "deze instelling wordt niet meer gebruikt")
             if kelly_frac is not None or max_margin_pct is not None:
                 if kelly_frac is not None and not 0.05 <= float(kelly_frac) <= 1:
                     raise ValueError("Kelly-fractie moet tussen 0,05 en 1 liggen")
@@ -1092,7 +1158,7 @@ class Swarm:
             markets = {c: {"on": self.coins[c], "px": m.px, "open": m.open0, "win": m.win * 1000, "ticket": m.ticket,
                            "model": {k: v for k, v in m.model.items() if k != "prior"},
                            "prior": m.model.get("prior", {}), "score": m.feat.get("score"),
-                           "levels": self.shown_levels(m)}
+                           "levels": self.shown_levels(m), "trends": m.trends}
                        for c, m in self.markets.items()}
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
@@ -1100,7 +1166,7 @@ class Swarm:
                 "auto_scan": self.auto_scan, "scan_n": self.scan_n, "scan_at": int(self.scan_at * 1000),
                 "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)),
                 "size": dict(zip(("kelly", "max_margin_pct"), self.size_limits())),
-                "exits": dict(zip(("sl", "tp"), self.exit_limits()), hold=self.hold_max if self.hold_max is not None else 3),
+                "exits": {"mode": "auto", "hold": self.hold_max if self.hold_max is not None else 3},
                 "learn": {"on": LEARN["on"], **desk_learn.summary(self.window)}, "windows": WINDOWS, "costs": costs(cfg),
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,
                 "portfolio": self.portfolio(), "history": list(self.history)[-200:],
