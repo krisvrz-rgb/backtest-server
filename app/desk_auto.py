@@ -26,6 +26,10 @@ STATE_FILE = DATA_DIR / "desk-auto.json"
 WS_URL = "wss://api.hyperliquid.xyz/ws"
 WINDOWS = (15, 60, 240)
 # Prijsmodel, instelbaar op /desk → Instellingen: gewichten van de Spotter-score en hoe snel Prior zijn β uit de data haalt.
+BETA_MAX = 1.0       # het prijsmodel mag nooit zekerder worden dan Φ(β · score) met β ≤ 1
+TRUST_TRADES = 200   # tot zoveel afgesloten trades op papier: hefboom hooguit 3x, nog niets bewezen
+TRUST_LEV = 3
+MAX_EXPOSURE = 2.0   # alle open posities samen hooguit 2× de portefeuille
 MODEL_DEFAULT = {"beta0": 0.25, "k": 30, "w": {"flow30": .35, "flow10": .2, "book": .25, "bookDeep": .1, "mom": .1}}
 MODEL: dict = json.loads(json.dumps(MODEL_DEFAULT))
 
@@ -218,8 +222,10 @@ class Market:
         sy = sum(s["s"] * s["y"] for s in a)
         ss = sum(s["s"] ** 2 for s in a)
         hit = sum(1 for s in a if (s["s"] > 0) == (s["y"] > 0)) / n if n else None
-        bhat = sy / ss if ss > 1e-9 else 0.0
-        return {"beta": (n * bhat + k * beta0) / (n + k), "n": n, "hit": hit}
+        bhat = _clamp(sy / ss, -BETA_MAX, BETA_MAX) if ss > 1e-9 else 0.0
+        # begrensd: bij een handvol vensters sprong β tot 6 en het model tot 98% zeker (DOGE, n=6), terwijl het
+        # in de praktijk maar 52% juist zat. Met β ≤ 1 is de kans hooguit Φ(1) = 84% bij een volle score.
+        return {"beta": _clamp((n * bhat + k * beta0) / (n + k), -BETA_MAX, BETA_MAX), "n": n, "hit": hit}
 
     def compute(self, f: dict, now: float, cfg: dict, window: int) -> dict:
         left = max(1.0, window - (now - self.win))
@@ -513,6 +519,9 @@ class Swarm:
             return None
         sd = max(m.model.get("sd", 0.0), 1e-5)
         cap, risk = self.lev_limits(cfg, live)
+        proven = sum(1 for h in self.history if h.get("paper", True) != live)
+        if proven < TRUST_TRADES:  # eerst bewijzen dat de signalen iets waard zijn, dan pas hoger
+            cap = min(cap, TRUST_LEV)
         market_max = desk.universe().get(m.coin, {}).get("maxLeverage")
         if market_max:
             cap = min(cap, market_max)
@@ -531,6 +540,12 @@ class Swarm:
         if 0 < margin * lev < 10 <= cap_margin * lev:  # Hyperliquid wil minstens $10: kleinste order
             margin = 10 / lev
         usd = min(margin * lev, pf["equity"] * .5)  # één positie nooit groter dan de helft van de portefeuille
+        room = pf["equity"] * MAX_EXPOSURE - sum(t.get("usd", 0) for t in pf["open"])
+        if usd > room:  # samen nooit meer dan 2× de portefeuille
+            if room < 10:
+                self.log("kelly", "VOL", f"al ${pf['equity'] * MAX_EXPOSURE - room:,.0f} in posities, max {MAX_EXPOSURE:g}× de portefeuille", coin=m.coin)
+                return None
+            usd = room
         if live:
             usd = min(usd, desk.num(cfg, "DESK_MAX_USD", 25), desk.num(cfg, "DESK_ORDER_USD", 20) * lev)
         if usd < 10:  # Hyperliquid weigert orders onder $10
@@ -670,12 +685,13 @@ class Swarm:
                 self.save()
         if t["state"] == "open" and m.model.get("p") is not None and now - t.get("filled_at", now) > 60:
             # het model draait om: is de kans voor de andere kant zo groot dat hij die trade zelf zou openen,
-            # en blijft dat 20 s zo, dan meteen sluiten in plaats van het venster uit te zitten
+            # met minstens 2¢ edge, en blijft dat 45 s zo, dan meteen sluiten in plaats van het venster uit te zitten
             mo = m.model
-            against = mo["side"] != t["side"] and mo["edge"] >= 0
+            # streng: 4 van 4 omgedraaid-trades verloren, telkens taker-kosten op een signaal dat even wiebelde
+            against = mo["side"] != t["side"] and mo["edge"] >= 2
             if not against:
                 t.pop("against_since", None)
-            elif now - t.setdefault("against_since", now) >= 20:
+            elif now - t.setdefault("against_since", now) >= 45:
                 t["exit_reason"], t["maker_exit"] = "omgedraaid", False
                 self.log("closer", "OMGEDRAAID", f"model wijst nu {mo['pDir'] * 100:.0f}¢ de andere kant op (break-even {mo['be'] * 100:.0f}¢): "
                          f"{t['side']} meteen dicht", coin=m.coin)
