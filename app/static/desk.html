@@ -50,6 +50,9 @@
   .ctlbar.zw { flex-wrap: nowrap; } .ctlbar.zw .seg { overflow-x: auto; max-width: calc(100vw - 140px); flex: none; }
   .ctlbar.zw .seg button { white-space: nowrap; }
   .top .clock { margin-left: 8px; }
+  .mpct { display: flex; align-items: center; gap: 5px; font: 600 12px var(--mono); }
+  .mpct input { width: 54px; font: 600 13px var(--mono); padding: 4px 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+  .mpct b { color: var(--muted); font-size: 11px; }
   .alltop { display: grid; grid-template-columns: minmax(0, 1fr) 440px; gap: 12px; align-items: start; }
   .alltop #pfSlot > .panel { border: 0; box-shadow: none; padding: 0; }
   @media (max-width: 1250px) { .alltop { grid-template-columns: 1fr; } }
@@ -223,6 +226,8 @@
   <div class="grow"></div>
   <span class="badge paper" id="modeBadge">PAPER</span>
   <span class="badge sim" id="feedBadge" style="display:none">SIMULATIE</span>
+  <label class="mpct" title="Marge per trade in % van de huidige portefeuillewaarde (na winst of verlies telkens herrekend). Kelly neemt minder als de edge klein is."><span class="cap">marge/trade</span>
+    <input id="hdMarg" type="number" step="0.5" min="0.5" max="25">%<b class="num" id="hdMargUsd">–</b></label>
   <div class="clock num" id="clock">--:--:--</div><span class="cap">utc</span>
   <button class="btn danger" id="killBtn" title="Sluit alle posities en zet de desk op pauze">Kill switch</button>
 </div>
@@ -780,7 +785,9 @@ async function pollAuto() {
     const changed = a.trace.some(t => ['TAKE', 'AFREK', 'PASS', 'EDGE'].includes(t.act));
     const coinsChanged = JSON.stringify(a.coins) !== JSON.stringify(st.auto && st.auto.coins);
     if (st.auto && a.auto_scan && a.scan_at !== st.auto.scan_at) loadScan();  // scanner op de server liep: zelfde top 25 tonen
-    const winChanged = !st.auto || st.auto.window_min !== a.window_min || st.auto.min_edge !== a.min_edge;
+    const winChanged = !st.auto || st.auto.window_min !== a.window_min || st.auto.min_edge !== a.min_edge
+      || JSON.stringify(st.auto.size) !== JSON.stringify(a.size);
+    if (a.size && a.portfolio) $('hdMargUsd').textContent = '= ' + usd(a.portfolio.equity * a.size.max_margin_pct / 100, 2);
     st.autoSeq = a.seq; st.auto = a; if (changed) renderMarks(); if (coinsChanged && scanRows.length) renderScan();
     if (winChanged) renderWinSeg();
   } catch (e) { st.auto = null; }
@@ -793,6 +800,7 @@ function renderEdgeSeg() {
 }
 function renderWinSeg() {
   renderEdgeSeg();
+  const sz = st.auto && st.auto.size; if (sz && document.activeElement !== $('hdMarg')) $('hdMarg').value = sz.max_margin_pct;
   const a = st.auto, ws = (a && a.windows) || [15, 60, 240];
   $('winSeg').innerHTML = ws.map(m => `<button data-w="${m}" class="${a && a.window_min === m ? 'on' : ''}">${winLbl(m)}</button>`).join('');
   $('winLbl').textContent = winLbl();
@@ -1240,6 +1248,10 @@ $('winSeg').onclick = async e => {
   const open = st.auto.portfolio ? st.auto.portfolio.open.length : 0;
   if (open && !confirm(`Venster naar ${winLbl(w)}? De ${open} open positie(s) worden eerst gesloten.`)) return;
   try { await autoPost('/api/desk/auto', { window_min: w }); } catch (err) { alert(err.message); } pollAuto();
+};
+$('hdMarg').onchange = async () => {
+  const v = +$('hdMarg').value; if (!v) return;
+  try { await autoPost('/api/desk/auto', { max_margin_pct: v }); } catch (err) { alert(err.message); } pollAuto();
 };
 $('edgeSeg').onclick = async e => {
   const v = e.target.dataset.e; if (v === undefined || !st.auto) return;
