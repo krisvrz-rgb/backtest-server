@@ -1228,17 +1228,19 @@ function drawRing(time) {
     x.strokeStyle = hue(s.ph * 3); x.globalAlpha = TH.dark ? .22 * energy : .28; x.stroke();
   }
   x.globalAlpha = 1; x.globalCompositeOperation = 'source-over';
-  // agents op de ring
-  AGENTS.forEach((a, i) => {
+  // agents als ringen dwars op de torus: de trades rijden erdoorheen (eerst de achterste helft, na de trades de voorste)
+  const agRings = AGENTS.map((a, i) => {
     const ang = -Math.PI / 2 + i * Math.PI / 3 + tm * .05, px = cx + R * Math.cos(ang), py = cy + ry * Math.sin(ang);
-    const active = Date.now() - (st.work[a.k] || 0) < 1500, r = active ? 26 + Math.sin(tm * 8) * 2 : 22;
-    if (active) { x.beginPath(); x.arc(px, py, r + 10, 0, 7); x.strokeStyle = a.c; x.lineWidth = 3; x.globalAlpha = .35; x.stroke(); x.globalAlpha = 1; }
-    if (TH.dark) { x.shadowColor = a.c; x.shadowBlur = active ? 40 : 22; }
-    x.beginPath(); x.arc(px, py, r, 0, 7); x.fillStyle = a.c; x.fill(); x.shadowBlur = 0;
-    x.fillStyle = '#fff'; x.fillRect(px - 7, py - 7, 4, 13); x.fillRect(px + 3, py - 7, 4, 13);
-    x.font = '700 10px ui-monospace, monospace'; x.fillStyle = TH.text; x.textAlign = 'center';
-    x.fillText(a.n, px, py + r + 14);
+    const rot = Math.atan2(ry * Math.cos(ang), -R * Math.sin(ang)) + Math.PI / 2;  // loodrecht op de baan
+    const active = Date.now() - (st.work[a.k] || 0) < 1500, big = (active ? 36 + Math.sin(tm * 8) * 3 : 32);
+    return { a, px, py, rot, active, big };
   });
+  const ringHalf = (g, from, to, alpha) => {
+    x.beginPath(); x.ellipse(g.px, g.py, g.big, g.big * .32, g.rot, from, to);
+    if (TH.dark) { x.shadowColor = g.a.c; x.shadowBlur = g.active ? 30 : 16; }
+    x.strokeStyle = g.a.c; x.lineWidth = g.active ? 7 : 5; x.globalAlpha = alpha; x.stroke(); x.globalAlpha = 1; x.shadowBlur = 0;
+  };
+  agRings.forEach(g => ringHalf(g, Math.PI, Math.PI * 2, .55));
   // ticket dat over de ring rijdt
   // elke open trade van de gedeelde portefeuille rijdt als cirkel over de ring, met de ticker erbij
   const open = (st.auto && st.auto.portfolio && st.auto.portfolio.open) || [];
@@ -1253,6 +1255,11 @@ function drawRing(time) {
     x.beginPath(); x.arc(px, py, r, 0, 7); x.fillStyle = col; x.fill(); x.globalAlpha = 1;
     x.font = '700 10px ui-monospace, monospace'; x.textAlign = 'center'; x.fillStyle = TH.text;
     x.fillText(`${short(rt.coin)} ${rt.side === 'long' ? '▲' : '▼'}${rt.state === 'entering' ? ' limiet' : ' ' + sgn(rt.upnl, 2)}`, px, py - r - 7);
+  });
+  agRings.forEach(g => {  // voorste helft over de trades heen, plus de naam
+    ringHalf(g, 0, Math.PI, 1);
+    x.font = '700 10px ui-monospace, monospace'; x.fillStyle = g.active ? g.a.c : TH.text; x.textAlign = 'center';
+    x.fillText(g.a.n, g.px, g.py + g.big + 12);  // naam altijd onder de ring (bovenaan valt die anders onder de balk)
   });
   // kern
   const pr = 48 + (st.feat.score ? Math.abs(st.feat.score) * 14 : 0) + Math.sin(tm * 2) * 2;
