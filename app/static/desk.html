@@ -1320,7 +1320,7 @@ function drawAllRing(tm) {
     x.lineWidth = 3; x.strokeStyle = col; x.stroke(); x.shadowBlur = 0;
     x.fillStyle = t ? '#fff' : col; x.font = '700 11px ui-monospace, monospace'; x.fillText(short(coin).slice(0, 6), px, py + 4);
     x.fillStyle = TH.text; x.font = '10px ui-monospace, monospace';
-    const lbl = t ? `${t.side === 'long' ? '▲' : '▼'} ${t.lev}x ${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}` : allState.by === 'score' ? `score ${m.score == null ? '–' : sgn(m.score, 2)}` : `edge ${edgeTxt(m.model && m.model.edge)}`;
+    const lbl = t ? `${t.side === 'long' ? '▲' : '▼'} ${t.lev}x ${t.state === 'entering' ? 'wacht op vulling' : sgn(t.upnl, 2)}` : !(m.model && m.model.edge != null) ? 'opwarmen…' : allState.by === 'score' ? `score ${m.score == null ? '–' : sgn(m.score, 2)}` : `edge ${edgeTxt(m.model.edge)}`;
     x.fillText(lbl, px, py + r + 15);
     allSpots.push({ coin, px, py, r });
   });
