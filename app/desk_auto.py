@@ -73,6 +73,35 @@ def sr_levels(cs: list[dict], k: int = 6) -> list[dict]:
     return [{"px": o["sum"] / o["n"], "n": o["n"], "last": o["last"]} for o in out]
 
 
+BT_LIST = "Zwerm (Hyperliquid)"
+
+
+def bt_symbol(coin: str) -> str:
+    """Symbool voor de backtestserver: aandelen (HIP-3, 'xyz:INTC') via Yahoo met lange historiek, crypto via Hyperliquid."""
+    return coin.split(":", 1)[1].upper() if ":" in coin else f"HL:{coin.upper()}"
+
+
+def bt_bias(coin: str) -> dict | None:
+    """Wat zeggen de dag-backtests nu over deze ticker? Aandeel van de winstgevende strategieën met een open koopsignaal."""
+    try:
+        from . import watchlist as wl
+        r = wl.scan_cached().get("results", {}).get(bt_symbol(coin))
+    except Exception:
+        return None
+    if not r or "error" in r and not r.get("periods"):
+        return None
+    prof, openp = r.get("profitable_count") or 0, r.get("open_profitable") or 0
+    best = r.get("best") or {}
+    if prof < 3:
+        trend = "onbekend"
+    else:
+        ratio = openp / prof
+        trend = "stijgend" if ratio >= .6 else "zwak" if ratio <= .2 else "gemengd"
+    return {"trend": trend, "prof": prof, "open": openp, "best": best.get("strategy"), "best_open": best.get("signal_open"),
+            "best_ret": best.get("total_return"), "bh": r.get("buy_and_hold_return"), "at": r.get("scanned_at"),
+            "period": r.get("period")}
+
+
 LEARN = {"on": True}  # geleerde gewichten gebruiken als ze beter zijn dan de vaste (aan/uit vanaf /desk)
 
 
@@ -384,7 +413,17 @@ class Swarm:
         self.log("spotter", "SCAN", f"flow {f['flow30']:+.2f} · boek {f['book']:+.2f} · score {f['score']:+.2f}", coin=m.coin)
         self.log("prior", "PRIJS", f"β {mo['prior']['beta']:.3f} · P(stijgt) {mo['p'] * 100:.1f}¢ · "
                                    f"verwachte beweging {mo['eMove']:.1f}bp · kosten {costs(cfg)['round']:.1f}bp", coin=m.coin)
+        bt = bt_bias(m.coin)  # dag-backtests: tegen hun richting in vraagt de zwerm 1¢ extra edge
+        against_bt = bool(bt) and ((mo["side"] == "long" and bt["trend"] == "zwak") or (mo["side"] == "short" and bt["trend"] == "stijgend"))
+        if against_bt:
+            min_edge += 1.0
         if mo["edge"] < min_edge:
+            if against_bt and mo["edge"] >= min_edge - 1:
+                self.log("edge", "PASS", f"{mo['side']} tegen de dag-backtests in ({bt['open']}/{bt['prof']} winstgevende strategieën "
+                         f"met open koopsignaal): 1¢ extra edge nodig", f"{mo['edge']:+.1f}¢", m.coin)
+                if el + every > .67 * W:
+                    m.decided = True
+                return
             self.log("edge", "PASS", f"{mo['side']} {mo['pDir'] * 100:.1f}¢ < break-even {mo['be'] * 100:.1f}¢ {min_edge:+g}¢",
                      f"{mo['edge']:+.1f}¢", m.coin)
             if el + every > .67 * W:
@@ -428,7 +467,7 @@ class Swarm:
                "beta": round(mo["prior"]["beta"], 3), "n": mo["prior"]["n"], "hit": mo["prior"]["hit"],
                "cost": costs(cfg)["round"], "src": mo.get("src"), **self.kelly_info,
                "room": round(room, 2) if room is not None else None, "wall": round(wall["px"], 8) if wall else None,
-               "wall_n": wall["n"] if wall else None}
+               "wall_n": wall["n"] if wall else None, "bt": bt, "bt_against": against_bt}
         bid, ask = m.best()
         limit = bid if mo["side"] == "long" else ask
         order = {"id": int(now * 1000), "coin": m.coin, "side": mo["side"], "usd": usd, "lev": lev, "edge": mo["edge"],
@@ -872,6 +911,35 @@ class Swarm:
             threading.Thread(target=self.scanner, daemon=True, name="desk-scan").start()
             threading.Thread(target=self.level_refresher, daemon=True, name="desk-levels").start()
             threading.Thread(target=self.trainer, daemon=True, name="desk-learn").start()
+            threading.Thread(target=self.backtest_sync, daemon=True, name="desk-backtest").start()
+
+    def backtest_sync(self) -> None:
+        """Elke ticker waar de zwerm op staat komt in de watchlist "Zwerm" van de backtestserver. Nieuwe tickers
+        worden meteen gebacktest (dagcandles, alle strategieën); daarna doet de gewone planning het elke avond."""
+        from . import watchlist as wl
+        time.sleep(90)
+        while True:
+            try:
+                with self.lock:
+                    coins = [c for c, v in self.coins.items() if v]
+                groups = wl.load_watchlist()
+                grp = next((g for g in groups if wl.list_name(g) == BT_LIST), None)
+                have = {x["yahoo"] for x in (grp or {}).get("symbols", [])}
+                add = [bt_symbol(c) for c in coins if bt_symbol(c) not in have]
+                if add:
+                    syms = (grp or {}).get("symbols", []) + [{"tv": c if ":" in c else f"HYPERLIQUID:{c}USD", "yahoo": bt_symbol(c),
+                                                              "name": c} for c in coins if bt_symbol(c) in add]
+                    wl.save_watchlist(wl.replace_lists(groups, [{"name": "ZWERM", "list": BT_LIST, "symbols": syms}],
+                                                       lambda n: n == BT_LIST))
+                    self.log("prior", "BACKTEST", f"{len(add)} ticker(s) toegevoegd aan de backtestlijst: {', '.join(add[:8])}")
+                done = wl.scan_cached().get("results", {})
+                todo = [y for y in {bt_symbol(c) for c in coins} if y not in done]
+                if todo and not wl.SCANNER.status()["running"]:
+                    if wl.SCANNER.start(todo, wl.default_periods()):
+                        self.log("prior", "BACKTEST", f"backtest gestart voor {len(todo)} nieuwe ticker(s)")
+            except Exception as e:
+                self.log("prior", "FOUT", f"backtestlijst bijwerken mislukt: {e}")
+            time.sleep(600)
 
     def trainer(self) -> None:
         """Elk uur de gewichten opnieuw leren uit de LEER-vensters van het huidige venster."""
@@ -1158,7 +1226,7 @@ class Swarm:
             markets = {c: {"on": self.coins[c], "px": m.px, "open": m.open0, "win": m.win * 1000, "ticket": m.ticket,
                            "model": {k: v for k, v in m.model.items() if k != "prior"},
                            "prior": m.model.get("prior", {}), "score": m.feat.get("score"),
-                           "levels": self.shown_levels(m), "trends": m.trends}
+                           "levels": self.shown_levels(m), "trends": m.trends, "bt": bt_bias(c)}
                        for c, m in self.markets.items()}
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,

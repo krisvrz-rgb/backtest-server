@@ -1407,6 +1407,8 @@ function explain(t, sm) {
       maal vertrouwen ${fmt(w.lev_conf * 100, 0)}% (edge ${sgn(w.edge, 1, '¢')}) = <b>${w.lev}x</b>${w.want_lev > w.lev ? ` (begrensd op max ${w.lev_cap}x)` : ''}.` : `Kelly: σ ${fmt(w.sd, 0)} bp → hefboom ${w.lev}x.`}
       Kelly ×${w.kelly} wilde ${usd(w.kelly_usd)} positie,
       ${w.capped ? `afgetopt op ${w.max_margin_pct}% marge` : 'binnen de grens'} → ${usd(w.margin, 2)} marge, ${usd(w.usd, 2)} positie.</p>
+    ${w.bt ? `<p>Dag-backtests: ${w.bt.open} van de ${w.bt.prof} winstgevende strategieën hebben nu een open koopsignaal (${w.bt.trend}), beste is ${w.bt.best || '–'}.
+      ${w.bt_against ? 'De trade ging daartegenin, dus vroeg de zwerm 1¢ extra edge.' : 'Geen tegenwind van de dagtrend.'}</p>` : ''}
     ${w.wall ? `<p>Ruimte: de eerste ${t.side === 'long' ? 'weerstand' : 'steun'} lag op ${fmt(w.wall, pxD())} (${w.wall_n}x geraakt), ${fmt(w.room, 2)}σ verder. Genoeg ruimte om in te stappen (minstens 0,3σ).</p>` : ''}
     ${t.sl || t.tp ? `<p>Uitstap: stop ${t.sl ? fmt(t.sl, pxD()) : 'uit'}${t.plan ? ` (${t.plan.sl})` : ''}, take-profit ${t.tp ? fmt(t.tp, pxD()) : 'uit'}${t.plan ? ` (${t.plan.tp})` : ''}${t.plan && t.plan.rr ? `, winst/risico ${fmt(t.plan.rr, 2)}` : ''}.
       Draait het model tijdens de trade om (de andere kant krijgt edge), dan sluit hij meteen.
@@ -1635,6 +1637,8 @@ const allState = { rows: [], filter: new Set(), n: 0, order: [], sortedAt: 0, by
 const edgeCol = e => e == null ? '#8a92a3' : e >= 0 ? `rgb(${Math.round(22 + 30 * (1 - clamp(e / 10, 0, 1)))},${Math.round(150 + 60 * clamp(e / 10, 0, 1))},100)`
   : `rgb(${Math.round(170 + 69 * clamp(-e / 20, 0, 1))},58,93)`;
 const edgeTxt = e => e == null ? '–' : e < -99 ? '< −99¢' : sgn(e, 1, '¢');
+const btCell = b => !b ? '<span class="muted">wacht op backtest</span>'
+  : `<span class="${b.trend === 'stijgend' ? 'up' : b.trend === 'zwak' ? 'down' : 'muted'}" title="beste strategie: ${b.best || '–'}${b.best_open ? ' (koopsignaal open)' : ''} · gebacktest ${b.at || ''}">${b.trend} · ${b.open}/${b.prof}</span>`;
 const sortVal = (a, c) => { const m = a.markets[c] || {}; return allState.by === 'score' ? Math.abs(m.score || 0) : ((m.model || {}).edge ?? -1e9); };
 // vertrouwen in een open trade: de huidige kans van het model dat de koers zijn kant op gaat tot het venster sluit
 function tradeConf(t) {
@@ -1685,12 +1689,13 @@ function renderAll() {
   }
   renderTrades();
   $('sortSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.by === allState.by));
-  $('edgeList').innerHTML = '<tr><th>#</th><th>ticker</th><th>edge</th><th>kant</th><th>kans</th><th>break-even</th><th>score</th><th>verwachte beweging</th><th>trade</th></tr>'
+  $('edgeList').innerHTML = '<tr><th>#</th><th>ticker</th><th>edge</th><th>kant</th><th>kans</th><th>break-even</th><th>score</th><th>verwachte beweging</th><th title="Dag-backtests op de backtestserver: hoeveel winstgevende strategieën nu een open koopsignaal hebben">dag-backtest</th><th>trade</th></tr>'
     + allState.order.map((c, i) => { const m = a.markets[c] || {}, mo = m.model || {}, tk = m.ticket;
       return `<tr data-c="${c}" style="cursor:pointer"><td class="muted">${i + 1}</td><td><b style="color:${tColor(c)}">${short(c)}</b></td>
         <td style="color:${edgeCol(mo.edge)};font-weight:700">${edgeTxt(mo.edge)}</td><td>${mo.side ? (mo.side === 'long' ? '▲ long' : '▼ short') : '–'}</td>
         <td>${mo.pDir == null ? '–' : cents(mo.pDir)}</td><td>${mo.be == null ? '–' : mo.be > 1 ? '> 100¢' : cents(mo.be)}</td>
         <td>${m.score == null ? '–' : sgn(m.score, 2)}</td><td>${mo.eMove == null ? '–' : fmt(mo.eMove, 1) + ' bp'}</td>
+        <td>${btCell(m.bt)}</td>
         <td>${tk ? `<span class="${tk.side === 'long' ? 'up' : 'down'}">${tk.side} ${tk.lev}x</span>` : '<span class="muted">–</span>'}</td></tr>`; }).join('');
   $('allCards').innerHTML = allState.order.map(c => {
     const m = a.markets[c] || {}, mo = m.model || {}, tk = m.ticket, h = a.history.filter(x => x.coin === c), pnl = h.reduce((s, x) => s + x.pnl, 0);
