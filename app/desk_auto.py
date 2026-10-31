@@ -132,9 +132,10 @@ class Swarm:
         self.day_start: float | None = saved.get("day_start")
         self.halted: str | None = saved.get("halted") if saved.get("day") == _today() else None
         self.lock = threading.RLock()
-        self.trace: deque = deque(maxlen=300)
+        self.trace: deque = deque(maxlen=3000)
         self.seq = 0
-        self.history: deque = deque(saved.get("history", []), maxlen=200)
+        self.history: deque = deque(saved.get("history", []), maxlen=1000)
+        self.lev: dict[str, int] = {}
         self.markets = {c: Market(c) for c in self.coins}
         self.pending: dict | None = None
         self.errors = 0
@@ -213,7 +214,8 @@ class Swarm:
         f, mo, el = m.feat, m.model, now - m.win
         if not m.sample and el >= DECIDE_FROM:
             m.sample = {"s": f["score"], "px": m.px, "sd": mo["sd"]}
-        if not (self.on and self.coins[m.coin]) or self.halted or m.decided or m.ticket or self.pending:
+        live = self.is_live()
+        if not self.coins[m.coin] or (live and self.halted) or m.decided or m.ticket or (live and self.pending):
             return
         if el < DECIDE_FROM or el > DECIDE_UNTIL or int(el) % 15:
             return
@@ -225,27 +227,54 @@ class Swarm:
             if el >= DECIDE_UNTIL - 15:
                 m.decided = True
             return
-        usd = min(desk.num(cfg, "DESK_ORDER_USD", 20), desk.num(cfg, "DESK_MAX_USD", 25))
         m.decided = True
         self.log("edge", "EDGE", f"{mo['side']} {mo['pDir'] * 100:.1f}¢ vs break-even {mo['be'] * 100:.1f}¢",
                  f"{mo['edge']:+.1f}¢", m.coin)
-        order = {"id": int(now * 1000), "coin": m.coin, "side": mo["side"], "usd": usd, "edge": mo["edge"],
-                 "p": mo["pDir"], "be": mo["be"], "win": m.win, "expires": now + APPROVE_SECONDS}
-        if self.confirm:
+        lev, usd = self.kelly(m, cfg)
+        self.log("kelly", "SIZE", f"σ 5m {mo['sd'] * 1e4:.1f}bp → hefboom {lev}x · marge ${usd / lev:,.2f} → positie ${usd:,.2f}",
+                 coin=m.coin)
+        order = {"id": int(now * 1000), "coin": m.coin, "side": mo["side"], "usd": usd, "lev": lev, "edge": mo["edge"],
+                 "p": mo["pDir"], "be": mo["be"], "win": m.win, "expires": now + APPROVE_SECONDS, "paper": not live}
+        if not live:
+            self.execute_paper(order)
+        elif self.confirm:
             self.pending = order
             self.log("taker", "WACHT", f"{mo['side']} ${usd:g} wacht op jouw goedkeuring", "mens", m.coin)
         else:
             self.execute(order, cfg)
 
+    def kelly(self, m: Market, cfg: dict) -> tuple[int, float]:
+        """Kelly kiest de hefboom uit de volatiliteit: een tegenvaller van 2σ tot het einde van het venster mag
+        hooguit DESK_RISK_PCT (standaard 10%) van de marge kosten, dus hefboom = 10% / (2σ). Begrensd door
+        DESK_MAX_LEV en de maximale hefboom van de markt. Positie = marge × hefboom, nooit boven DESK_MAX_USD."""
+        sd = max(m.model.get("sd", 0.0), 1e-5)
+        cap = desk.num(cfg, "DESK_MAX_LEV", 3)
+        market_max = desk.universe().get(m.coin, {}).get("maxLeverage")
+        if market_max:
+            cap = min(cap, market_max)
+        lev = int(_clamp(math.floor(desk.num(cfg, "DESK_RISK_PCT", 10) / 100 / (2 * sd)), 1, max(1, cap)))
+        usd = min(desk.num(cfg, "DESK_ORDER_USD", 20) * lev, desk.num(cfg, "DESK_MAX_USD", 25))
+        return lev, round(usd, 2)
+
+    def execute_paper(self, order: dict) -> None:
+        m = self.markets[order["coin"]]
+        m.ticket = {**order, "entry": m.px, "size": order["usd"] / m.px, "opened": time.time()}
+        self.log("taker", "TAKE", f"papier {order['side']} ${order['usd']:g} ({order['lev']}x) @ {m.px:,.4g}", coin=m.coin)
+
     def execute(self, order: dict, cfg: dict) -> None:
         m = self.markets[order["coin"]]
         try:
+            if self.lev.get(order["coin"]) != order["lev"]:
+                lr = desk.set_leverage(cfg, order["coin"], order["lev"])
+                if not lr["ok"]:
+                    raise RuntimeError("hefboom instellen mislukt: " + json.dumps(lr["result"])[:150])
+                self.lev[order["coin"]] = order["lev"]
             res = desk.do_open(cfg, order["coin"], order["side"], order["usd"], by="zwerm")
             if not res["ok"]:
                 raise RuntimeError(json.dumps(res["result"])[:200])
             self.errors = 0
             m.ticket = {**order, "entry": res["mid"], "size": res["size"], "opened": time.time()}
-            self.log("taker", "TAKE", f"LIVE {order['side']} ${order['usd']:g} @ {res['mid']:,.2f}", coin=m.coin)
+            self.log("taker", "TAKE", f"LIVE {order['side']} ${order['usd']:g} ({order['lev']}x) @ {res['mid']:,.4g}", coin=m.coin)
         except Exception as e:
             self.errors += 1
             self.log("taker", "FOUT", f"order mislukt ({self.errors}/3): {e}", coin=m.coin)
@@ -259,14 +288,18 @@ class Swarm:
         if not t:
             return
         try:
-            if cfg is None:
-                cfg = desk.live_config()
-            desk.do_close(cfg, t["coin"], by="zwerm")
+            if not t.get("paper"):
+                if cfg is None:
+                    cfg = desk.live_config()
+                desk.do_close(cfg, t["coin"], by="zwerm")
+            cfg = cfg or desk.config()
             sign = 1 if t["side"] == "long" else -1
             pnl = t["usd"] * sign * (m.px - t["entry"]) / t["entry"] - t["usd"] * 2 * desk.num(cfg, "DESK_FEE_BPS", 4.5) / 1e4
             self.history.append({"t": int(time.time() * 1000), "opened": int(t["opened"] * 1000), "coin": t["coin"], "side": t["side"], "entry": t["entry"],
-                                 "exit": m.px, "usd": t["usd"], "pnl": round(pnl, 4), "edge": round(t["edge"], 2)})
-            self.log("closer", "AFREK", f"{t['side']} {t['entry']:,.2f} → {m.px:,.2f} (geschat)", f"{pnl:+.2f}", m.coin)
+                                 "exit": m.px, "usd": t["usd"], "lev": t.get("lev"), "pnl": round(pnl, 4), "edge": round(t["edge"], 2),
+                                 "paper": bool(t.get("paper"))})
+            self.log("closer", "AFREK", f"{'papier' if t.get('paper') else 'LIVE'} {t['side']} {t['entry']:,.4g} → {m.px:,.4g}",
+                     f"{pnl:+.2f}", m.coin)
             self.save()
         except Exception as e:
             self.log("closer", "FOUT", f"sluiten mislukt: {e}. Controleer Hyperliquid!", coin=m.coin)
@@ -335,11 +368,12 @@ class Swarm:
         with self.lock:
             st = desk.status()
             cfg = desk.config() if st["auto_allowed"] else None
-            if not st["auto_allowed"] and (self.on or any(m.ticket for m in self.markets.values())):
+            if not st["auto_allowed"] and (self.on or any(m.ticket and not m.ticket.get("paper") for m in self.markets.values())):
                 self.log("closer", "STOP", "live/DESK_AUTO staat niet meer aan in desk.env")
                 self.on = False
                 for m in self.markets.values():
-                    m.ticket = None
+                    if m.ticket and not m.ticket.get("paper"):
+                        m.ticket = None
                 self.save()
             if self.pending and now > self.pending["expires"]:
                 self.log("taker", "NEE", "goedkeuring verlopen", coin=self.pending["coin"])
@@ -356,8 +390,7 @@ class Swarm:
                 self.new_window(m, now, cfg)
                 m.feat = m.features(now)
                 m.model = m.compute(m.feat, now, cfg or desk.config())
-                if cfg:
-                    self.decide(m, now, cfg)
+                self.decide(m, now, cfg or desk.config())
 
     # ---------- bediening vanaf /desk ----------
     def start(self) -> None:
@@ -366,10 +399,15 @@ class Swarm:
             threading.Thread(target=self.feed, daemon=True, name="desk-feed").start()
             threading.Thread(target=self.loop, daemon=True, name="desk-swarm").start()
 
+    def is_live(self) -> bool:
+        return self.on and desk.status()["auto_allowed"]
+
     def set(self, on: bool | None = None, confirm: bool | None = None, coins: dict | None = None) -> None:
-        cfg = desk.live_config()
-        if not desk.status()["auto_allowed"]:
-            raise PermissionError("DESK_AUTO=1 ontbreekt in data/desk.env")
+        """Coins volgen mag altijd (op papier); aan/uit en bevestigen vragen live-toestemming in desk.env."""
+        if on is not None or confirm is not None:
+            if not desk.status()["auto_allowed"]:
+                raise PermissionError("DESK_AUTO=1 ontbreekt in data/desk.env")
+        cfg = desk.config()
         self.start()
         with self.lock:
             for coin, val in (coins or {}).items():
@@ -391,6 +429,8 @@ class Swarm:
                             self.pending = None
                         if m.ticket:
                             self.settle(m, cfg)
+                    else:
+                        self.resubscribe = True
                     self.log("prior", "COIN", "zwerm handelt nu " + ("wel" if val else "niet meer"), coin=coin)
             if confirm is not None and confirm != self.confirm:
                 self.confirm = confirm
@@ -404,7 +444,7 @@ class Swarm:
                             self.settle(m, cfg)
                     for c in list(self.coins):  # kill switch: alles dicht
                         try:
-                            desk.do_close(cfg, c, by="kill")
+                            desk.do_close(desk.live_config(), c, by="kill")
                         except Exception as e:
                             self.log("closer", "FOUT", f"sluiten mislukt: {e}", coin=c)
                 self.errors = 0
@@ -436,7 +476,7 @@ class Swarm:
                            "prior": m.model.get("prior", {}), "score": m.feat.get("score")}
                        for c, m in self.markets.items()}
             return {
-                "allowed": st["auto_allowed"], "on": self.on, "confirm": self.confirm, "coins": self.coins,
+                "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm, "coins": self.coins,
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,
                 "day_start": self.day_start, "history": list(self.history)[-50:],
                 "trace": [t for t in self.trace if t["id"] > since], "seq": self.seq,

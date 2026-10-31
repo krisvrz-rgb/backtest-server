@@ -242,7 +242,10 @@ def desk_auto_state(since: int = 0):
 @app.post("/api/desk/auto")
 def desk_auto_set(req: DeskAuto):
     try:
-        desk.check_token(req.token)
+        if desk.status()["live"]:  # zodra echt geld mogelijk is, vraagt elke wijziging het token
+            desk.check_token(req.token)
+        elif req.on is not None or req.confirm is not None:
+            raise PermissionError("Live handel staat uit; alleen markten volgen op papier kan")
         swarm.set(on=req.on, confirm=req.confirm, coins=req.coins)
         return swarm.snapshot(swarm.seq)
     except PermissionError as e:
@@ -588,8 +591,7 @@ def stop_scan():
 @app.on_event("startup")
 def _start_scheduler():
     start_scheduler()
-    if desk.status()["auto_allowed"]:
-        swarm.start()
+    swarm.start()  # op papier tot live aan staat; volgt alle aangezette markten en leert 24/7
 
 
 class ScheduleSettings(BaseModel):

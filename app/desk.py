@@ -12,7 +12,9 @@ data/desk.env, één sleutel=waarde per regel:
     DESK_LIVE=1                zonder deze regel blijft alles papier
     DESK_MAX_USD=25            maximale positiegrootte per order in dollar
     DESK_AUTO=1                optioneel: de zwerm handelt zelfstandig op de server (zie desk_auto.py)
-    DESK_ORDER_USD=20          grootte per autonome order (afgekapt op DESK_MAX_USD)
+    DESK_ORDER_USD=20          marge per autonome order; positie = marge × hefboom, afgekapt op DESK_MAX_USD
+    DESK_MAX_LEV=3             hoogste hefboom die de Kelly-agent mag kiezen (isolated margin)
+    DESK_RISK_PCT=10           hefboom zo dat een tegenvaller van 2σ hooguit zoveel % van de marge kost
     DESK_DAILY_LOSS=10         autonome handel stopt voor de rest van de UTC-dag na zoveel verlies
     DESK_FEE_BPS=4.5           kosten per kant waarmee de zwerm rekent
     DESK_MIN_EDGE=2            minimale edge in centen boven break-even
@@ -47,7 +49,7 @@ def config() -> dict:
                 k, v = line.split("=", 1)
                 cfg[k.strip()] = v.strip()
     for k in list(cfg) + ["HL_SECRET_KEY", "HL_ACCOUNT_ADDRESS", "HL_SUBACCOUNT", "DESK_TOKEN", "DESK_LIVE", "DESK_MAX_USD",
-                          "DESK_AUTO", "DESK_ORDER_USD", "DESK_DAILY_LOSS", "DESK_FEE_BPS", "DESK_MIN_EDGE"]:
+                          "DESK_AUTO", "DESK_ORDER_USD", "DESK_MAX_LEV", "DESK_RISK_PCT", "DESK_DAILY_LOSS", "DESK_FEE_BPS", "DESK_MIN_EDGE"]:
         if os.environ.get(k):
             cfg[k] = os.environ[k]
     return cfg
@@ -273,6 +275,15 @@ def do_open(cfg: dict, coin: str, side: str, usd: float, slippage: float = 0.003
         res = _exchange(cfg).order(coin, is_buy, size, _limit_px(coin, is_buy, slippage, mid), {"limit": {"tif": "Ioc"}})
     _log({"action": "open", "by": by, "coin": coin, "side": side, "usd": usd, "size": size, "mid": mid, "result": res})
     return {"ok": res.get("status") == "ok", "size": size, "mid": mid, "result": res}
+
+
+def set_leverage(cfg: dict, coin: str, lev: int) -> dict:
+    """Hefboom voor deze markt instellen (isolated, zodat een fout nooit de rest van het account raakt)."""
+    coin = _coin(coin)
+    with _lock:
+        res = _exchange(cfg).update_leverage(int(lev), coin, False)
+    _log({"action": "leverage", "coin": coin, "lev": int(lev), "result": res})
+    return {"ok": res.get("status") == "ok", "result": res}
 
 
 def _limit_px(coin: str, is_buy: bool, slippage: float, mid: float | None = None) -> float:

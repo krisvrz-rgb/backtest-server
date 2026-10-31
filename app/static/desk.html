@@ -141,6 +141,21 @@
   table.scan th { text-align: left; font: 600 10px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 4px 8px; border-bottom: 1px solid var(--border); }
   table.scan td { padding: 4px 8px; border-bottom: 1px dashed var(--border); white-space: nowrap; }
   table.scan .btn { padding: 3px 8px; font-size: 11px; }
+  .tabs { display: flex; gap: 4px; padding: 8px 18px 0; }
+  .tabs button { border: 1px solid var(--border); border-bottom: 0; background: var(--panel-2); padding: 7px 16px; border-radius: 8px 8px 0 0; font: 600 12px inherit; cursor: pointer; color: var(--muted); }
+  .tabs button.on { background: var(--panel); color: var(--text); }
+  .allview { padding: 0 18px 30px; display: grid; gap: 10px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .chips button { border: 1.5px solid var(--c); color: var(--c); background: var(--panel); border-radius: 14px; padding: 3px 10px; font: 700 11px var(--mono); cursor: pointer; }
+  .chips button.on { background: var(--c); color: #fff; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+  .card { border: 1px solid var(--border); border-left: 4px solid var(--c); border-radius: 8px; padding: 7px 10px; font: 11px var(--mono); }
+  .card b.t { color: var(--c); font-size: 13px; }
+  .allfeed { font: 11px var(--mono); max-height: 70vh; overflow: auto; }
+  .allfeed .r { display: grid; grid-template-columns: 62px 86px 74px 1fr auto; gap: 8px; align-items: center; padding: 3px 6px; border-left: 4px solid var(--c); border-bottom: 1px dashed var(--border); }
+  .allfeed .r:nth-child(odd) { background: var(--panel-2); }
+  .allfeed .tk { color: var(--c); font-weight: 700; }
+  .allfeed .who { font-weight: 700; padding: 1px 5px; border-radius: 4px; color: #fff; text-align: center; font-size: 10px; }
   .foot { position: sticky; bottom: 0; background: #15171c; color: #cfd3db; font: 11px var(--mono); padding: 6px 18px; display: flex; gap: 26px; flex-wrap: wrap; }
   .foot b { color: #fff; }
 
@@ -187,7 +202,20 @@
 
 <div class="agents" id="agents"></div>
 
-<main>
+<div class="tabs"><button class="on" data-tab="desk">Desk</button><button data-tab="all">Alle tickers</button></div>
+<section id="tabAll" class="allview" style="display:none">
+  <div class="panel">
+    <div class="ph"><h2>Alle tickers</h2><span class="sub">de zwerm op de server · elke markt in zijn eigen kleur · klik een ticker om te filteren</span>
+      <span class="right" id="allMode">–</span></div>
+    <div class="chips" id="allChips"></div>
+    <div class="cards" id="allCards"></div>
+  </div>
+  <div class="panel">
+    <div class="ph"><h2>Gecombineerde trace</h2><span class="sub">nieuwste boven</span><span class="right" id="allCount">0 regels</span></div>
+    <div class="allfeed" id="allFeed"></div>
+  </div>
+</section>
+<main id="tabDesk">
   <section class="panel">
     <div class="ph"><h2>The Reactor</h2><span class="sub">zes spoelen houden de ring · één ticket rijdt mee · het model in de kern</span>
       <span class="right" id="stage">VENSTER –</span></div>
@@ -630,9 +658,10 @@ async function pollAuto() {
     const a = await (await fetch('/api/desk/auto?since=' + st.autoSeq)).json();
     for (const t of a.trace) {
       const ag = AG[t.agent] ? t.agent : 'prior';
-      trace(ag, null, t.act, `<b style="color:var(--down)">LIVE</b> ${t.text}`, t.val);
-      if (['TAKE', 'AFREK', 'STOP', 'AAN', 'UIT'].includes(t.act)) wire(ag, 'live: ' + t.text, t.val || null);
+      if (a.live && (!t.coin || t.coin === st.coin)) trace(ag, null, t.act, `<b style="color:var(--down)">LIVE</b> ${t.text}`, t.val);
+      if (['TAKE', 'AFREK', 'STOP', 'AAN', 'UIT'].includes(t.act)) wire(ag, (a.live ? 'live: ' : 'zwerm: ') + t.text, t.val || null);
     }
+    allFeed(a.trace);
     const changed = a.trace.some(t => ['TAKE', 'AFREK'].includes(t.act));
     const coinsChanged = JSON.stringify(a.coins) !== JSON.stringify(st.auto && st.auto.coins);
     st.autoSeq = a.seq; st.auto = a; if (changed) renderMarks(); if (coinsChanged && scanRows.length) renderScan();
@@ -642,11 +671,14 @@ async function pollAuto() {
 let notified = 0;
 function renderAuto() {
   const a = st.auto, ok = a && a.allowed;
-  $('autoBtn').style.display = ok ? '' : 'none'; $('confBtn').style.display = ok ? '' : 'none'; if (!ok) $('coinAuto').style.display = 'none';
+  if (a) {  // de server-zwerm volgt deze markten altijd, op papier tot live aan staat
+    $('coinAuto').style.display = '';
+    $('coinAuto').innerHTML = Object.entries(a.coins).map(([c, v]) => `<button data-c="${c}" class="${v ? 'on' : ''}" title="${c}: zwerm ${v ? 'volgt' : 'volgt niet'}">${v ? '●' : '○'} ${short(c)}</button>`).join('');
+    renderAll();
+  } else $('coinAuto').style.display = 'none';
+  $('autoBtn').style.display = ok ? '' : 'none'; $('confBtn').style.display = ok ? '' : 'none';
   if (!ok) { $('approve').classList.remove('on'); return; }
   $('autoBtn').textContent = 'Zwerm live: ' + (a.on ? 'AAN' : 'UIT');
-  $('coinAuto').style.display = '';
-  $('coinAuto').innerHTML = Object.entries(a.coins).map(([c, v]) => `<button data-c="${c}" class="${v ? 'on' : ''}" title="${c}: zwerm ${v ? 'handelt' : 'handelt niet'}">${v ? '●' : '○'} ${c}</button>`).join('');
   $('autoBtn').className = 'btn ' + (a.on ? 'danger' : '');
   $('confBtn').textContent = 'Bevestigen: ' + (a.confirm ? 'AAN' : 'UIT');
   $('confBtn').className = 'btn ' + (a.confirm ? '' : 'danger');
@@ -903,7 +935,7 @@ async function loadScan() {
   renderScan();
 }
 function renderScan() {
-  const live = st.auto && st.auto.allowed, w = watch(), filt = $('scanFilter').value;
+  const live = !!st.auto, w = watch(), filt = $('scanFilter').value;
   const rows = scanRows.filter(a => filt === 'all' || (filt === 'stock') === a.stock);
   const big = v => v >= 1e9 ? fmt(v / 1e9, 1) + 'B' : v >= 1e6 ? fmt(v / 1e6, 1) + 'M' : fmt(v / 1e3, 0) + 'K';
   $('scanBody').innerHTML = rows.map((a, i) => {
@@ -923,11 +955,50 @@ $('scanBody').onclick = async e => {
   if (v) { const w = watch(); if (!w.includes(v) && !BASE.includes(v)) localStorage.setItem('desk.watch', JSON.stringify([...w, v])); setCoin(v); scrollTo({ top: 0, behavior: 'smooth' }); }
   if (z) {
     const on = !st.auto.coins[z];
-    if (on && !confirm(`Zwerm laten handelen op ${z}? Echt geld zodra de zwerm live staat.`)) return;
+    if (on && st.auto.live && !confirm(`Zwerm laten handelen op ${z}? Echt geld.`)) return;
     try { await autoPost('/api/desk/auto', { coins: { [z]: on } }); } catch (err) { alert(err.message); }
     await pollAuto(); renderScan();
   }
 };
+// ---------- tabblad Alle tickers ----------
+const TCOL = ['#e5383b', '#2463eb', '#f08c00', '#2fbf4a', '#9b5de5', '#13b5a6', '#d6336c', '#0b7285', '#e67700', '#5c940d', '#7048e8', '#c2255c', '#1098ad', '#862e9c'];
+const tColor = c => { if (!c) return '#8a92a3'; let h = 0; for (const ch of c) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return TCOL[h % TCOL.length]; };
+const allState = { rows: [], filter: new Set(), n: 0 };
+function allFeed(lines) {
+  if (!lines.length) return;
+  for (const t of lines) allState.rows.unshift(t);
+  allState.rows.length = Math.min(allState.rows.length, 1500); allState.n += lines.length;
+  if ($('tabAll').style.display !== 'none') renderFeed();
+}
+function renderFeed() {
+  const f = allState.filter, rows = allState.rows.filter(t => !f.size || f.has(t.coin)).slice(0, 400);
+  $('allFeed').innerHTML = rows.map(t => { const ag = AG[t.agent] || AG.prior, txt = t.coin ? t.text.replace(t.coin + ' · ', '') : t.text;
+    return `<div class="r" style="--c:${tColor(t.coin)}"><span class="muted">${hhmmss(t.t)}</span><span class="tk">${t.coin ? short(t.coin) : 'ZWERM'}</span>
+      <span class="who" style="background:${ag.c}">${t.act}</span><span>${txt}</span><span>${t.val || ''}</span></div>`; }).join('');
+  $('allCount').textContent = allState.n + ' regels';
+}
+function renderAll() {
+  if ($('tabAll').style.display === 'none' || !st.auto) return;
+  const a = st.auto, coins = Object.keys(a.coins).filter(c => a.coins[c]);
+  $('allMode').innerHTML = a.live ? '<b style="color:var(--down)">LIVE</b>' : 'PAPIER · zet markten aan met de knoppen bovenaan of in de scanner';
+  $('allChips').innerHTML = coins.map(c => `<button style="--c:${tColor(c)}" class="${allState.filter.has(c) ? 'on' : ''}" data-c="${c}">${short(c)}</button>`).join('')
+    + (allState.filter.size ? '<button style="--c:#8a92a3" data-c="">alles tonen</button>' : '');
+  $('allCards').innerHTML = coins.map(c => {
+    const m = a.markets[c] || {}, mo = m.model || {}, tk = m.ticket, h = a.history.filter(x => x.coin === c), pnl = h.reduce((s, x) => s + x.pnl, 0);
+    return `<div class="card" style="--c:${tColor(c)}"><div class="kv"><b class="t">${short(c)}</b><span>${m.px ? fmt(m.px, m.px >= 100 ? 2 : 4) : '–'}</span></div>
+      <div class="kv"><span>score</span><span>${m.score == null ? '–' : sgn(m.score, 2)}</span></div>
+      <div class="kv"><span>edge</span><span class="${(mo.edge || 0) >= 0 ? 'up' : 'down'}">${mo.edge == null ? '–' : sgn(mo.edge, 1, '¢')}</span></div>
+      <div class="kv"><span>Prior</span><span>${m.prior && m.prior.n ? `β ${fmt(m.prior.beta, 2)} · ${m.prior.hit == null ? '–' : fmt(m.prior.hit * 100, 0) + '%'} · n ${m.prior.n}` : 'leert…'}</span></div>
+      <div class="kv"><span>ticket</span><span>${tk ? `${tk.side} ${tk.lev || 1}x $${tk.usd}` : '–'}</span></div>
+      <div class="kv"><span>pnl (${h.length})</span><span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 2)}</span></div></div>`; }).join('') || '<span class="muted">De zwerm volgt nog geen markten.</span>';
+}
+$('allChips').onclick = e => { const c = e.target.dataset.c; if (c === undefined) return;
+  if (!c) allState.filter.clear(); else allState.filter.has(c) ? allState.filter.delete(c) : allState.filter.add(c); renderAll(); renderFeed(); };
+document.querySelector('.tabs').onclick = e => { const t = e.target.dataset.tab; if (!t) return;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  $('tabDesk').style.display = t === 'desk' ? '' : 'none'; $('tabAll').style.display = t === 'all' ? '' : 'none';
+  if (t === 'all') { renderAll(); renderFeed(); } else chart.applyOptions({ width: $('chart').clientWidth }); };
+
 $('apYes').onclick = () => answer(true); $('apNo').onclick = () => answer(false);
 $('autoBtn').onclick = async () => {
   const on = !st.auto.on;
@@ -939,7 +1010,7 @@ $('autoBtn').onclick = async () => {
 $('coinAuto').onclick = async e => {
   const c = e.target.closest('button') && e.target.closest('button').dataset.c; if (!c) return;
   const v = !st.auto.coins[c];
-  if (v && st.auto.on && !confirm(`Zwerm ook laten handelen op ${c}? Echt geld.`)) return;
+  if (v && st.auto.live && !confirm(`Zwerm ook laten handelen op ${c}? Echt geld.`)) return;
   try { await autoPost('/api/desk/auto', { coins: { [c]: v } }); } catch (err) { alert(err.message); } pollAuto();
 };
 $('confBtn').onclick = async () => {

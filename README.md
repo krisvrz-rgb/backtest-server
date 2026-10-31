@@ -106,6 +106,16 @@ van de openbare Hyperliquid-websocket; zonder verbinding valt de pagina terug op
 - **Edge** vergelijkt de winkans met de break-even na kosten (standaard taker 4,5 bp per kant + 1 bp slippage).
 - **Kelly** bepaalt de grootte (kwart-Kelly, afgetopt), **Taker** voert uit, **Closer** rekent af bij sluiting.
 
+**Server-zwerm op papier.** De zwerm op de server draait altijd en volgt elke markt die je aanzet (knoppen
+bovenaan of "Zwerm" in de scanner). Zolang live niet aan staat, handelt hij op papier: zo leert Prior 24/7, ook
+als de pagina dicht is. Het tabblad **Alle tickers** toont per markt score, edge, Prior en pnl, en een
+gecombineerde trace waarin elke ticker zijn eigen kleur heeft.
+
+**Hefboom.** De Kelly-agent kiest per trade zelf de hefboom: zo dat een tegenvaller van 2σ tot het einde van het
+venster hooguit `DESK_RISK_PCT` (10%) van de marge kost, begrensd door `DESK_MAX_LEV` (3) en de max van de
+markt. Live zet hij die hefboom op Hyperliquid (isolated margin) vóór de order. Positie = `DESK_ORDER_USD` × hefboom,
+nooit boven `DESK_MAX_USD`.
+
 **Scanner.** Onderaan `/desk` staat een scanner over alle Hyperliquid-perps, ook de HIP-3-beurzen met tokenized
 aandelen (coinnamen als `xyz:TSLA`). Voorselectie: minstens $2M dagvolume en spread onder 8 bp; van de 60 grootste
 markten meet hij de 5-minutenbeweging (σ) van de laatste 12 uur en sorteert op **ratio** = σ ÷ kosten per ronde.
@@ -127,7 +137,9 @@ Standaard is alles papier (saldo per coin in de browser). Echt geld loopt via de
    DESK_LIVE=1
    DESK_AUTO=1
    DESK_MAX_USD=25              maximum per order
-   DESK_ORDER_USD=20            grootte per order
+   DESK_ORDER_USD=20            marge per order (positie = marge × hefboom)
+   DESK_MAX_LEV=3               hoogste hefboom die Kelly mag kiezen
+   DESK_RISK_PCT=10
    DESK_DAILY_LOSS=10           stopt voor de rest van de UTC-dag na zoveel verlies
    DESK_FEE_BPS=4.5
    DESK_MIN_EDGE=2
