@@ -47,8 +47,10 @@
 
   .ctlbar { display: flex; align-items: center; gap: 8px; padding: 6px 18px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .ctlbar .cap { margin-left: 6px; }
-  .ctlbar.zw { flex-wrap: nowrap; } .ctlbar.zw .seg { overflow-x: auto; max-width: calc(100vw - 140px); flex: none; }
-  .ctlbar.zw .seg button { white-space: nowrap; }
+  .ctlbar.zw { display: block; padding: 4px 18px; } .ctlbar.zw summary { cursor: pointer; font: 11px var(--mono); color: var(--muted); list-style: none; }
+  .ctlbar.zw summary::before { content: "▸ "; } .ctlbar.zw[open] summary::before { content: "▾ "; }
+  .ctlbar.zw .seg { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 6px; } .ctlbar.zw .seg button { white-space: nowrap; }
+  .ctlbar.zw .seg button.blk { opacity: .45; text-decoration: line-through; }
   .top .clock { margin-left: 8px; }
   .mpct { display: flex; align-items: center; gap: 5px; font: 600 12px var(--mono); }
   .mpct input { width: 54px; font: 600 13px var(--mono); padding: 4px 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
@@ -269,7 +271,7 @@
   <button class="btn" id="themeBtn" title="Donker of licht thema">☾</button>
   <button class="btn" id="setBtn">Instellingen</button>
 </div>
-<div class="ctlbar zw"><span class="cap">zwerm volgt</span><span class="seg" id="coinAuto" style="display:none" title="Klik om een markt aan of uit te zetten voor de zwerm"></span></div>
+<details class="ctlbar zw" id="zwBox"><summary><span class="cap">zwerm volgt</span> <b id="zwCount" class="mono"></b> <span class="muted" id="zwHint">· klik om markten aan of uit te zetten</span></summary><span class="seg" id="coinAuto" style="display:none" title="Klik om een markt aan of uit te zetten voor de zwerm"></span></details>
 <div class="strip">
   <span class="pill">● ZES AGENTS LIVE</span>
   <span>HOLDER <b id="sHolder">–</b></span>
@@ -1314,7 +1316,10 @@ function renderAuto() {
   const a = st.auto, ok = a && a.allowed;
   if (a) {  // de server-zwerm volgt deze markten altijd, op papier tot live aan staat
     $('coinAuto').style.display = '';
-    $('coinAuto').innerHTML = Object.entries(a.coins).map(([c, v]) => `<button data-c="${c}" class="${v ? 'on' : ''}" title="${c}: zwerm ${v ? 'volgt' : 'volgt niet'}">${v ? '●' : '○'} ${short(c)}</button>`).join('');
+    const blk = new Set(a.blocked || []), ents = Object.entries(a.coins).sort((x, y) => (y[1] - x[1]) || (blk.has(x[0]) - blk.has(y[0])));
+    $('coinAuto').innerHTML = ents.map(([c, v]) => `<button data-c="${c}" class="${v ? 'on' : ''}${blk.has(c) ? ' blk' : ''}" title="${c}: zwerm ${v ? 'volgt' : 'volgt niet'}${blk.has(c) ? ' (uitgezet, ook de scanner zet hem niet aan; klik om terug aan te zetten)' : ''}">${v ? '●' : '○'} ${short(c)}</button>`).join('');
+    const onC = ents.filter(e => e[1]).map(e => short(e[0]));
+    $('zwCount').textContent = `${onC.length} markten` + (onC.length ? ': ' + onC.slice(0, 6).join(', ') + (onC.length > 6 ? ` +${onC.length - 6}` : '') : '') + (blk.size ? ` · ${blk.size} uitgezet` : '');
     renderAll();
   } else $('coinAuto').style.display = 'none';
   if (a && document.activeElement !== $('scanN')) $('scanN').value = String(a.scan_n ?? 25);
@@ -2013,6 +2018,7 @@ for (const id of ['pfOpen', 'exhaust']) $(id).onclick = e => { const r = e.targe
 renderWinSeg(); refreshStatus(); setInterval(refreshStatus, 60000); pollAuto(); setInterval(pollAuto, 1000);
 wire('prior', 'dashboard verbonden met de server-zwerm');
 </script>
+<script>{ const z = document.getElementById("zwBox"); z.open = localStorage.getItem("desk.zwOpen") === "1"; z.addEventListener("toggle", () => localStorage.setItem("desk.zwOpen", z.open ? "1" : "0")); }</script>
 <script src="/static/statusbar.js"></script>
 </body>
 </html>
