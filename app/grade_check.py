@@ -203,6 +203,17 @@ class Checker:
                     with self.lock:
                         self.state["done"] += 1
                         self.state["errors"] = len(errors)
+            # Stierf een werkproces (geheugen, crash in een bibliotheek), dan faalt de hele pool: elke ticker die
+            # daardoor mislukte, krijgt nog één kans in een eigen proces, zodat één slechte ticker de rest niet meesleept.
+            for s in [x for x, e in errors.items() if "terminated abruptly" in e or "BrokenProcessPool" in e]:
+                try:
+                    with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as one:
+                        per[s] = one.submit(_one, s, fee_bps, source).result()
+                    errors.pop(s)
+                except Exception as e:  # noqa: BLE001
+                    errors[s] = ("werkproces gecrasht (opnieuw geprobeerd): " + str(e))[:200]
+                with self.lock:
+                    self.state["errors"] = len(errors)
             out = {"summary": summarize(per), "finished": datetime.now().isoformat(timespec="seconds"),
                    "fee_bps": fee_bps, "errors": errors,
                    "tickers": {s: [[o["date"], o["score"], round(o["fwd"], 4)] for o in obs] for s, obs in per.items()}}
