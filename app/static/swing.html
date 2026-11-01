@@ -13,11 +13,13 @@
   .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); } .warn { color: var(--warn); }
   .cap { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-  .top { position: sticky; top: var(--sbarH, 30px); z-index: 900; display: flex; align-items: center; gap: 22px; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .top { position: sticky; top: var(--sbarH, 30px); z-index: 900; display: flex; align-items: center; gap: 14px; padding: 8px 18px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .brand b { font-size: 20px; letter-spacing: .02em; } .brand small { display: block; font-size: 9px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; }
   .nav { display: flex; gap: 14px; font-size: 12px; } .nav a.on { color: var(--text); }
   .stat { display: grid; line-height: 1.1; } .stat b { font: 600 17px var(--mono); } .stat span { font-size: 9px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
   .grow { flex: 1; }
+  .hdcurve { width: 170px; height: 40px; }
+  @media (max-width: 1600px) { .brand small { display: none; } .nav { gap: 10px; } }
   .badge { font: 700 11px var(--mono); padding: 4px 9px; border-radius: 6px; border: 1.5px solid var(--accent); color: var(--accent); letter-spacing: .06em; }
   button.btn { font: 600 12px inherit; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
   button.btn.go { background: var(--up); border-color: var(--up); color: #fff; } button.btn.danger { color: var(--down); border-color: var(--down); background: transparent; }
@@ -59,7 +61,7 @@
   .pfo { font: 11px var(--mono); margin: 4px 0 6px; }
   .pfo div { display: grid; grid-template-columns: 70px 64px 1fr 92px 64px 64px; gap: 6px; align-items: center; padding: 2px 0; }
   .pfo .bar { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; } .pfo .bar i { display: block; height: 100%; }
-  canvas.fill { width: 100%; display: block; } #balChart { height: 150px; } #pnlBars { height: 50px; }
+  canvas.fill { width: 100%; display: block; } #balChart { height: 200px; } #pnlBars { height: 50px; }
   .conf { display: grid; grid-template-columns: 90px 1fr 90px; gap: 6px; align-items: center; font: 600 10px var(--mono); margin: 3px 0; }
   .conf .track { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; } .conf .track div { height: 100%; border-radius: 3px; }
 </style>
@@ -69,12 +71,14 @@
   <div class="brand"><b>SWING DESK</b><small>backteststrategieën · hyperliquid aandelen (HIP-3) · dagen tot weken</small></div>
   <div class="nav"><a href="/">Overzicht</a><a href="/tool">Backtest</a><a href="/watchlist">Watchlist</a><a href="/aanraders">Aanraders</a><a href="/desk">Swarm Desk</a><a href="/swing" class="on">Swing</a></div>
   <div class="stat"><b class="num" id="hdEq">–</b><span>swing portefeuille</span></div>
-  <div class="stat"><b class="num" id="hdPnl">–</b><span>pnl</span></div>
+  <canvas id="hdCurve" class="hdcurve" width="220" height="40" title="Portefeuillewaarde van de swing (papier), van links oud naar rechts nu"></canvas>
+  <div class="stat"><b class="num" id="hdPnl">–</b><span>pnl · % van start</span></div>
+  <div class="stat"><b class="num" id="hdWv">–</b><span>W/V · winrate</span></div>
   <div class="stat"><b class="num" id="hdOpen">0</b><span>open posities</span></div>
-  <div class="stat"><b class="num" id="hdAt">–</b><span>laatste analyse</span></div>
+  <div class="stat" style="display:none"><b class="num" id="hdAt">–</b><span>laatste analyse</span></div>
   <div class="grow"></div>
   <span class="badge">PAPER</span>
-  <button class="btn" id="refreshBtn" title="Alle HIP-3-aandelen opnieuw analyseren (een paar minuten)">Analyse vernieuwen</button>
+  <button class="btn" id="refreshBtn" title="Alle HIP-3-aandelen opnieuw analyseren (een paar minuten)">Vernieuwen</button>
 </div>
 <main>
   <div class="panel" id="progress" style="display:none"></div>
@@ -93,7 +97,7 @@
         <div><b id="stAvg">–</b><span>gem. pnl</span></div>
         <div><b id="stDd">–</b><span>max dd</span></div>
       </div>
-      <canvas id="balChart" class="fill" height="150"></canvas>
+      <canvas id="balChart" class="fill" height="200"></canvas>
       <canvas id="pnlBars" class="fill" height="50"></canvas>
       <div id="split" style="margin-top:8px"></div>
     </section>
@@ -181,24 +185,71 @@ function canvasCtx(c) {
   if (c.width !== Math.round(w * r) || c.height !== Math.round(h * r)) { c.width = Math.round(w * r); c.height = Math.round(h * r); }
   const x = c.getContext("2d"); x.setTransform(r, 0, 0, r, 0, 0); x.clearRect(0, 0, w, h); return [x, w, h];
 }
-// zelfde lijn als de Swarm PnL: groen waar hij stijgt, rood waar hij daalt, gestippelde startwaarde, laatste punt = nu
-function drawEquity(x, w, h, d, base) {
-  const lo = Math.min(base, ...d), hi = Math.max(base, ...d), pad = (hi - lo) * .12 || 1;
-  const X = i => 4 + i / (d.length - 1) * (w - 8), Y = v => h - 6 - (v - lo + pad) / (hi - lo + 2 * pad) * (h - 12);
-  x.strokeStyle = "#1b2140"; x.setLineDash([3, 4]); x.beginPath(); x.moveTo(0, Y(base)); x.lineTo(w, Y(base)); x.stroke(); x.setLineDash([]);
-  const path = () => { x.lineTo(X(0), Y(d[0])); for (let i = 1; i < d.length - 1; i++) x.quadraticCurveTo(X(i), Y(d[i]), (X(i) + X(i + 1)) / 2, (Y(d[i]) + Y(d[i + 1])) / 2); x.lineTo(X(d.length - 1), Y(d[d.length - 1])); };
+// zelfde lijn als de Swarm PnL (groen stijgt, rood daalt, gestippelde startwaarde), nu op een echte tijdsas,
+// met instap (▲, kleur van het aandeel) en uitstap (▼, groen = winst, rood = verlies) van elke trade
+let MARKS = [];
+function drawEquity(x, w, h, ts, d, base, marks) {
+  const AX = 18, H = h - AX, t0 = ts[0], t1 = Math.max(ts[ts.length - 1], t0 + 60e3);
+  const lo = Math.min(base, ...d), hi = Math.max(base, ...d), pad = (hi - lo) * .15 || 1;
+  const XT = t => 6 + (t - t0) / (t1 - t0) * (w - 12), X = i => XT(ts[i]);
+  const Y = v => H - 8 - (v - lo + pad) / (hi - lo + 2 * pad) * (H - 18);
+  // tijdsas: 4 tot 7 labels, uur:min bij minder dan 2 dagen, anders dag/maand
+  const span = t1 - t0, steps = [36e5, 3 * 36e5, 6 * 36e5, 12 * 36e5, 864e5, 2 * 864e5, 7 * 864e5, 30 * 864e5];
+  const step = steps.find(s => span / s <= 7) || steps[steps.length - 1];
+  const tz = new Date().getTimezoneOffset() * 6e4;
+  x.font = "10px ui-monospace, monospace"; x.fillStyle = "#7581a3"; x.textAlign = "center"; x.strokeStyle = "#111528"; x.lineWidth = 1;
+  for (let t = Math.ceil((t0 - tz) / step) * step + tz; t <= t1; t += step) {
+    const xx = XT(t), dt = new Date(t);
+    x.beginPath(); x.moveTo(xx, 0); x.lineTo(xx, H); x.stroke();
+    const lbl = step < 864e5 ? (dt.getHours() === 0 && dt.getMinutes() === 0 ? dt.toLocaleDateString("nl-BE", {day: "numeric", month: "short"}) : dt.toLocaleTimeString("nl-BE", {hour: "2-digit", minute: "2-digit"}))
+      : dt.toLocaleDateString("nl-BE", {day: "numeric", month: "short"});
+    if (xx > 18 && xx < w - 18) x.fillText(lbl, xx, h - 4);
+  }
+  x.strokeStyle = "#1b2140"; x.beginPath(); x.moveTo(0, H); x.lineTo(w, H); x.stroke();
+  x.setLineDash([3, 4]); x.beginPath(); x.moveTo(0, Y(base)); x.lineTo(w, Y(base)); x.stroke(); x.setLineDash([]);
+  const n = d.length;
+  const path = () => { x.lineTo(X(0), Y(d[0])); for (let i = 1; i < n - 1; i++) x.quadraticCurveTo(X(i), Y(d[i]), (X(i) + X(i + 1)) / 2, (Y(d[i]) + Y(d[i + 1])) / 2); x.lineTo(X(n - 1), Y(d[n - 1])); };
   for (const [up, col] of [[true, "22,179,100"], [false, "239,58,93"]]) {
-    x.save(); x.beginPath(); up ? x.rect(0, 0, w, Y(base)) : x.rect(0, Y(base), w, h); x.clip();
-    const g = x.createLinearGradient(0, up ? 0 : h, 0, Y(base)); g.addColorStop(0, `rgba(${col},.28)`); g.addColorStop(1, `rgba(${col},0)`);
-    x.beginPath(); x.moveTo(X(0), Y(base)); path(); x.lineTo(X(d.length - 1), Y(base)); x.closePath(); x.fillStyle = g; x.fill(); x.restore();
+    x.save(); x.beginPath(); up ? x.rect(0, 0, w, Y(base)) : x.rect(0, Y(base), w, H - Y(base)); x.clip();
+    const g = x.createLinearGradient(0, up ? 0 : H, 0, Y(base)); g.addColorStop(0, `rgba(${col},.28)`); g.addColorStop(1, `rgba(${col},0)`);
+    x.beginPath(); x.moveTo(X(0), Y(base)); path(); x.lineTo(X(n - 1), Y(base)); x.closePath(); x.fillStyle = g; x.fill(); x.restore();
   }
   x.lineWidth = 2.2; x.lineCap = "round"; x.shadowBlur = 8;
-  const n = d.length, P = i => [X(i), Y(d[i])], M = k => k < 0 ? P(0) : k >= n - 1 ? P(n - 1) : [(X(k) + X(k + 1)) / 2, (Y(d[k]) + Y(d[k + 1])) / 2];
+  const P = i => [X(i), Y(d[i])], M = k => k < 0 ? P(0) : k >= n - 1 ? P(n - 1) : [(X(k) + X(k + 1)) / 2, (Y(d[k]) + Y(d[k + 1])) / 2];
   const V = k => k < 0 ? d[0] : k >= n - 1 ? d[n - 1] : (d[k] + d[k + 1]) / 2;
   for (let k = 0; k < n; k++) { const col = V(k) >= V(k - 1) ? "#16b364" : "#ef3a5d"; x.strokeStyle = col; x.shadowColor = col;
     x.beginPath(); x.moveTo(...M(k - 1)); x.quadraticCurveTo(...P(k), ...M(k)); x.stroke(); }
   x.shadowBlur = 0;
-  const last = d[n - 1]; x.beginPath(); x.arc(X(n - 1), Y(last), 4, 0, 7); x.fillStyle = last >= base ? "#16b364" : "#ef3a5d"; x.fill();
+  x.beginPath(); x.arc(X(n - 1), Y(d[n - 1]), 4, 0, 7); x.fillStyle = d[n - 1] >= base ? "#16b364" : "#ef3a5d"; x.fill();
+  // instap en uitstap op de lijn (waarde op dat moment geïnterpoleerd)
+  const at = t => { let i = ts.findIndex(q => q >= t); if (i <= 0) return d[Math.max(0, i)]; if (i < 0) return d[n - 1];
+    const f = (t - ts[i - 1]) / Math.max(1, ts[i] - ts[i - 1]); return d[i - 1] + f * (d[i] - d[i - 1]); };
+  MARKS = [];
+  x.textAlign = "center"; x.font = "700 9px ui-monospace, monospace";
+  for (const m of marks.filter(m => m.t >= t0 && m.t <= t1 + 6e4).sort((a, b) => a.t - b.t)) {
+    const xx = XT(m.t), yy = Y(at(m.t)), up = m.kind === "in", col = up ? tColor(m.coin) : (m.pnl >= 0 ? "#16b364" : "#ef3a5d");
+    x.strokeStyle = col; x.globalAlpha = .35; x.setLineDash([2, 3]); x.beginPath(); x.moveTo(xx, up ? yy + 6 : yy - 6); x.lineTo(xx, up ? H : 0); x.stroke(); x.setLineDash([]); x.globalAlpha = 1;
+    const near = MARKS.filter(q => q.up === up && Math.abs(q.x - xx) < 34).length;  // trades op hetzelfde moment: onder elkaar
+    const ty = up ? yy + 14 + near * 22 : yy - 14 - near * 22;
+    x.beginPath(); up ? (x.moveTo(xx, ty - 6), x.lineTo(xx - 5, ty + 3), x.lineTo(xx + 5, ty + 3)) : (x.moveTo(xx, ty + 6), x.lineTo(xx - 5, ty - 3), x.lineTo(xx + 5, ty - 3));
+    x.closePath(); x.fillStyle = col; x.fill();
+    x.fillStyle = col; x.fillText(short(m.coin), xx, up ? Math.min(H - 2, ty + 13) : Math.max(9, ty - 7));
+    MARKS.push({x: xx, y: ty, up, txt: m.txt});
+  }
+}
+$("balChart").addEventListener("mousemove", e => {
+  const r = e.target.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const m = MARKS.reduce((b, m) => { const dd = Math.hypot(m.x - mx, m.y - my); return dd < (b ? b.dd : 14) ? {...m, dd} : b; }, null);
+  e.target.title = m ? m.txt : "";
+});
+function drawHdCurve(v) {  // portefeuillewaarde als vaste band in de kopbalk, zoals op de Swarm Desk
+  const c = $("hdCurve"), x = c.getContext("2d"), W = c.width, H = c.height, ys = v.curve.map(p => p[1]).concat([v.equity]);
+  x.clearRect(0, 0, W, H); if (ys.length < 2) return;
+  const lo = Math.min(...ys, v.start), hi = Math.max(...ys, v.start), sy = q => H - 3 - (q - lo) / Math.max(1e-9, hi - lo) * (H - 6);
+  x.strokeStyle = "#1b2140"; x.setLineDash([3, 3]); x.beginPath(); x.moveTo(0, sy(v.start)); x.lineTo(W, sy(v.start)); x.stroke(); x.setLineDash([]);
+  x.strokeStyle = ys[ys.length - 1] >= v.start ? "#16b364" : "#ef3a5d"; x.lineWidth = 1.5; x.beginPath();
+  ys.forEach((q, i) => { const px = i / (ys.length - 1) * W; i ? x.lineTo(px, sy(q)) : x.moveTo(px, sy(q)); }); x.stroke();
+  c.title = `Portefeuille ${usd(v.equity)} · start ${usd(v.start, 0)} (stippellijn)`;
 }
 function renderPnl(v) {
   const hs = v.history.slice().reverse(), n = hs.length, wins = hs.filter(h => h.pnl > 0).length, real = hs.reduce((a, h) => a + h.pnl, 0);
@@ -215,13 +266,18 @@ function renderPnl(v) {
       <span class="bar"><i style="width:${Math.min(100, p.margin / eq * 400)}%;background:${tColor(p.coin)}"></i></span>
       <span>${usd(p.notional, 0)} <span class="muted">· ${usd(p.margin)}</span></span><span>${p.wf && p.wf.win != null ? Math.round(p.wf.win * 100) + "%" : "–"}</span>
       <span class="${sgn(p.upnl)}">${sg(p.upnl)}</span></div>`).join("");
-  const curve = v.curve.map(c => c[1]).concat([v.equity]);
+  const ts = v.curve.map(c => c[0]).concat([Date.now()]), curve = v.curve.map(c => c[1]).concat([v.equity]);
+  const tm = t => new Date(t).toLocaleString("nl-BE", {day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"});
+  const marks = [];
+  for (const p of v.positions) marks.push({t: p.opened, kind: "in", coin: p.coin, txt: `instap ${p.coin} ${tm(p.opened)} @ ${px(p.entry)} · ${p.lev}× · ${p.strategy}`});
+  for (const h of hs) { marks.push({t: h.opened, kind: "in", coin: h.coin, txt: `instap ${h.coin} ${tm(h.opened)} @ ${px(h.entry)} · ${h.lev}× · ${h.strategy}`});
+    marks.push({t: h.t, kind: "uit", coin: h.coin, pnl: h.pnl, txt: `uitstap ${h.coin} ${tm(h.t)} @ ${px(h.exit)} · ${h.reason} · ${sg(h.pnl)}`}); }
   let peak = -Infinity, dd = 0; for (const c of curve) { peak = Math.max(peak, c); if (peak > 0) dd = Math.max(dd, (peak - c) / peak); }
   $("stTickets").textContent = n; $("stWin").textContent = n ? (wins / n * 100).toFixed(1) + "%" : "–";
   $("stAvg").textContent = n ? sg(real / n) : "–"; $("stDd").textContent = (dd * 100).toFixed(1) + "%";
   const [x, w, h] = canvasCtx($("balChart"));
   if (curve.length < 2) { x.fillStyle = "#7581a3"; x.font = "12px system-ui"; x.fillText("Verloop verschijnt na het eerste kwartier", 8, h / 2); }
-  else drawEquity(x, w, h, curve, v.start);
+  else drawEquity(x, w, h, ts, curve, v.start, marks);
   const [y, w2, h2] = canvasCtx($("pnlBars")), last = hs.slice(-120);
   const mx = Math.max(1e-9, ...last.map(t => Math.abs(t.pnl))), bw = w2 / Math.max(last.length, 60);
   last.forEach((t, i) => { const bh = Math.abs(t.pnl) / mx * (h2 / 2 - 2); y.fillStyle = tColor(t.coin); y.fillRect(i * bw, t.pnl >= 0 ? h2 / 2 - bh : h2 / 2, Math.max(1, bw - 1), bh); });
@@ -260,7 +316,10 @@ function card(p) {
 function render(v) {
   V = v;
   $("hdEq").textContent = usd(v.equity);
-  $("hdPnl").textContent = usd(v.equity - v.start); $("hdPnl").className = "num " + sgn(v.equity - v.start);
+  const pl = v.equity - v.start, w = v.history.filter(h => h.pnl > 0).length, l = v.history.length - w;
+  $("hdPnl").innerHTML = `${sg(pl)} <span style="font-size:13px">${sg(pl / v.start * 100, 2)}%</span>`; $("hdPnl").className = "num " + sgn(pl);
+  $("hdWv").innerHTML = `${w}/${l} <span style="font-size:13px" class="muted">${w + l ? Math.round(w / (w + l) * 100) + "%" : "–"}</span>`;
+  drawHdCurve(v);
   $("hdOpen").textContent = v.positions.length;
   $("hdAt").textContent = ago(v.analysis_at);
   renderPnl(v);
