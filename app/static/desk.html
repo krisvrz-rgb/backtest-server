@@ -97,7 +97,10 @@
   .spark .hd { display: flex; font: 700 10px var(--mono); letter-spacing: .06em; }
   .spark .hd span { margin-left: auto; color: var(--accent); }
   .spark canvas { width: 100%; height: 24px; display: block; }
-  .ring { position: relative; height: 430px; }
+  .ring { position: relative; height: 340px; }
+  .cands { margin-top: 8px; } .cands h3 span { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .cands table { width: 100%; border-collapse: collapse; font-size: 11px; } .cands td { padding: 3px 6px; border-top: 1px solid var(--border); white-space: nowrap; }
+  .cands td.r { white-space: normal; color: var(--muted); } .cands tr.ok td.r { color: var(--up); } .cands tr { cursor: pointer; } .cands tr:hover td { background: var(--panel-2); }
   .ring canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   .ring .hud { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: flex-start; pointer-events: none; }
   .ring .big { font: 700 30px var(--mono); }
@@ -332,11 +335,11 @@
     </div>
   </section>
   <section class="panel">
-    <div class="ph"><h2>The Reactor</h2><span class="sub">zes spoelen houden de ring · één ticket rijdt mee · het model in de kern</span>
+    <div class="ph"><h2>The Reactor</h2><span class="sub">de ring is sfeer: elke draad is een tick van de markt, de zes spoelen zijn de zes agents · links het aantal stemmen, rechts de uitleg</span>
       <span class="right" id="stage">VENSTER –</span></div>
     <div class="reactor">
       <div class="bank" id="bank"></div>
-      <div class="ring">
+      <div><div class="ring">
         <canvas id="ring"></canvas>
         <div class="hud">
           <div><div class="cap" id="ringCoin">BTC · hyperliquid perp</div><div class="big num" id="ringSpot">–</div>
@@ -350,6 +353,7 @@
           <div class="num" id="barVol">–</div><div class="num" id="barP">–</div><div class="num" id="barEdge">–</div>
         </div>
       </div>
+      <div class="box cands"><h3>Wat de zwerm overweegt <span class="muted" id="candsHdr"></span></h3><div id="cands" class="mono">–</div></div></div>
       <div id="pfSlotDesk" class="pfslot"></div>
       <div class="ctrl">
         <div class="approve" id="approve">
@@ -1320,7 +1324,7 @@ function renderAuto() {
     $('coinAuto').innerHTML = ents.map(([c, v]) => `<button data-c="${c}" class="${v ? 'on' : ''}${blk.has(c) ? ' blk' : ''}" title="${c}: zwerm ${v ? 'volgt' : 'volgt niet'}${blk.has(c) ? ' (uitgezet, ook de scanner zet hem niet aan; klik om terug aan te zetten)' : ''}">${v ? '●' : '○'} ${short(c)}</button>`).join('');
     const onC = ents.filter(e => e[1]).map(e => short(e[0]));
     $('zwCount').textContent = `${onC.length} markten` + (onC.length ? ': ' + onC.slice(0, 6).join(', ') + (onC.length > 6 ? ` +${onC.length - 6}` : '') : '') + (blk.size ? ` · ${blk.size} uitgezet` : '');
-    renderAll();
+    renderAll(); renderCands();
   } else $('coinAuto').style.display = 'none';
   if (a && document.activeElement !== $('scanN')) $('scanN').value = String(a.scan_n ?? 25);
   if (a) { $('scanAuto').textContent = 'Auto: ' + (a.auto_scan ? 'AAN' : 'UIT'); $('scanAuto').classList.toggle('danger', !!a.auto_scan); }
@@ -1892,6 +1896,27 @@ function renderFeed() {
       <span class="who" style="background:${ag.c}">${t.act}</span><span>${txt}</span><span>${t.val || ''}</span></div>`; }).join('');
   $('allCount').textContent = allState.n + ' regels';
 }
+function renderCands() {  // vlak bij de ring: welke gevolgde markten de zwerm overweegt, en waarom (nog) niet
+  const a = st.auto; if (!a || !a.markets) return;
+  const W = (a.window_min || 60) * 60000, now = Date.now(), floor = a.min_edge ?? 0;
+  const el = (now % W) / W;  // vensters liggen vast op de klok (UTC), net als op de server
+  const mm = f => Math.round(f * W / 60000);
+  $('candsHdr').textContent = `· drempel ${sgn(floor, 1, '¢')} · beslist tussen ${mm(.15)} en ${mm(.67)} min in het venster, nu ${Math.max(0, Math.round(el * W / 60000))} min`
+    + (el > .67 ? ' (te laat: wacht op het volgende venster)' : el < .15 ? ' (nog te vroeg)' : '');
+  const rows = Object.entries(a.markets).filter(([c, m]) => a.coins[c] && m.model && m.model.edge != null)
+    .sort((x, y) => (!!y[1].ticket - !!x[1].ticket) || (y[1].model.edge - x[1].model.edge));
+  const pos = rows.filter(([, m]) => m.ticket || m.model.edge >= Math.min(0, floor));
+  const show = (pos.length ? pos : rows.slice(0, 5)).slice(0, 12);
+  if (!show.length) { $('cands').innerHTML = '<span class="muted">De zwerm volgt nog geen markten of warmt op.</span>'; return; }
+  $('cands').innerHTML = (pos.length ? '' : '<div class="muted" style="margin-bottom:4px">Geen enkele markt boven 0¢ edge. De beste vijf:</div>')
+    + '<table>' + show.map(([c, m]) => { const t = m.ticket, v = m.verdict, mo = m.model;
+      const why = t ? (t.state === 'entering' ? 'limietorder wacht op vulling' : `in trade · ${t.lev}x · ${sgn(t.upnl || 0, 2)}`)
+        : v ? (v.late ? '⏱ ' : '') + (v.text || v.short) : el < .15 ? 'nog te vroeg in het venster' : el > .67 ? '⏱ te laat in het venster' : 'nog niet beoordeeld in dit venster';
+      return `<tr data-c="${c}" class="${t || (v && v.ok) ? 'ok' : ''}"><td><b>${short(c)}</b></td><td class="${mo.side === 'long' ? 'up' : 'down'}">${mo.side || ''}</td>`
+        + `<td class="${mo.edge >= floor ? 'up' : 'down'}">${edgeTxt(mo.edge)}</td><td class="r">${why.replace(/</g, '&lt;')}</td></tr>`; }).join('') + '</table>';
+}
+$('cands').onclick = e => { const r = e.target.closest('tr'); if (r && r.dataset.c !== st.coin) setCoin(r.dataset.c); };
+
 function renderAll() {
   if ($('tabAll').style.display === 'none' || !st.auto) return;
   const a = st.auto, coins = Object.keys(a.coins).filter(c => a.coins[c]);
