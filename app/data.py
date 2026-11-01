@@ -119,7 +119,9 @@ def get_prices(symbol: str, source: str = "yahoo", start: str | None = None, end
     """Koersdata vanaf `start`; met warmup=True ook ~1,5 jaar ervoor om indicatoren op te warmen."""
     if warmup and start:
         start = (pd.Timestamp(start) - pd.Timedelta(days=WARMUP_DAYS)).date().isoformat()
-    if source == "csv":
+    if symbol.upper().startswith("HL:"):  # Hyperliquid-perp uit de zwerm, ongeacht de gekozen bron
+        df = load_hyperliquid(symbol[3:].upper(), start, end)
+    elif source == "csv":
         df = load_csv(symbol)
     elif source == "yahoo":
         df = load_yahoo(symbol, start, end)

@@ -5,3 +5,5 @@ __pycache__/
 data/*.csv
 data/*.json
 data/*.tmp
+data/*.env
+data/*.jsonl

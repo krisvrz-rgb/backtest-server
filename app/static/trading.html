@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Desk</title>
+<style>
+  :root { --bg: #04050b; --panel: #0a0d19; --panel-2: #111528; --text: #e6ebf8; --muted: #7581a3; --border: #1b2140; --accent: #5b8cff;
+    --up: #16b364; --down: #ef3a5d; --warn: #f08c00; --mono: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); } .up { color: var(--up); } .down { color: var(--down); } .warn { color: var(--warn); } .mono { font-family: var(--mono); }
+  header { display: flex; align-items: center; gap: 22px; padding: 12px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header h1 { margin: 0; font: 800 16px system-ui; letter-spacing: .12em; text-transform: uppercase; }
+  header h1 i { font-style: normal; font-weight: 600; font-size: 10px; color: var(--muted); letter-spacing: .08em; margin-left: 8px; }
+  .kv { display: flex; flex-direction: column; } .kv span { font: 600 9px system-ui; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .kv b { font: 600 15px var(--mono); }
+  .lvl { padding: 3px 8px; border: 1px solid var(--warn); color: var(--warn); border-radius: 4px; font: 700 10px system-ui; letter-spacing: .08em; text-transform: uppercase; }
+  nav.links { margin-left: auto; display: flex; gap: 14px; font-size: 12px; }
+  .tabs { display: flex; gap: 4px; padding: 8px 18px 0; position: sticky; top: var(--sbarH, 30px); z-index: 900; background: var(--bg); border-bottom: 1px solid var(--border); }
+  .tabs button { background: none; border: 1px solid transparent; border-bottom: none; color: var(--muted); padding: 7px 14px; border-radius: 6px 6px 0 0; cursor: pointer; font: 600 12px system-ui; }
+  .tabs button.on { background: var(--panel); color: var(--text); border-color: var(--border); }
+  .tabs button .n { background: var(--warn); color: #000; border-radius: 8px; padding: 0 6px; margin-left: 6px; font-size: 10px; }
+  main { padding: 14px 18px 40px; }
+  section { display: none; } section.on { display: block; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+  .panel h2 { margin: 0 0 8px; font: 700 11px system-ui; letter-spacing: .1em; text-transform: uppercase; }
+  .panel h2 span { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); margin-left: 6px; }
+  .floor { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 1000px) { .floor { grid-template-columns: 1fr; } }
+  .plist .p { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; cursor: pointer; background: var(--panel-2); }
+  .plist .p.sel { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+  .plist .p .top { display: flex; gap: 8px; align-items: center; } .plist .p .id { font: 600 11px var(--mono); color: var(--muted); }
+  .plist .p .idea { font-size: 11.5px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pill { font: 700 9.5px system-ui; letter-spacing: .06em; text-transform: uppercase; padding: 2px 7px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); }
+  .pill.awaiting { background: var(--warn); color: #000; border-color: var(--warn); } .pill.live { background: var(--up); color: #000; border-color: var(--up); }
+  .pill.resting { border-color: var(--accent); color: var(--accent); } .pill.rejected, .pill.void { color: var(--down); border-color: var(--down); }
+  .pill.closed { color: var(--muted); }
+  .steps { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 6px 0 12px; }
+  .steps div { text-align: center; font: 600 9.5px system-ui; color: var(--muted); padding-top: 14px; position: relative; }
+  .steps div::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 6px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--border); }
+  .steps div.done::before { background: var(--up); border-color: var(--up); } .steps div.now::before { background: var(--warn); border-color: var(--warn); }
+  .steps div.bad::before { background: var(--down); border-color: var(--down); } .steps div.now, .steps div.done { color: var(--text); }
+  .steps div small { display: block; font-weight: 400; color: var(--muted); }
+  pre.ticket { background: #000; border: 1px solid var(--border); border-left: 3px solid var(--warn); padding: 10px 12px; font: 12px/1.55 var(--mono); white-space: pre-wrap; margin: 0 0 10px; }
+  .approve { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  input, select, textarea { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 7px 9px; font: 13px var(--mono); }
+  .approve input { flex: 1; min-width: 260px; font-size: 14px; }
+  button.b { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 7px 12px; cursor: pointer; font: 600 12px system-ui; }
+  button.b:hover { border-color: var(--accent); } button.b.go { background: var(--up); color: #000; border-color: var(--up); } button.b.red { color: var(--down); border-color: var(--down); }
+  button.b:disabled { opacity: .4; cursor: default; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } @media (max-width: 1200px) { .grid2 { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+  td, th { padding: 4px 8px; border-top: 1px solid var(--border); text-align: left; vertical-align: top; }
+  th { font: 600 9.5px system-ui; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border-top: none; }
+  td.src { color: var(--muted); font-size: 10.5px; }
+  .lines div { font: 12px/1.6 var(--mono); }
+  .feed .r { display: grid; grid-template-columns: 62px 120px 120px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid var(--border); font-size: 12px; }
+  .feed .r .role { font: 700 10px system-ui; letter-spacing: .05em; text-transform: uppercase; }
+  .feed .r .nx { color: var(--muted); font-size: 11px; }
+  .role-lead { color: #5b8cff; } .role-market { color: #2fc6d6; } .role-research { color: #b48cff; } .role-strategist { color: #f0c000; }
+  .role-risk { color: #f08c00; } .role-exec { color: #16b364; } .role-review { color: #ff6fae; }
+  .form { display: grid; grid-template-columns: 160px 1fr; gap: 8px 12px; align-items: center; max-width: 720px; }
+  .form label { color: var(--muted); font-size: 12px; } .seg { display: flex; gap: 4px; }
+  .seg button { flex: 1; }
+  .seg button.on { border-color: var(--accent); color: var(--accent); }
+  .hint { font-size: 11.5px; color: var(--muted); }
+  .err { color: var(--down); font-size: 12px; min-height: 16px; }
+  .roles { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+  .roles .r { border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: var(--panel-2); }
+  .roles .r b { display: block; margin-bottom: 4px; }
+  canvas#curve { width: 100%; height: 220px; display: block; }
+  .stats { display: flex; gap: 26px; flex-wrap: wrap; margin-bottom: 10px; }
+  .big { font: 700 16px var(--mono); }
+  .empty { color: var(--muted); padding: 14px 0; }
+  details summary { cursor: pointer; color: var(--muted); }
+</style>
+</head>
+<body>
+<script src="/static/statusbar.js"></script>
+<header>
+  <h1>Trading Desk<i>naar het HyperGrok-model</i></h1>
+  <span class="lvl" title="Deze desk heeft geen sleutel en geen pad naar de beurs. Alles is papier, met live marktdata.">papier · geen echte orders</span>
+  <div class="kv"><span>waarde</span><b id="hEq">–</b></div>
+  <div class="kv"><span>vandaag</span><b id="hDay">–</b></div>
+  <div class="kv"><span title="gestreste verliezen als alle stops geraakt worden, plus gereserveerd risico">open risico</span><b id="hRisk">–</b></div>
+  <div class="kv"><span>posities</span><b id="hPos">–</b></div>
+  <div class="kv"><span>limieten</span><b id="hLim">–</b></div>
+  <nav class="links"><a href="/desk">Swarm</a><a href="/swing">Swing</a><a href="/desk/backtest">Desk-backtest</a></nav>
+</header>
+<div class="tabs" id="tabs">
+  <button data-t="floor" class="on">Vloer <span class="n" id="nAwait" hidden></span></button>
+  <button data-t="new">Nieuw voorstel</button>
+  <button data-t="book">Boek</button>
+  <button data-t="limits">Risicolimieten</button>
+  <button data-t="roles">Rollen &amp; proces</button>
+</div>
+<main>
+  <section id="s-floor" class="on">
+    <div class="floor">
+      <div class="panel"><h2>Voorstellen <span>nieuwste boven</span></h2><div class="plist" id="plist"></div></div>
+      <div>
+        <div class="panel" id="detail"><div class="empty">Kies links een voorstel, of maak er een via “Nieuw voorstel”.</div></div>
+        <div class="panel"><h2>De vloer <span>overdrachten tussen de rollen</span></h2><div class="feed" id="feed"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="s-new">
+    <div class="panel">
+      <h2>Nieuw voorstel <span>jouw idee gaat door hetzelfde proces: bewijs, risico, jouw goedkeuring</span></h2>
+      <div class="form">
+        <label>markt</label><div style="display:flex;gap:8px"><input id="fCoin" placeholder="ETH, BTC, xyz:NVDA…" style="width:180px"><button class="b" id="fQuote">haal koers</button><span class="hint" id="fQ"></span></div>
+        <label>kant</label><div class="seg" id="fSide"><button class="b on" data-v="long">▲ long</button><button class="b" data-v="short">▼ short</button></div>
+        <label>instap</label><div><input id="fEntry" placeholder="leeg = markt" style="width:180px"> <span class="hint">limietprijs, of leeg om nu te kopen/verkopen</span></div>
+        <label>stop (verplicht)</label><div><input id="fStop" style="width:180px"> <button class="b" id="fAtr">1,5× ATR</button> <span class="hint">waar je idee fout blijkt</span></div>
+        <label>take-profit</label><div><input id="fTp" placeholder="bv. 2" style="width:80px"> R <span class="hint">in veelvouden van je risico, leeg = geen</span></div>
+        <label>idee</label><textarea id="fIdea" rows="2" placeholder="waarom deze trade?"></textarea>
+        <span></span><div><button class="b go" id="fGo">Open voorstel</button> <span class="err" id="fErr"></span></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Strategist <span>laat de Swarm een idee aanleveren</span></h2>
+      <p class="hint">De Strategist neemt de Swarm-markt met de hoogste positieve edge, zet de stop op 1,5× ATR(1u) en het doel op 2R. Het blijft een voorstel: de Risk Manager rekent, jij keurt goed.</p>
+      <button class="b" id="stratBtn">Strategist: stel een trade voor</button> <span class="err" id="stratErr"></span>
+    </div>
+  </section>
+
+  <section id="s-book">
+    <div class="panel">
+      <h2>Papierboek <span id="bookSub"></span></h2>
+      <div class="stats" id="stats"></div>
+      <canvas id="curve"></canvas>
+    </div>
+    <div class="panel"><h2>Open posities</h2><table id="openT"></table></div>
+    <div class="panel"><h2>Afgesloten trades</h2><table id="doneT"></table></div>
+    <div class="panel"><h2>Opnieuw beginnen</h2><p class="hint">Zet het papierboek terug op $1000. Kan alleen zonder open posities. Je limieten blijven.</p><button class="b red" id="resetBtn">Boek resetten</button> <span class="err" id="resetErr"></span></div>
+  </section>
+
+  <section id="s-limits">
+    <div class="panel">
+      <h2>Risicolimieten <span id="limV"></span></h2>
+      <p class="hint">Alleen jij past ze aan. Ze mogen nooit losser zijn dan de plafonds van de desk: max 2% risico per trade, 6% totaal open risico, 20x hefboom, 10% dagverlies.</p>
+      <div class="form" id="limForm"></div>
+      <div style="margin-top:10px" class="form"><label>waarom</label><input id="limWhy" placeholder="reden van de wijziging (komt in de geschiedenis)">
+        <span></span><div><button class="b go" id="limSave">Bewaar als nieuwe versie</button> <span class="err" id="limErr"></span></div></div>
+    </div>
+    <div class="panel"><h2>Geschiedenis</h2><table id="limHist"></table></div>
+  </section>
+
+  <section id="s-roles">
+    <div class="panel"><h2>Het proces <span>elke trade, zeven stappen, altijd in deze volgorde</span></h2>
+      <div class="steps" id="procSteps"></div>
+      <p class="hint">Uitstappen en aanpassingen zijn ook tickets (HG-…-B) met hun eigen goedkeuring. Alleen stop-loss en take-profit lopen vanzelf, want die horen bij het oorspronkelijke ticket dat je goedkeurde.</p></div>
+    <div class="panel"><h2>De zeven rollen</h2><div class="roles" id="roles"></div></div>
+    <div class="panel"><h2>Wat deze desk bewust niet doet</h2>
+      <ul class="hint" style="margin:0;padding-left:18px">
+        <li>Geen echte orders, geen sleutel, geen storten of opnemen. Alles is papier met live marktdata.</li>
+        <li>Geen goedkeuring zonder de letterlijke zin “approve HG-…”. “Ja” of “ok” telt niet.</li>
+        <li>Geen ticket ouder dan de vervaltijd: prijzen en boek bewegen, dus dan opnieuw bewijs en risico.</li>
+        <li>Geen limieten losser dan de plafonds, en de desk past je limieten nooit zelf aan.</li>
+        <li>Ontbrekende data is “niet beschikbaar”, nooit stilzwijgend “in orde”.</li>
+      </ul>
+      <p class="hint">Gebaseerd op het open-source HyperGrok Trading Desk-proces van Galleon Labs (MIT-licentie).</p></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const fmt = (v, d = 2) => v == null || !isFinite(v) ? '–' : Number(v).toLocaleString('nl-BE', { minimumFractionDigits: d, maximumFractionDigits: d });
+const px = v => v == null ? '–' : Number(v).toLocaleString('nl-BE', { maximumSignificantDigits: 6 });
+const usd = v => v == null ? '–' : (v < 0 ? '−$' : '$') + fmt(Math.abs(v));
+const sgn = v => v == null ? '–' : (v > 0 ? '+' : v < 0 ? '−' : '') + '$' + fmt(Math.abs(v));
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : 'muted';
+const hm = t => t ? new Date(t * 1000).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' }) : '';
+const hms = t => t ? new Date(t * 1000).toLocaleTimeString('nl-BE') : '';
+const ROLE = { lead: 'Desk Lead', market: 'Market Analyst', research: 'Research Analyst', strategist: 'Strategist', risk: 'Risk Manager', exec: 'Execution Trader', review: 'Trade Reviewer' };
+const STAGES = [['idee', 'Desk Lead'], ['bewijs', 'Market · Research'], ['risico', 'Risk Manager'], ['goedkeuring', 'jij'], ['uitvoering', 'Execution Trader'], ['afstemming', 'Execution Trader'], ['review', 'Trade Reviewer']];
+const STATUS = { evidence: 'bewijs', risk: 'risico', awaiting: 'wacht op jou', approved: 'goedgekeurd', resting: 'limiet rust', live: 'open', closed: 'gesloten', rejected: 'REJECT', void: 'vervallen' };
+let S = null, sel = null, side = 'long', quote = null;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? { cache: 'no-store' } : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : r.statusText);
+  return j;
+}
+
+function stageOf(p) {  // index van de huidige stap, en of het misliep
+  const s = p.status;
+  if (s === 'evidence') return [1, false]; if (s === 'risk') return [2, false];
+  if (s === 'rejected') return [2, true]; if (s === 'awaiting') return [3, false];
+  if (s === 'void') return [p.approval ? 4 : p.ticket ? 3 : 1, true];
+  if (s === 'approved' || s === 'resting') return [4, false]; if (s === 'live') return [5, false];
+  if (s === 'closed') return [p.review ? 7 : 6, false];
+  return [0, false];
+}
+function stepsHtml(p) {
+  const [k, bad] = p ? stageOf(p) : [-1, false];
+  return STAGES.map(([n, who], i) => `<div class="${i < k ? 'done' : i === k ? (bad ? 'bad' : 'now') : ''}">${n}<small>${who}</small></div>`).join('');
+}
+
+function renderHeader() {
+  const b = S.book, L = S.limits;
+  $('hEq').innerHTML = `${usd(b.equity)} <span class="${cls(b.equity - b.start)}" style="font-size:11px">${fmt((b.equity / b.start - 1) * 100, 1)}%</span>`;
+  $('hDay').innerHTML = `<span class="${cls(b.day_pnl)}">${sgn(b.day_pnl)}</span>`;
+  const maxR = b.equity * L.max_open_risk / 100;
+  $('hRisk').innerHTML = `${usd(b.open_risk + b.pending_risk)} <span class="muted" style="font-size:11px">/ ${usd(maxR)}</span>`;
+  $('hPos').innerHTML = `${b.positions}${b.pending ? ` <span class="muted" style="font-size:11px">+${b.pending} wacht</span>` : ''} <span class="muted" style="font-size:11px">/ ${L.max_positions}</span>`;
+  $('hLim').innerHTML = `v${L.v} <span class="muted" style="font-size:11px">${fmt(L.risk_per_trade, 2)}%/trade · ${L.max_leverage}x</span>`;
+  const n = S.proposals.filter(p => p.status === 'awaiting' || (p.adjust && p.status === 'live')).length;
+  $('nAwait').hidden = !n; $('nAwait').textContent = n;
+}
+
+function renderList() {
+  const ps = S.proposals;
+  if (!sel && ps.length) sel = (ps.find(p => p.status === 'awaiting') || ps[0]).id;
+  $('plist').innerHTML = ps.map(p => `<div class="p ${p.id === sel ? 'sel' : ''}" data-id="${p.id}">
+      <div class="top"><b>${esc(p.coin)}</b><span class="${p.side === 'long' ? 'up' : 'down'}">${p.side === 'long' ? '▲ long' : '▼ short'}</span>
+        <span class="pill ${p.status}">${STATUS[p.status] || p.status}${p.adjust ? ' · sluitticket' : ''}</span>
+        <span style="margin-left:auto" class="${p.position && p.position.pnl != null ? cls(p.position.pnl) : ''}">${p.position && p.position.pnl != null ? sgn(p.position.pnl) : p.status === 'live' ? `<span class="${cls(livePnl(p))}">${sgn(livePnl(p))}</span>` : ''}</span></div>
+      <div class="id">${p.id} · ${hm(p.opened)} · ${esc(p.by)}</div><div class="idea">${esc(p.idea)}</div></div>`).join('')
+    || '<div class="empty">Nog geen voorstellen. Open er een via “Nieuw voorstel” of laat de Strategist er een maken.</div>';
+}
+const livePnl = p => { const x = p.position; if (!x) return 0; return (x.px - x.entry) * x.size * (p.side === 'long' ? 1 : -1); };
+const liveR = p => { const x = p.position; return x && p.ticket ? (x.px - x.entry) * (p.side === 'long' ? 1 : -1) / p.ticket.r_unit : 0; };
+
+function renderDetail() {
+  const p = S.proposals.find(x => x.id === sel);
+  if (!p) { $('detail').innerHTML = '<div class="empty">Kies links een voorstel, of maak er een via “Nieuw voorstel”.</div>'; return; }
+  const keep = document.activeElement && document.activeElement.id === 'apIn' ? $('apIn').value : null;
+  const t = p.ticket, ev = p.evidence, x = p.position, exp = t ? Math.max(0, Math.round((t.expires - S.now) / 60)) : 0;
+  let h = `<h2>${p.id} <span>${esc(p.coin)} ${p.side} · geopend ${hms(p.opened)} door ${esc(p.by)}</span></h2>
+    <div class="steps">${stepsHtml(p)}</div><p style="margin:0 0 10px">${esc(p.idea)}</p>`;
+  if (p.status === 'live' && x) {
+    h += `<div class="stats"><div class="kv"><span>live pnl</span><b class="big ${cls(livePnl(p))}">${sgn(livePnl(p))}</b></div>
+      <div class="kv"><span>in R</span><b class="${cls(liveR(p))}">${fmt(liveR(p), 2)}R</b></div>
+      <div class="kv"><span>instap · nu</span><b>${px(x.entry)} · ${px(x.px)}</b></div>
+      <div class="kv"><span>stop · tp</span><b><span class="down">${px(x.stop)}</span> · <span class="up">${x.tp ? px(x.tp) : 'geen'}</span></b></div>
+      <div class="kv"><span>slechtst · best</span><b>${fmt(x.mae, 2)}R · ${fmt(x.mfe, 2)}R</b></div></div>`;
+  }
+  if (p.adjust) {
+    h += `<pre class="ticket">${esc(p.adjust.text)}</pre>${approveBox(p.adjust.id)}`;
+  } else if (t && p.status === 'awaiting') {
+    h += `<pre class="ticket">${esc(t.text)}</pre>${approveBox(p.id, exp)}`;
+  } else if (t) {
+    h += `<details ${p.status === 'resting' ? 'open' : ''}><summary>ticket ${p.id}</summary><pre class="ticket" style="border-left-color:var(--border)">${esc(t.text)}</pre></details>`;
+  }
+  const btns = [];
+  if (['awaiting', 'void', 'rejected'].includes(p.status) && !p.approval) btns.push(`<button class="b" data-act="refresh">nieuw bewijs + risico</button>`);
+  if (['awaiting', 'resting', 'rejected'].includes(p.status)) btns.push(`<button class="b red" data-act="void">annuleer</button>`);
+  if (p.status === 'live' && !p.adjust) btns.push(`<button class="b red" data-act="close">maak sluitticket</button>`);
+  if (btns.length) h += `<div style="display:flex;gap:8px;margin:6px 0 12px">${btns.join('')}<span class="err" id="actErr"></span></div>`;
+  if (p.risk) {
+    h += `<h2 style="margin-top:6px">Risk Manager <span class="${p.risk.verdict === 'PASS' ? 'up' : 'down'}">${p.risk.verdict}${p.risk.gate ? ' · ' + esc(p.risk.gate) : ''} · limieten v${p.risk.limits_v}</span></h2>
+      <div class="lines">${p.risk.lines.map(l => `<div>${esc(l)}</div>`).join('') || '<div class="muted">geen berekening: de poort faalde vooraf</div>'}</div>`;
+  }
+  h += '<div class="grid2" style="margin-top:12px">';
+  if (ev) {
+    const d = ev.depth || {};
+    h += `<div><h2>Market Analyst <span>${ev.at} · ${esc(ev.network)}</span></h2><table>
+      <tr><td>mid · mark · oracle</td><td>${px(ev.mid)} · ${px(ev.mark)} · ${px(ev.oracle)}</td><td class="src">${esc(ev.src)}</td></tr>
+      <tr><td>funding per uur</td><td>${fmt(ev.funding * 100, 4)}%</td><td class="src">idem</td></tr>
+      <tr><td>open interest · 24u volume</td><td>${usd(ev.oi_usd)} · ${usd(ev.vol24)}</td><td class="src">idem</td></tr>
+      <tr><td>spread</td><td>${ev.spread_bps == null ? '–' : fmt(ev.spread_bps, 1) + ' bp'}</td><td class="src">${esc(ev.book_src || 'niet beschikbaar')}</td></tr>
+      ${['5', '10', '25'].map(k => d[k] ? `<tr><td>diepte ±${k} bp</td><td>bied ${usd(d[k].bid)} · aanbod ${usd(d[k].ask)}</td><td class="src">l2Book</td></tr>` : '').join('')}
+      <tr><td>ATR(1u) · bereik 24u</td><td>${px(ev.atr1h)} · ${px(ev.lo24)} – ${px(ev.hi24)}</td><td class="src">${esc(ev.candle_src || 'niet beschikbaar')}</td></tr>
+      <tr><td>max hefboom · decimalen</td><td>${ev.max_lev}x · ${ev.sz_dec}</td><td class="src">meta</td></tr>
+      ${ev.unavailable.length ? `<tr><td class="warn">niet beschikbaar</td><td colspan="2" class="warn">${esc(ev.unavailable.join(', '))}</td></tr>` : ''}</table></div>`;
+  }
+  if (p.research) {
+    h += `<div><h2>Research Analyst <span>tegenbewijs, niet bindend</span></h2><table>
+      ${p.research.items.map(i => `<tr><td>${esc(i.src)}</td><td class="${i.agree === false ? 'down' : i.agree ? 'up' : ''}">${esc(i.text)}</td></tr>`).join('')}
+      ${p.research.unavailable.map(u => `<tr><td class="muted">niet beschikbaar</td><td class="muted">${esc(u)}</td></tr>`).join('')}</table></div>`;
+  }
+  h += '</div>';
+  if (p.execution.length) h += `<h2 style="margin-top:12px">Execution Trader <span>uitvoering en afstemming (papier)</span></h2><table>${p.execution.map(e =>
+    `<tr><td class="muted">${hms(e.t)}</td><td>${esc(e.what)}</td><td>${e.px ? px(e.px) : e.mid ? 'mid ' + px(e.mid) : ''}</td><td>${e.fee != null ? 'fee $' + fmt(e.fee, 3) : ''}</td></tr>`).join('')}</table>`;
+  if (p.review) h += `<h2 style="margin-top:12px">Trade Reviewer</h2><div class="lines">${p.review.facts.map(f => `<div>${esc(f)}</div>`).join('')}</div>
+    <ul style="margin:6px 0 0;padding-left:18px">${p.review.lessons.map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+    ${p.review.ai ? `<p style="margin-top:8px;white-space:pre-wrap"><b class="role-review">35B-review:</b> ${esc(p.review.ai)}</p>` : S.ai_review ? '<p class="hint">De 35B schrijft nog een review…</p>' : ''}`;
+  $('detail').innerHTML = h;
+  if (keep != null && $('apIn')) { $('apIn').value = keep; $('apIn').focus(); }
+}
+function approveBox(id, exp) {
+  return `<div class="approve"><input id="apIn" placeholder="typ: approve ${id}" autocomplete="off" spellcheck="false">
+    <button class="b go" id="apBtn">Keur goed</button>${exp != null ? `<span class="hint">vervalt over ${exp} min</span>` : ''}<span class="err" id="apErr"></span></div>
+    <p class="hint" style="margin-top:-4px">Lees het ticket. Goedkeuren kan alleen met de letterlijke zin, zodat geen enkele rol dat in jouw plaats kan doen.</p>`;
+}
+
+function renderFeed() {
+  $('feed').innerHTML = S.floor.slice(0, 80).map(f => `<div class="r"><span class="muted">${hm(f.t)}</span><span class="role role-${f.role}">${ROLE[f.role] || f.role}</span>
+    <span class="muted mono" style="font-size:11px">${f.pid || ''}${f.to ? ' → ' + esc(f.to) : ''}</span><span>${esc(f.text)}${f.next ? ` <span class="nx">· volgende: ${esc(f.next)}</span>` : ''}</span></div>`).join('')
+    || '<div class="empty">Nog stil op de vloer.</div>';
+}
+
+function renderBook() {
+  const b = S.book, s = S.stats;
+  $('bookSub').textContent = `start ${usd(b.start)} · kas ${usd(b.cash)} · vrije marge ${usd(b.free)}`;
+  const need = s.be_winrate;
+  $('stats').innerHTML = [['waarde', usd(b.equity)], ['trades', s.n],
+    ['winrate', s.n ? `<span class="${need != null && s.winrate > need ? 'up' : 'down'}">${fmt(s.winrate * 100, 0)}%</span> <span class="muted" style="font-size:11px">nodig ${need == null ? '–' : fmt(need * 100, 0) + '%'}</span>` : '–'],
+    ['gem. winnaar / verliezer', s.n ? `<span class="up">${sgn(s.avg_win)}</span> / <span class="down">${sgn(-s.avg_loss)}</span>` : '–'],
+    ['per trade', `<span class="${cls(s.expectancy)}">${sgn(s.expectancy)}</span>`], ['gem. R', s.avg_r == null ? '–' : fmt(s.avg_r, 2) + 'R']]
+    .map(([k, v]) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`).join('');
+  drawCurve(b);
+  const open = S.proposals.filter(p => p.status === 'live');
+  $('openT').innerHTML = '<tr><th>ticket</th><th>markt</th><th>kant</th><th>grootte</th><th>instap</th><th>nu</th><th>stop</th><th>tp</th><th>risico</th><th>R nu</th><th>live pnl</th></tr>'
+    + (open.map(p => { const x = p.position; return `<tr data-id="${p.id}" style="cursor:pointer"><td class="muted">${p.id}</td><td><b>${esc(p.coin)}</b></td><td class="${p.side === 'long' ? 'up' : 'down'}">${p.side} ${x.lev}x</td>
+      <td>${x.size} (${usd(x.size * x.entry)})</td><td>${px(x.entry)}</td><td>${px(x.px)}</td><td class="down">${px(x.stop)}</td><td class="up">${x.tp ? px(x.tp) : '–'}</td>
+      <td>${usd(p.ticket.risk_usd)}</td><td class="${cls(liveR(p))}">${fmt(liveR(p), 2)}R</td><td class="big ${cls(livePnl(p))}">${sgn(livePnl(p))}</td></tr>`; }).join('')
+      || '<tr><td colspan="11" class="muted">geen open posities</td></tr>');
+  const done = S.proposals.filter(p => p.status === 'closed' && p.position);
+  $('doneT').innerHTML = '<tr><th>dicht</th><th>ticket</th><th>markt</th><th>kant</th><th>in → uit</th><th>uitstap</th><th>R</th><th>pnl</th></tr>'
+    + (done.map(p => { const x = p.position; return `<tr data-id="${p.id}" style="cursor:pointer"><td class="muted">${hm(x.exit_t)}</td><td class="muted">${p.id}</td><td><b>${esc(p.coin)}</b></td><td class="${p.side === 'long' ? 'up' : 'down'}">${p.side}</td>
+      <td>${px(x.entry)} → ${px(x.exit)}</td><td>${esc(x.why)}</td><td class="${cls(x.r)}">${fmt(x.r, 2)}R</td><td class="${cls(x.pnl)}">${sgn(x.pnl)}</td></tr>`; }).join('')
+      || '<tr><td colspan="8" class="muted">nog niets afgesloten</td></tr>');
+}
+function drawCurve(b) {
+  const c = $('curve'), dpr = devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight; if (!W) return;
+  c.width = W * dpr; c.height = H * dpr; const g = c.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
+  const pts = [[S.now * 1000 - 1, b.start], ...b.curve, [S.now * 1000, b.equity]];
+  if (b.curve.length) pts[0][0] = b.curve[0][0] - 60000;
+  const ys = pts.map(p => p[1]), lo = Math.min(...ys, b.start), hi = Math.max(...ys, b.start), t0 = pts[0][0], t1 = pts[pts.length - 1][0];
+  const X = t => 10 + (W - 20) * (t1 > t0 ? (t - t0) / (t1 - t0) : 1), Y = v => H - 18 - (H - 36) * (hi > lo ? (v - lo) / (hi - lo) : .5);
+  g.strokeStyle = '#1b2140'; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(10, Y(b.start)); g.lineTo(W - 10, Y(b.start)); g.stroke(); g.setLineDash([]);
+  g.fillStyle = '#7581a3'; g.font = '10px ui-monospace'; g.fillText('start ' + usd(b.start), 12, Y(b.start) - 4);
+  g.strokeStyle = b.equity >= b.start ? '#16b364' : '#ef3a5d'; g.lineWidth = 2; g.beginPath();
+  pts.forEach((p, i) => i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1]))); g.stroke();
+}
+
+const LIMF = [['risk_per_trade', 'risico per trade', '% van de waarde', 2], ['max_open_risk', 'totaal open risico', '% van de waarde', 6], ['max_leverage', 'max hefboom', 'x', 20],
+  ['max_positions', 'max posities', 'open plus wachtend'], ['daily_loss_stop', 'dagverliesstop', '% van de waarde bij dagbegin', 10], ['max_slippage_bps', 'max slippage bij verzenden', 'bp'],
+  ['ticket_expiry_min', 'ticket vervalt na', 'minuten'], ['min_volume', 'minimum 24u-volume', '$ (als de lijst hieronder leeg is)'],
+  ['allowed_markets', 'toegelaten markten', 'komma-gescheiden, leeg = alle met genoeg volume'], ['cluster', 'cluster', 'telt als één groep'], ['cluster_max', 'max posities in cluster', '']];
+let limDrawn = 0;
+function renderLimits() {
+  const L = S.limits;
+  $('limV').textContent = `versie ${L.v} · ${new Date(L.at * 1000).toLocaleString('nl-BE')} · door ${L.by}`;
+  if (limDrawn !== L.v) {
+    limDrawn = L.v;
+    $('limForm').innerHTML = LIMF.map(([k, lab, unit, cap]) => `<label>${lab}</label><div><input data-k="${k}" value="${esc(Array.isArray(L[k]) ? L[k].join(', ') : L[k])}" style="width:${Array.isArray(L[k]) ? 360 : 120}px">
+      <span class="hint">${unit}${cap ? ` · plafond ${cap}` : ''}</span></div>`).join('');
+  }
+  $('limHist').innerHTML = '<tr><th>versie</th><th>wanneer</th><th>door</th><th>waarom</th><th>risico/trade</th><th>open risico</th><th>hefboom</th><th>posities</th><th>dagstop</th></tr>'
+    + S.limits_history.map(l => `<tr><td>v${l.v}</td><td>${new Date(l.at * 1000).toLocaleString('nl-BE')}</td><td>${esc(l.by)}</td><td>${esc(l.why)}</td>
+      <td>${l.risk_per_trade}%</td><td>${l.max_open_risk}%</td><td>${l.max_leverage}x</td><td>${l.max_positions}</td><td>${l.daily_loss_stop}%</td></tr>`).join('');
+}
+function renderRoles() {
+  $('procSteps').innerHTML = stepsHtml(null);
+  $('roles').innerHTML = S.roles.map(r => `<div class="r"><b class="role-${r.key}">${r.name}</b>${esc(r.job)}</div>`).join('');
+}
+
+function render() { if (!S) return; renderHeader(); renderList(); renderDetail(); renderFeed(); renderBook(); renderLimits(); renderRoles(); }
+async function load() { try { S = await api('/api/trading/state'); render(); } catch (e) { $('detail').innerHTML = `<div class="err">Trading Desk niet bereikbaar: ${esc(e.message)}</div>`; } }
+
+// ---------- acties ----------
+$('tabs').onclick = e => { const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('main section').forEach(s => s.classList.toggle('on', s.id === 's-' + b.dataset.t)); if (b.dataset.t === 'book') renderBook(); };
+const goFloor = id => { sel = id; document.querySelector('#tabs button[data-t="floor"]').click(); render(); };
+$('plist').onclick = e => { const p = e.target.closest('.p'); if (p) { sel = p.dataset.id; render(); } };
+for (const id of ['openT', 'doneT']) $(id).onclick = e => { const r = e.target.closest('tr[data-id]'); if (r) goFloor(r.dataset.id); };
+$('detail').onclick = async e => {
+  if (e.target.id === 'apBtn') return doApprove();
+  const a = e.target.dataset.act; if (!a) return;
+  try { const p = await api('/api/trading/' + a, { id: sel }); await load(); }
+  catch (err) { $('actErr').textContent = err.message; }
+};
+$('detail').addEventListener('keydown', e => { if (e.target.id === 'apIn' && e.key === 'Enter') doApprove(); });
+async function doApprove() {
+  try { await api('/api/trading/approve', { text: $('apIn').value }); await load(); }
+  catch (e) { $('apErr').textContent = e.message; }
+}
+$('fSide').onclick = e => { const b = e.target.closest('button'); if (!b) return; side = b.dataset.v; $('fSide').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); };
+$('fQuote').onclick = async () => {
+  $('fQ').textContent = 'ophalen…';
+  try { quote = await api('/api/trading/quote?coin=' + encodeURIComponent($('fCoin').value.trim()));
+    $('fCoin').value = quote.coin; $('fQ').innerHTML = `mid <b>${px(quote.mid)}</b> · ATR(1u) ${px(quote.atr)} · max ${quote.max_lev}x · volume ${usd(quote.vol24)}`; }
+  catch (e) { quote = null; $('fQ').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
+$('fAtr').onclick = async () => { if (!quote || quote.coin !== $('fCoin').value.trim()) await $('fQuote').onclick();
+  if (quote && quote.atr) $('fStop').value = +(side === 'long' ? quote.stop_long : quote.stop_short).toPrecision(6); };
+const num = v => { v = String(v).trim().replace(',', '.'); return v === '' ? null : Number(v); };
+$('fGo').onclick = async () => {
+  $('fErr').textContent = '';
+  try { const p = await api('/api/trading/propose', { coin: $('fCoin').value.trim(), side, stop: num($('fStop').value), entry: num($('fEntry').value), tp_r: num($('fTp').value), idea: $('fIdea').value });
+    $('fIdea').value = ''; goFloor(p.id); await load(); }
+  catch (e) { $('fErr').textContent = e.message; }
+};
+$('stratBtn').onclick = async () => { $('stratErr').textContent = 'bezig…';
+  try { const ps = await api('/api/trading/strategist', {}); $('stratErr').textContent = ''; await load(); if (ps.length) goFloor(ps[0].id); else $('stratErr').textContent = 'geen kandidaat (zie de vloer)'; }
+  catch (e) { $('stratErr').textContent = e.message; } };
+$('limSave').onclick = async () => {
+  const body = { why: $('limWhy').value };
+  $('limForm').querySelectorAll('input').forEach(i => { const k = i.dataset.k, v = i.value.trim();
+    body[k] = ['allowed_markets', 'cluster'].includes(k) ? v.split(',').map(s => s.trim()).filter(Boolean) : num(v); });
+  try { await api('/api/trading/limits', body); $('limErr').textContent = ''; $('limWhy').value = ''; limDrawn = 0; await load(); }
+  catch (e) { $('limErr').textContent = e.message; }
+};
+$('resetBtn').onclick = async () => { if (!confirm('Papierboek terug naar $1000?')) return;
+  try { await api('/api/trading/reset', {}); await load(); $('resetErr').textContent = ''; } catch (e) { $('resetErr').textContent = e.message; } };
+
+// tabs onder de statusbalk houden
+const fit = () => { const sb = document.getElementById('sbar'); document.documentElement.style.setProperty('--sbarH', (sb ? sb.offsetHeight : 0) + 'px'); };
+addEventListener('resize', fit); setInterval(fit, 2000); setTimeout(fit, 300);
+load(); setInterval(() => { if (!document.hidden) load(); }, 3000);
+</script>
+</body>
+</html>

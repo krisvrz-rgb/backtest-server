@@ -410,3 +410,20 @@ def test_strategy_scores(tmp_path, monkeypatch):
     assert d["scanned"] and len(d["scores"]) >= 150
     assert {n for n, v in d["scores"].items() if v["open"]} == set(res["AAA"]["open_now"])
     assert client.get("/api/scores", params={"symbol": "ZZZ"}).json()["scores"] == {}
+
+
+def test_desk_page_and_status_paper_by_default():
+    assert client.get("/desk").status_code == 200
+    st = client.get("/api/desk/status").json()
+    assert st["live"] is False and st["reasons"]
+    r = client.post("/api/desk/open", json={"coin": "BTC", "side": "long", "usd": 10, "token": "x"})
+    assert r.status_code == 403
+
+
+def test_desk_summary_for_statusbar():
+    s = client.get("/api/desk/summary").json()
+    for k in ("mode", "start", "equity", "pnl", "open", "upnl", "today", "days", "analysis_at", "analysis_running"):
+        assert k in s
+    assert set(s["today"]) >= {"day", "wins", "losses", "pnl"}
+    assert client.get("/static/statusbar.js").status_code == 200
+    assert "/static/statusbar.js" in client.get("/desk").text
