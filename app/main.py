@@ -24,7 +24,7 @@ from .watchlist import (PORTFOLIO_LIST, default_periods, PORTFOLIO_URL, SCANNER,
                         list_name, load_watchlist, parse_tradingview, replace_lists, save_watchlist, tv_to_yahoo,
                         scan_cached, ticker_detail, watchlist_view)
 from .robust import cross_ticker
-from . import desk, desk_coach
+from . import desk, desk_coach, trading_desk
 from .desk_auto import swarm
 from .picks import picks, strategy_scores
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
@@ -159,6 +159,146 @@ def picks_page():
 @app.get("/desk", include_in_schema=False)
 def desk_page():
     return FileResponse(STATIC_DIR / "desk.html")
+
+
+# --------------------------------------------------------------------------- Trading Desk (rollen + tickets, papier)
+@app.get("/trading", include_in_schema=False)
+def trading_page():
+    return FileResponse(STATIC_DIR / "trading.html")
+
+
+def _td_research(coin: str) -> dict:
+    from .desk_auto import bt_bias
+    m = swarm.markets.get(coin)
+    sw = None
+    if m is not None:
+        mo = m.model or {}
+        sw = {"side": mo.get("side"), "p": mo.get("pDir"), "edge": mo.get("edge")} if mo.get("edge") is not None else {}
+    return {"swarm": sw, "bt": bt_bias(coin)}
+
+
+def _td_candidates() -> list[dict]:
+    out = []
+    for c, m in list(swarm.markets.items()):
+        mo = m.model or {}
+        if swarm.coins.get(c) and mo.get("edge") is not None and mo["edge"] > 0:
+            out.append({"coin": c, "side": mo["side"], "p": mo.get("pDir"), "edge": mo["edge"], "score": (m.feat or {}).get("score", 0.0)})
+    return sorted(out, key=lambda x: -x["edge"])
+
+
+def _td_llm(prompt: str) -> str:
+    cfg = desk_coach.config()
+    if not cfg.get("url") or not cfg.get("model"):
+        found = desk_coach.detect()
+        if not found:
+            raise RuntimeError("geen lokaal model")
+        cfg = {**cfg, **found}
+    return desk_coach._chat(cfg["url"], cfg["model"], prompt)
+
+
+trading_desk.research_hook = _td_research
+trading_desk.strategist_hook = _td_candidates
+trading_desk.review_llm = _td_llm
+
+
+class TdPropose(BaseModel):
+    coin: str
+    side: Literal["long", "short"]
+    stop: float = Field(gt=0)
+    entry: float | None = Field(None, gt=0, description="leeg = markt")
+    tp_r: float | None = Field(None, gt=0, description="doel in R, leeg = geen TP")
+    idea: str = ""
+
+
+class TdText(BaseModel):
+    text: str
+
+
+class TdId(BaseModel):
+    id: str
+
+
+def _td(fn, *a):
+    try:
+        return fn(*a)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, str(e).strip("'\""))
+
+
+@app.get("/api/trading/state")
+def td_state():
+    return trading_desk.snapshot()
+
+
+@app.get("/api/trading/quote")
+def td_quote(coin: str):
+    """Hulp bij een nieuw voorstel: mid, ATR(1u) en een stop op 1,5× ATR aan beide kanten."""
+    try:
+        c = desk._coin(coin)
+        ev = trading_desk.market_evidence(c)
+    except Exception as e:
+        raise HTTPException(400, f"geen marktdata voor {coin}: {e}")
+    atr = ev.get("atr1h")
+    return {"coin": c, "mid": ev["mid"], "atr": atr, "max_lev": ev["max_lev"], "vol24": ev["vol24"], "funding": ev["funding"],
+            "stop_long": ev["mid"] - 1.5 * atr if atr else None, "stop_short": ev["mid"] + 1.5 * atr if atr else None}
+
+
+@app.get("/api/trading/summary")
+def td_summary():
+    return trading_desk.summary()
+
+
+@app.post("/api/trading/propose")
+def td_propose(req: TdPropose):
+    coin = req.coin.strip()
+    try:
+        coin = desk._coin(coin)
+    except Exception:
+        raise HTTPException(400, f"{coin} staat niet op Hyperliquid")
+    return _td(trading_desk.propose, coin, req.side, req.stop, req.entry, req.tp_r, req.idea, "jij")
+
+
+@app.post("/api/trading/strategist")
+def td_strategist():
+    return _td(trading_desk.strategist, 1)
+
+
+@app.post("/api/trading/approve")
+def td_approve(req: TdText):
+    return _td(trading_desk.approve, req.text)
+
+
+@app.post("/api/trading/refresh")
+def td_refresh(req: TdId):
+    p = trading_desk.find(req.id)
+    if p is None or p["status"] not in ("awaiting", "void", "rejected"):
+        raise HTTPException(400, "dit voorstel kan niet vernieuwd worden")
+    if p.get("approval"):
+        raise HTTPException(400, "al goedgekeurd: een nieuw idee wordt een nieuw voorstel")
+    trading_desk.floor("lead", "nieuw bewijs en nieuw risico-akkoord gevraagd", p["id"], nxt="Market Analyst")
+    return _td(trading_desk.run_lifecycle, p["id"])
+
+
+@app.post("/api/trading/close")
+def td_close(req: TdId):
+    return _td(trading_desk.request_close, req.id)
+
+
+@app.post("/api/trading/void")
+def td_void(req: TdId):
+    return _td(trading_desk.void, req.id)
+
+
+@app.post("/api/trading/limits")
+def td_limits(body: dict):
+    why = str(body.pop("why", "") or "")
+    return _td(trading_desk.set_limits, body, why)
+
+
+@app.post("/api/trading/reset")
+def td_reset():
+    _td(trading_desk.reset_book)
+    return trading_desk.snapshot()
 
 
 class DeskOrder(BaseModel):
@@ -802,6 +942,7 @@ def stop_scan():
 @app.on_event("startup")
 def _start_scheduler():
     start_scheduler()
+    trading_desk.start()  # Trading Desk: bewaakt rustende limieten, stops en TP's op papier
     swarm.start()  # op papier tot live aan staat; volgt alle aangezette markten en leert 24/7
     threading.Thread(target=desk_coach.scheduler, daemon=True, name="desk-coach").start()
 

@@ -6,6 +6,7 @@
   const DESKS = [
     { key: 'swarm', name: 'Swarm', href: '/desk', url: '/api/desk/summary', what: 'coach' },
     { key: 'swing', name: 'Swing', href: '/swing', url: '/api/swing/summary', what: 'analyse' },
+    { key: 'trading', name: 'Trading Desk', href: '/trading', url: '/api/trading/summary', what: 'review' },
   ];
   const here = location.pathname.replace(/\/+$/, '') || '/';
   const css = `
@@ -14,7 +15,7 @@
   #sbar a.d { flex: 1; display: flex; align-items: center; gap: 3px 12px; flex-wrap: wrap; padding: 5px 12px; background: #0a0d19;
     color: inherit; text-decoration: none; min-width: 0; white-space: nowrap; }
   #sbar a.d:hover { background: #111528; }
-  #sbar a.d.here { box-shadow: inset 0 -2px 0 #5b8cff; }
+  #sbar a.d.here { box-shadow: inset 0 -2px 0 #5b8cff; flex: 1.6; }
   #sbar .nm { font: 700 11px system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
   #sbar .nm i { display: inline-block; vertical-align: middle; line-height: 1.25; font-style: normal; font-weight: 600; font-size: 9px; color: #7581a3; margin-left: 5px; }
   #sbar .k { display: flex; flex-direction: column; }
@@ -60,6 +61,13 @@
           `verwachting per trade = winrate × gem. winnaar − (1 − winrate) × gem. verliezer\nverhouding winnaar/verliezer ${a.avg_loss ? (a.avg_win / a.avg_loss).toFixed(2).replace('.', ',') : '–'}`);
   }
 
+  function edgeShort(a) {  // op de andere bladen: alleen winrate tegen nodig, zodat drie desks naast elkaar passen
+    if (!a || !a.n) return '';
+    const ok = a.be_winrate == null ? 'mu' : a.winrate > a.be_winrate ? 'up' : 'dn';
+    return k('winrate', `<span class="${ok}">${pc(a.winrate)}</span><span class="mu">/${a.be_winrate == null ? '–' : pc(a.be_winrate)}</span>`,
+      `winrate / nodige winrate · gem. winnaar ${sgn(a.avg_win)}, gem. verliezer ${sgn(-a.avg_loss)}, per trade ${sgn(a.expectancy)}`);
+  }
+
   function render(d, s) {
     const el = document.getElementById('sbar-' + d.key);
     if (!s) {
@@ -74,10 +82,10 @@
       + k('waarde', `${usd(s.equity)} <span class="${cls(s.pnl)}">${pct >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(1).replace('.', ',')}%</span>`,
           `start ${usd(s.start)}, winst sinds start ${sgn(s.pnl)}, waarvan open ${sgn(s.upnl || 0)}`)
       + k('open', open, `niet-gerealiseerd ${sgn(s.upnl || 0)}`)
-      + k('W/V vandaag', `${t.wins}/${t.losses}${t.wins + t.losses ? ` · ${Math.round(t.wins / (t.wins + t.losses) * 100)}%` : ''} `
+      + (here !== d.href && here !== '/' ? k('W/V vandaag', `${t.wins}/${t.losses} <span class="${cls(t.pnl)}">${sgn(t.pnl)}</span>`, 'handelsdag 22.00 tot 22.00') : k('W/V vandaag', `${t.wins}/${t.losses}${t.wins + t.losses ? ` · ${Math.round(t.wins / (t.wins + t.losses) * 100)}%` : ''} `
           + `<span class="${cls(t.pnl)}">${sgn(t.pnl)}${s.start ? ` · ${t.pnl >= 0 ? '+' : '−'}${Math.abs(t.pnl / s.start * 100).toFixed(1).replace('.', ',')}%` : ''}</span>`,
-          'handelsdag 22.00 tot 22.00\n' + (days || 'nog geen afgesloten trades'))
-      + edgeK(s.all)
+          'handelsdag 22.00 tot 22.00\n' + (days || 'nog geen afgesloten trades')))
+      + (here === d.href || here === '/' ? edgeK(s.all) : edgeShort(s.all))
   }
 
   async function tick() {
