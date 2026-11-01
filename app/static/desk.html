@@ -207,6 +207,18 @@
     .reactor { grid-template-columns: 1fr; } .bank { grid-template-columns: repeat(3, 1fr); }
     .row2, .row3, .tape { grid-template-columns: 1fr; } .agents { grid-template-columns: repeat(3, 1fr); }
   }
+  .dayk { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .dayk div { background: rgba(127,127,160,.07); border-radius: 8px; padding: 8px 10px; display: grid; gap: 2px; }
+  .dayk b { font: 700 22px var(--mono); } .dayk span { font-size: 9px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+  .dayk small { font: 10px var(--mono); color: var(--muted); }
+  .daygrid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .8fr) minmax(0, 1.3fr); gap: 14px; }
+  @media (max-width: 1100px) { .daygrid { grid-template-columns: 1fr; } }
+  .rchips { display: flex; flex-wrap: wrap; gap: 4px; } .rchips span { font: 10px var(--mono); border: 1px solid var(--border); border-radius: 10px; padding: 2px 7px; }
+  .rchips span.chg { border-color: var(--accent); color: var(--accent); }
+  .jsec h4 { margin: 8px 0 2px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .jsec p { margin: 0; white-space: pre-wrap; } .jsec .prop { border-left: 3px solid var(--accent); padding: 4px 8px; background: rgba(91,140,255,.08); border-radius: 4px; }
+  .gbar { display: grid; grid-template-columns: 90px 1fr 60px; gap: 6px; align-items: center; font: 10.5px var(--mono); margin: 2px 0; }
+  .gbar i { display: block; height: 7px; border-radius: 3px; }
   .why { font: 11.5px/1.5 system-ui, sans-serif; } .why p { margin: 0 0 5px; } .why b { font-weight: 700; }
   .why .bar { display: grid; grid-template-columns: 96px 1fr 44px; gap: 6px; align-items: center; font: 10px var(--mono); margin: 1px 0; }
   .why .bar i { display: block; height: 5px; border-radius: 3px; }
@@ -308,6 +320,15 @@
   </div>
 </section>
 <main id="tabDesk">
+  <section class="panel" id="dayPanel">
+    <div class="ph"><h2>Dagjournaal</h2><span class="sub">handelsdag 22.00 tot 22.00 · cijfers berekend door de server · om 22.00 schrijft je eigen taalmodel wat hij geleerd heeft</span>
+      <span class="right"><select id="daySel" class="btn" style="font:inherit"></select></span></div>
+    <div class="daygrid">
+      <div><div class="dayk" id="dayKpi"></div><div id="dayGroups" style="margin-top:8px"></div></div>
+      <div><div class="cap">regels die golden</div><div id="dayRules" class="why"></div></div>
+      <div class="why jsec" id="dayReport"><span class="muted">laden…</span></div>
+    </div>
+  </section>
   <section class="panel">
     <div class="ph"><h2>The Reactor</h2><span class="sub">zes spoelen houden de ring · één ticket rijdt mee · het model in de kern</span>
       <span class="right" id="stage">VENSTER –</span></div>
@@ -450,6 +471,7 @@
       <label>max marge (% pf)<input id="lvMarg" type="number" step="0.5" min="0.5" max="25"></label>
       <span class="muted" style="align-self:center;max-width:320px">Stop-loss, take-profit en hefboom kiest de zwerm per trade: stop net voorbij steun, weerstand of trendlijn (anders 1σ), take-profit net ervoor (anders 1,5σ), hefboom uit de afstand tot de stop × het vertrouwen. Je kunt ze op de grafiek nog verslepen.</span>
       <label title="Op het einde van het venster kijkt de zwerm of hij nu opnieuw in dezelfde richting zou instappen. Zo ja, dan loopt de trade door (scheelt fees). 0 = altijd sluiten">doorlopen (max vensters)<input id="lvHold" type="number" step="1" min="0" max="12"></label>
+      <label title="Staat de trade minstens 2× de kosten in de plus, dan schuift de stop mee naar instap + dit percentage van de beste koers sinds instap. Alleen vooruit, nooit terug">trailing stop (% winst vasthouden)<span style="display:flex;gap:4px;align-items:center"><input id="lvTrailOn" type="checkbox" style="width:auto"><input id="lvTrail" type="number" step="5" min="10" max="90"></span></label>
       <button class="btn" id="lvSave">Toepassen</button>
     </div>
   </fieldset>
@@ -787,7 +809,7 @@ function renderMinis() {
     const pnlAt = v => t.usd * (v - e) / e * (long ? 1 : -1), margin = t.usd / t.lev;
     miniLine(m, 'entry', { price: e || t.limit, color: col, lineWidth: 2, lineStyle: e ? 0 : 2, axisLabelVisible: true,
       title: e ? `${sgn(t.upnl, 2)} (${sgn(t.upnl / margin * 100, 1)}%)` : 'limiet' });
-    miniLine(m, 'sl', e && t.sl && { price: t.sl, color: '#ff4d6d', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `SL ${sgn(pnlAt(t.sl), 2)}` });
+    miniLine(m, 'sl', e && t.sl && { price: t.sl, color: '#ff4d6d', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `${t.trailed ? 'TRAIL' : 'SL'} ${sgn(pnlAt(t.sl), 2)}` });
     miniLine(m, 'tp', e && t.tp && { price: t.tp, color: '#2fbf4a', lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: `TP ${sgn(pnlAt(t.tp), 2)}` });
     const sml = st.auto.markets && st.auto.markets[t.coin], lk = (layerOn.has('sr') ? 1 : 0) + JSON.stringify((sml && sml.levels) || []);
     if (lk !== m.srKey) { m.srKey = lk; srLines(m.ser, m.sr || (m.sr = []), sml && sml.levels, layerOn.has('sr')); }
@@ -966,6 +988,71 @@ $('pnlSeg').onclick = e => { const b = e.target.dataset.b; if (!b) return; pnlS.
 $('pnlMode').onclick = e => { const m = e.target.dataset.m; if (!m) return; pnlS.m = m;
   $('pnlMode').querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.m === m)); renderPnl(); };
 setInterval(() => { if ($('tabPnl').style.display !== 'none') loadPnl(); }, 30000);
+
+// ---------- dagjournaal ----------
+const journal = { day: null, data: null };
+const RLBL = { window_min: v => `venster ${v}m`, min_edge: v => `drempel ${sgn(v, 0, '¢')}`, max_lev: v => `max ${v}x`, risk_pct: v => `risico ${v}%`,
+  kelly_frac: v => `Kelly ×${v}`, max_margin_pct: v => `marge ${v}%`, hold_max: v => `doorlopen ${v}`, trail_on: v => v ? 'trailing aan' : 'trailing uit',
+  trail_pct: v => `trailing ${v}%`, learn: v => v ? 'leermodel aan' : 'leermodel uit', scan: v => `scanner ${v}`, sl_tp: v => `SL/TP ${v}`,
+  exits: v => v, filters: v => v, max_pos: v => `positie max ${v}` };
+function dayKpis(st, total) {
+  const pc = v => v == null ? '–' : fmt(v * 100, 0) + '%';
+  return [[`<b class="${st.pnl >= 0 ? 'up' : 'down'}">${sgn(st.pnl, 2)}</b>`, 'pnl na kosten', `bruto ${sgn(st.gross, 2)} · kosten ${usd(st.fees, 2)}`],
+    [`<b>${st.n}</b>`, 'trades', `${st.wins} gewonnen · ${pc(st.winrate)}`],
+    [`<b>${st.avg_win == null ? '–' : sgn(st.avg_win, 2)}</b>`, 'gem. winst', `gem. verlies ${st.avg_loss == null ? '–' : sgn(st.avg_loss, 2)}`],
+    [`<b>${pc(st.maker_exit)}</b>`, 'uitstap als maker', `gem. edge ${st.avg_edge == null ? '–' : sgn(st.avg_edge, 1) + '¢'} · ${st.avg_lev || '–'}x`],
+    [`<b>${pc(st.model_hit)}</b>`, 'model juist', `${st.windows} vensters bekeken`],
+    [`<b>${st.best ? short(st.best.coin) : '–'}</b>`, 'beste trade', st.best ? `${st.best.side} ${sgn(st.best.pnl, 2)} · ${st.best.reason}` : ''],
+    [`<b>${st.worst ? short(st.worst.coin) : '–'}</b>`, 'slechtste trade', st.worst ? `${st.worst.side} ${sgn(st.worst.pnl, 2)} · ${st.worst.reason}` : ''],
+    total ? [`<b class="${total.pnl >= 0 ? 'up' : 'down'}">${sgn(total.pnl, 2)}</b>`, 'sinds de start', `${total.n} trades · ${pc(total.winrate)} · maker ${pc(total.maker_exit)}`]
+      : ['<b>–</b>', '', '']].map(([b, l, sm]) => `<div>${b}<span>${l}</span><small>${sm}</small></div>`).join('');
+}
+function dayGroups(st) {
+  const blk = (title, gs) => { if (!gs || !gs.length) return ''; const mx = Math.max(...gs.map(g => Math.abs(g.pnl)), 1e-9);
+    return `<div class="cap" style="margin-top:6px">${title}</div>` + gs.map(g => `<div class="gbar"><span>${short(String(g.k))} <span class="muted">${g.n}×</span></span>
+      <i style="width:${Math.abs(g.pnl) / mx * 100}%;background:${g.pnl >= 0 ? '#16b364' : '#ef3a5d'}"></i><span class="${g.pnl >= 0 ? 'up' : 'down'}">${sgn(g.pnl, 2)}</span></div>`).join(''); };
+  return blk('per uitstapreden', st.by_reason) + blk('per edge bij instap', st.by_edge)
+    + blk('beste tickers', st.top) + blk('slechtste tickers', st.bottom);
+}
+function dayRules(rs) {
+  if (!rs || !rs.length) return '<span class="muted">nog niet bijgehouden (vanaf de volgende herstart)</span>';
+  let prev = null;
+  return rs.map((r, i) => { const keys = Object.keys(r.rules).filter(k => RLBL[k]);
+    const chips = keys.map(k => `<span class="${prev && JSON.stringify(prev[k]) !== JSON.stringify(r.rules[k]) ? 'chg' : ''}">${RLBL[k](r.rules[k])}</span>`).join('');
+    const p = prev; prev = r.rules;
+    const shown = p ? keys.filter(k => JSON.stringify(p[k]) !== JSON.stringify(r.rules[k])) : keys;
+    return `<p><b>${i ? 'om ' + hhmmss(r.t).slice(0, 5) : 'bij het begin'}</b>${r.why && i ? ` · ${r.why}` : ''}</p><div class="rchips" style="margin-bottom:6px">${p ? shown.map(k => `<span class="chg">${RLBL[k](r.rules[k])}</span>`).join('') : chips}</div>`; }).join('');
+}
+function dayReport(e, live) {
+  if (!e || !e.report) return `<p class="muted">${live ? 'Het dagrapport volgt om 22.00, als de handelsdag afsluit. "Coach nu" (onderaan) maakt er nu al een over de dag tot nu.' : 'Geen rapport voor deze dag.'}</p>`;
+  const r = e.report, sec = (t, x) => x ? `<h4>${t}</h4><p>${x.replace(/</g, '&lt;')}</p>` : '';
+  const prop = r.proposal ? `<h4>voorstel</h4><div class="prop"><p>${r.proposal.replace(/</g, '&lt;')}</p>${r.setting
+    ? (e.applied ? `<p class="up">toegepast</p>` : `<button class="btn" id="propApply" style="margin-top:4px">Toepassen: ${r.setting.label} = ${r.setting.value}</button>`) : ''}</div>` : '';
+  return `<div class="cap">${new Date(e.at).toLocaleString('nl-BE')} · ${e.model} · ${fmt(e.seconds, 0)} s</div>`
+    + sec('geleerd', r.learned) + sec('conclusies', r.conclusions) + sec('te bekijken of verbeteren', r.review) + prop;
+}
+async function loadJournal() {
+  try {
+    const j = await (await fetch('/api/desk/journal')).json(); journal.list = j;
+    const sel = $('daySel'), cur = journal.day || j.today.day;
+    sel.innerHTML = `<option value="${j.today.day}">${j.today.day} (lopend)</option>` + j.days.filter(d => d.day !== j.today.day)
+      .map(d => `<option value="${d.day}">${d.day} · ${d.n} trades · ${sgn(d.pnl, 2)}</option>`).join('');
+    sel.value = cur;
+    if (cur === j.today.day) renderDay({ ...j.today, ...(j.entry ? { report: j.entry.report, at: j.entry.at, model: j.entry.model, seconds: j.entry.seconds, applied: j.entry.applied } : {}) }, j.total, true);
+  } catch (e) { $('dayReport').innerHTML = '<span class="muted">journaal niet bereikbaar</span>'; }
+}
+function renderDay(e, total, live) {
+  journal.data = e;
+  $('dayKpi').innerHTML = dayKpis(e.stats, total); $('dayGroups').innerHTML = dayGroups(e.stats);
+  $('dayRules').innerHTML = dayRules(e.rules); $('dayReport').innerHTML = dayReport(e, live);
+  const b = $('propApply'); if (b) b.onclick = async () => { b.disabled = true;
+    const r = await fetch(`/api/desk/journal/${e.day}/apply`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: S.token }) });
+    const x = await r.json().catch(() => ({})); if (!r.ok) { b.textContent = x.detail || 'mislukt'; return; } loadJournal(); pollAuto(); };
+}
+$('daySel').onchange = async () => { const d = $('daySel').value; journal.day = d;
+  if (journal.list && d === journal.list.today.day) return loadJournal();
+  const e = await (await fetch('/api/desk/journal/' + d)).json(); renderDay(e, journal.list && journal.list.total, false); };
+loadJournal(); setInterval(() => { if (!journal.day || (journal.list && journal.day === journal.list.today.day)) loadJournal(); }, 30000);
 
 // ---------- leren & coach ----------
 function renderLearn() {
@@ -1524,7 +1611,9 @@ function explain(t, sm) {
 // waarom een trade dicht ging, in gewone taal
 function exitStory(h) {
   const e = h.exit_why || {}, r = e.reason || h.reason || 'venster', win = h.pnl >= 0;  // oudere trades hebben nog geen reden: die sloten altijd aan het einde van het venster
-  const how = { SL: `de koers raakte de stop-loss${h.plan ? ' (' + h.plan.sl + ')' : ''}`, TP: `de koers raakte de take-profit${h.plan ? ' (' + h.plan.tp + ')' : ''}${e.maker ? ', die als limiet in het boek lag (maker)' : ''}`,
+  const tr = h.trail || {};
+  const how = { SL: `de koers raakte de stop-loss${h.plan ? ' (' + h.plan.sl + ')' : ''}`,
+    trailing: `de koers viel terug op de trailing stop: die was meegeschoven naar instap + ${tr.pct || 50}% van de beste koers${tr.best ? ' (' + fmt(tr.best, pxD()) + ')' : ''}, oorspronkelijke stop ${tr.sl0 ? fmt(tr.sl0, pxD()) : '?'}. Zo bleef een deel van de winst vast`, TP: `de koers raakte de take-profit${h.plan ? ' (' + h.plan.tp + ')' : ''}${e.maker ? ', die als limiet in het boek lag (maker)' : ''}`,
     venster: `het venster van ${e.window || '?'} min was voorbij: de voorspelling gold tot dan, dus de zwerm stapte uit ${e.maker ? 'als maker (goedkoop)' : 'met een marktorder'}`,
     omgedraaid: `het model draaide om: de kans voor de andere kant werd groot genoeg om die trade zelf te openen, dus stapte hij uit ${e.maker ? 'als maker (goedkoop)' : 'met een marktorder (de limiet werd niet binnen 30 s gevuld)'}`, 'kill switch': 'jij drukte de kill switch', daglimiet: 'de daglimiet op verlies werd geraakt', 'venster gewijzigd': 'je koos een ander venster' }[r] || r;
   return `<p><b class="${win ? 'up' : 'down'}">${h.side.toUpperCase()} ${short(h.coin)} ${sgn(h.pnl, 2)}</b> · dicht om ${hhmmss(h.t).slice(0, 5)} omdat ${how}.
@@ -1550,7 +1639,7 @@ function drawLevels() {
     if (lv) {
       const e = srvT.entry, pnl = srvT.usd * (lv - e) / e * (srvT.side === 'long' ? 1 : -1);
       const opt = { price: lv, color: k === 'sl' ? '#ff4d6d' : '#2fbf4a', lineWidth: 2, lineStyle: 1, axisLabelVisible: true,
-        title: `${k === 'sl' ? 'STOP' : 'TAKE PROFIT'} ${sgn(pnl, 2)} · sleep om te verplaatsen` };
+        title: `${k === 'sl' ? (srvT.trailed ? 'TRAILING STOP' : 'STOP') : 'TAKE PROFIT'} ${sgn(pnl, 2)} · sleep om te verplaatsen` };
       if (st[key]) st[key].applyOptions(opt); else st[key] = cs.createPriceLine(opt);
     } else if (st[key]) { cs.removePriceLine(st[key]); st[key] = null; }
   }
@@ -1647,10 +1736,10 @@ function tick() {
       + `gerealiseerd ${sgn(pf.pnl, 2)} · open ${sgn(pf.upnl, 2)}`;
     const eq = Math.max(pf.equity, 1e-9);
     $('pfMargin').innerHTML = pf.open.map(t => `<i title="${t.coin} marge ${usd(t.margin, 2)}" style="width:${t.margin / eq * 100}%;background:${tColor(t.coin)}"></i>`).join('');
-    $('pfOpen').innerHTML = `<div class="muted"><span>vrij</span><span>${usd(pf.free, 0)}</span><span>in gebruik ${usd(pf.used, 2)}</span><span>marge</span><span>vertrouwen</span><span>pnl</span></div>`
+    $('pfOpen').innerHTML = `<div class="muted"><span>vrij</span><span>${usd(pf.free, 0)}</span><span>in gebruik ${usd(pf.used, 2)}</span><span title="positie = marge × hefboom; marge = wat er van je portefeuille vastligt">positie · marge</span><span title="kans volgens het model, nu, dat de koers de kant van de trade op gaat">vertrouwen</span><span>pnl</span></div>`
       + pf.open.map(t => `<div data-c="${t.coin}" title="Open ${t.coin} op de grafiek"><b style="color:${tColor(t.coin)}">${short(t.coin)}</b><span>${t.side} ${t.lev}x</span>
         <span class="bar"><i style="width:${Math.min(100, t.margin / eq * 400)}%;background:${tColor(t.coin)}"></i></span>
-        <span>${usd(t.margin, 2)}</span><span>${confCell(t)}</span><span class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}</span></div>`).join('');
+        <span title="${sizeWhy(t)}">${usd(t.usd, 0)} <span class="muted">· ${usd(t.margin, 2)}</span></span><span>${confCell(t)}</span><span class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}</span></div>`).join('');
     $('stTickets').textContent = n; $('stWin').textContent = n ? fmt(pf.wins / n * 100, 1) + '%' : '–';
     $('stAvg').textContent = n ? sgn(pf.pnl / n, 2) : '–'; $('stDd').textContent = fmt(dd * 100, 1) + '%';
     $('hdPnl').innerHTML = `<span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 2)}</span>`; $('hdTickets').textContent = n;
@@ -1749,6 +1838,13 @@ function tradeConf(t) {
   const m = st.auto && st.auto.markets && st.auto.markets[t.coin], p = m && m.model && m.model.p;
   return p == null ? null : (t.side === 'long' ? p : 1 - p);
 }
+// waarom deze grootte: uit de SIZE-berekening die bij de instap werd bewaard
+const sizeWhy = t => { const w = t.why || {};
+  const base = `positie ${usd(t.usd, 2)} = marge ${usd(t.margin, 2)} × ${t.lev}x. Bij 1x ligt de hele positie als marge vast.`;
+  if (w.kelly_raw == null) return base;
+  const why = w.explore ? `Kelly wilde ${usd(w.kelly_raw, 0)} (verwachte winst ${fmt(w.mu_bp, 1)} bp na kosten, dus ${w.kelly_raw > 0 ? 'klein' : 'niets'}); op de drempel ‘leren’ krijgt hij toch 3% van de portefeuille om van te leren.`
+    : `Kelly ×${w.kelly} wilde ${usd(w.kelly_raw, 0)} positie (verwachte winst ${fmt(w.mu_bp, 1)} bp na kosten tegenover de schommeling)` + (w.capped ? `, begrensd op max marge ${w.max_margin_pct}% = ${usd(w.cap_margin, 0)}.` : '.');
+  return `${base} ${why} Hefboom ${t.lev}x uit de stop op ${fmt(w.sl_bp, 0)} bp × vertrouwen ${fmt((w.lev_conf || 0) * 100, 0)}% × trefzekerheid ${fmt((w.lev_skill || 0) * 100, 0)}% × staat van dienst ${fmt((w.lev_trust || 0) * 100, 0)}%. Edge bij instap ${sgn(w.edge || 0, 1)}¢.`; };
 const confCell = t => { const c = tradeConf(t); return c == null ? '–' : `<span class="${c >= .5 ? 'up' : 'down'}" title="kans volgens het model dat de koers nu de kant van deze trade op gaat">${fmt(c * 100, 0)}%</span>`; };
 function renderTrades() {
   const a = st.auto, pf = a.portfolio || { open: [] }, d = v => v == null ? '–' : fmt(v, v >= 100 ? 2 : v >= 1 ? 4 : 6);
@@ -1760,7 +1856,7 @@ function renderTrades() {
   const hs = (a.history || []).slice().reverse();
   $('trDone').innerHTML = '<tr><th>dicht</th><th>ticker</th><th>kant</th><th>positie</th><th>in → uit</th><th>uitstap</th><th>edge</th><th>pnl</th></tr>'
     + (hs.map(h => `<tr data-c="${h.coin}"><td class="muted">${hhmmss(h.t).slice(0, 5)}</td><td>${tk(h.coin)}${h.paper ? '' : ' <b class="down">LIVE</b>'}</td><td>${side(h.side)} ${h.lev}x</td>
-      <td>${usd(h.usd)}</td><td>${d(h.entry)} → ${d(h.exit)}</td><td title="${exitStory(h).replace(/<[^>]+>/g, '').replace(/"/g, '').replace(/\s+/g, ' ').trim()}">${{ SL: 'stop-loss', TP: 'take-profit', venster: 'einde venster' }[h.reason] || h.reason || '–'} · ${h.maker_exit ? 'maker' : 'markt'}</td><td>${sgn(h.edge, 1, '¢')}</td>
+      <td>${usd(h.usd)}</td><td>${d(h.entry)} → ${d(h.exit)}</td><td title="${exitStory(h).replace(/<[^>]+>/g, '').replace(/"/g, '').replace(/\s+/g, ' ').trim()}">${{ SL: 'stop-loss', TP: 'take-profit', venster: 'einde venster', trailing: 'trailing stop' }[h.reason] || h.reason || '–'} · ${h.maker_exit ? 'maker' : 'markt'}</td><td>${sgn(h.edge, 1, '¢')}</td>
       <td class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">nog niets afgerekend</td></tr>');
   const n = hs.length, w = hs.filter(h => h.pnl > 0).length, tot = hs.reduce((s, h) => s + h.pnl, 0);
   $('trSum').innerHTML = `${pf.open.length} open · ${n} afgesloten · winrate ${n ? fmt(w / n * 100, 0) + '%' : '–'} · totaal <span class="${tot >= 0 ? 'up' : 'down'}">${sgn(tot, 2)}</span>`;
@@ -1881,12 +1977,12 @@ function fillModel() {
   const md = st.auto && st.auto.model; if (!md) { $('mdInfo').textContent = 'server niet bereikbaar'; return; }
   $('mdBeta').value = md.beta0; $('mdK').value = md.k; for (const k of MW) $('mdW_' + k).value = md.w[k];
   $('mdInfo').textContent = '';
-  if (st.auto.exits) $('lvHold').value = st.auto.exits.hold;
+  if (st.auto.exits) { $('lvHold').value = st.auto.exits.hold; $('lvTrailOn').checked = !!st.auto.exits.trail_on; $('lvTrail').value = st.auto.exits.trail_pct; }
   if (st.auto.size) { $('lvKelly').value = st.auto.size.kelly; $('lvMarg').value = st.auto.size.max_margin_pct; }
   if (st.auto.lev) { $('lvMax').value = st.auto.lev.max; $('lvRisk').value = st.auto.lev.risk; $('lvLive').textContent = st.auto.lev.live_max + 'x'; }
 }
 $('lvSave').onclick = async () => {
-  try { await autoPost('/api/desk/auto', { max_lev: +$('lvMax').value, risk_pct: +$('lvRisk').value, kelly_frac: +$('lvKelly').value, max_margin_pct: +$('lvMarg').value, hold_max: +$('lvHold').value }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'hefboom toegepast'; }
+  try { await autoPost('/api/desk/auto', { max_lev: +$('lvMax').value, risk_pct: +$('lvRisk').value, kelly_frac: +$('lvKelly').value, max_margin_pct: +$('lvMarg').value, hold_max: +$('lvHold').value, trail_on: $('lvTrailOn').checked, trail_pct: +$('lvTrail').value }); await pollAuto(); fillModel(); $('mdInfo').textContent = 'hefboom toegepast'; }
   catch (e) { $('mdInfo').textContent = e.message; }
 };
 async function postModel(model) {

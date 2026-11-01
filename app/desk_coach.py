@@ -14,7 +14,7 @@ from datetime import datetime
 
 import httpx
 
-from . import desk_learn
+from . import desk_journal, desk_learn
 from .data import DATA_DIR
 
 CONFIG_FILE = DATA_DIR / "desk-coach.json"
@@ -63,6 +63,46 @@ def detect() -> dict | None:
     return None
 
 
+def _fmt_rules(rs: list[dict]) -> str:
+    out = []
+    for r in rs:
+        when = datetime.fromtimestamp(r["t"] / 1000).strftime("%d/%m %H:%M")
+        out.append(f"- vanaf {when}: " + ", ".join(f"{k}={v}" for k, v in r["rules"].items()))
+    return "\n".join(out) or "- onbekend"
+
+
+def _fmt_groups(gs: list[dict]) -> str:
+    return "; ".join(f"{g['k']}: {g['n']} trades, {g['w']} gewonnen, {g['pnl']:+.2f}$" for g in gs) or "-"
+
+
+def _day_prompt(day: str, st: dict, rules: list[dict], hs: list[dict], learn: dict, prev: dict | None) -> str:
+    base = _prompt(hs, learn).split("Schrijf in het Nederlands")[0]
+    wr = f"{st['winrate'] * 100:.0f}%" if st["winrate"] is not None else "-"
+    prev_txt = ""
+    if prev and (prev.get("report") or {}).get("proposal"):
+        prev_txt = (f"\nGisteren stelde je voor: {prev['report']['proposal']}\n"
+                    f"Toegepast door de eigenaar: {'ja' if prev.get('applied') else 'nee'}\n")
+    return (
+        base + f"\nDAGCIJFERS {day} (berekend door de server, gebruik alleen deze cijfers):\n"
+        f"- {st['n']} trades, winrate {wr}, netto {st['pnl']:+.2f}$, kosten {st['fees']:.2f}$, bruto {st['gross']:+.2f}$\n"
+        f"- gemiddelde winst {st['avg_win']} / gemiddeld verlies {st['avg_loss']}, uitstap als maker {st['maker_exit']}\n"
+        f"- gemiddelde edge bij instap {st['avg_edge']}c, gemiddelde hefboom {st['avg_lev']}x\n"
+        f"- per uitstapreden: {_fmt_groups(st['by_reason'])}\n- per kant: {_fmt_groups(st['by_side'])}\n"
+        f"- per edge bij instap: {_fmt_groups(st['by_edge'])}\n- crypto/aandelen: {_fmt_groups(st['by_group'])}\n"
+        f"- beste tickers: {_fmt_groups(st['top'])}\n- slechtste tickers: {_fmt_groups(st['bottom'])}\n"
+        f"- vensters bekeken: {st['windows']}, model juist in {st['model_hit']} van de vensters\n"
+        f"\nREGELS DIE GOLDEN:\n{_fmt_rules(rules)}\n{prev_txt}\n"
+        "Schrijf in het Nederlands, concreet, zonder em-dashes, max 250 woorden, precies met deze vier koppen:\n"
+        "GELEERD: wat de cijfers van vandaag tonen (welke regel, markt, uitstapreden of edge werkte of niet).\n"
+        "CONCLUSIES: twee of drie conclusies, elk met het cijfer erbij.\n"
+        "TE BEKIJKEN: wat de eigenaar morgen moet nakijken of wat beter kan.\n"
+        "VOORSTEL: precies één instelling in de vorm sleutel = waarde, gevolgd door | en waarom. Kies uit: "
+        + ", ".join(f"{k} ({v[0]}, {v[1]} tot {v[2]})" for k, v in desk_journal.PROPOSABLE.items())
+        + ". Stel alleen iets voor dat de cijfers steunen; is er te weinig data, stel dan voor om niets te veranderen "
+        "en zeg dat eerlijk.\nVerzin geen cijfers die hierboven niet staan."
+    )
+
+
 def _prompt(hs: list[dict], learn: dict) -> str:
     lines = []
     for h in hs[-60:]:
@@ -109,8 +149,8 @@ def _chat(base: str, model: str, prompt: str) -> str:
     return r.json()["choices"][0]["message"].get("content") or ""
 
 
-def run(force: bool = False) -> dict:
-    """Rapport over de laatste 24 uur. Kan minuten duren bij een 35B-model."""
+def run(force: bool = False, day: str | None = None) -> dict:
+    """Dagrapport over de handelsdag (22.00 tot 22.00). Kan minuten duren bij een 35B-model."""
     if not _lock.acquire(blocking=False):
         raise RuntimeError("De coach is al bezig")
     STATUS.update(running=True, error=None)
@@ -122,22 +162,29 @@ def run(force: bool = False) -> dict:
                 raise RuntimeError("Geen lokaal taalmodel gevonden op " + ", ".join(CANDIDATES)
                                    + ". Vul de URL en het model in bij Coach-instellingen.")
             cfg = save_config(url=found["url"], model=found["model"])
-        since = int((time.time() - 86400) * 1000)
-        hs = desk_learn.trades(since)
+        t_start, t_end, day = desk_journal.day_bounds(day)
         try:  # ook de trades van voor het trade-logboek bestond, uit de bewaarde toestand van de zwerm
-            seen = {(h["t"], h["coin"]) for h in hs}
             old = json.loads((DATA_DIR / "desk-auto.json").read_text()).get("history", [])
-            hs = sorted(hs + [h for h in old if h.get("t", 0) >= since and (h["t"], h["coin"]) not in seen], key=lambda h: h["t"])
         except Exception:
-            pass
+            old = []
+        hs = desk_journal._trades(t_start, t_end, old)
+        st = desk_journal.stats(t_start, t_end, old)
+        rules = desk_journal.rules_between(t_start, t_end)
         learn = next(iter(desk_learn.STATE.values()), {}) if desk_learn.STATE else {}
+        prev = next((j for j in reversed(desk_journal.journal()) if j["day"] < day), None)
+        if prev and (prev.get("report") or {}).get("setting"):  # werd het voorstel van de vorige dag toegepast?
+            p = prev["report"]["setting"]
+            prev["applied"] = any(float(r["rules"].get(p["key"], -1e9)) == p["value"] for r in rules)
         t0 = time.time()
-        text = _chat(cfg["url"].rstrip("/"), cfg["model"], _prompt(hs, learn))
+        text = _chat(cfg["url"].rstrip("/"), cfg["model"], _day_prompt(day, st, rules, hs, learn, prev))
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()  # denkstappen van redeneermodellen weglaten
         rep = {"at": int(time.time() * 1000), "model": cfg["model"], "n_trades": len(hs),
-               "pnl": round(sum(h["pnl"] for h in hs), 4), "seconds": round(time.time() - t0, 1), "text": text}
+               "pnl": round(sum(h["pnl"] for h in hs), 4), "seconds": round(time.time() - t0, 1), "text": text, "day": day}
         all_ = reports() + [rep]
         REPORT_FILE.write_text(json.dumps(all_[-30:]))
+        desk_journal.save_entry({"day": day, "from": t_start, "to": t_end, "at": rep["at"], "model": cfg["model"],
+                                 "seconds": rep["seconds"], "stats": st, "rules": rules, "text": text,
+                                 "report": desk_journal.parse_report(text), "applied": False})
         return rep
     except Exception as e:
         STATUS["error"] = str(e)
@@ -155,10 +202,11 @@ def scheduler() -> None:
         if not cfg.get("enabled"):
             continue
         now = datetime.now()
-        last = reports()[-1]["at"] / 1000 if reports() else 0
-        if now.hour == int(cfg.get("hour", 22)) and datetime.fromtimestamp(last).date() != now.date():
+        done = desk_journal.entry(now.date().isoformat())  # een handmatig rapport overdag telt niet als het dagrapport
+        closed = now.replace(hour=desk_journal.DAY_END_HOUR, minute=0, second=0, microsecond=0).timestamp() * 1000
+        if now.hour == int(cfg.get("hour", 22)) and not (done and done["at"] >= closed):
             try:
-                run()
+                run(day=now.date().isoformat())  # de handelsdag die nu om 22.00 afsluit
             except Exception:
                 pass
 

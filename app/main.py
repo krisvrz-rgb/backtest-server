@@ -241,6 +241,12 @@ class DeskAuto(BaseModel):
     hold_max: int | None = None
     learn: bool | None = None
     risk_pct: float | None = None
+    trail_on: bool | None = None
+    trail_pct: float | None = None
+
+
+class DeskToken(BaseModel):
+    token: str | None = None
 
 
 class DeskApproval(BaseModel):
@@ -265,7 +271,8 @@ def desk_auto_set(req: DeskAuto):
                   window_min=req.window_min, reset_paper=req.reset_paper, min_edge=req.min_edge, model=req.model,
                   max_lev=req.max_lev, risk_pct=req.risk_pct, auto_scan=req.auto_scan, scan_n=req.scan_n,
                   kelly_frac=req.kelly_frac, max_margin_pct=req.max_margin_pct,
-                  sl_sigma=req.sl_sigma, tp_sigma=req.tp_sigma, hold_max=req.hold_max, learn=req.learn)
+                  sl_sigma=req.sl_sigma, tp_sigma=req.tp_sigma, hold_max=req.hold_max, learn=req.learn,
+                  trail_on=req.trail_on, trail_pct=req.trail_pct)
         return swarm.snapshot(swarm.seq)
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -315,6 +322,52 @@ def desk_pnl():
                      h.get("reason") or "venster"])
     rows.sort()
     return {"trades": rows, "paper_start": swarm.paper.get("start")}
+
+
+@app.get("/api/desk/journal")
+def desk_journal_list():
+    """Dagjournaal: de lopende dag (live cijfers en regels) en alle afgesloten dagen, nieuwste eerst."""
+    from . import desk_journal
+    t0, t1, day = desk_journal.day_bounds()
+    hist = list(swarm.history)
+    today = {"day": day, "from": t0, "to": t1, "live": True, "stats": desk_journal.stats(t0, t1, hist),
+             "rules": desk_journal.rules_between(t0, t1)}
+    days = [{"day": j["day"], "pnl": j["stats"]["pnl"], "n": j["stats"]["n"], "winrate": j["stats"]["winrate"]}
+            for j in reversed(desk_journal.journal())]
+    total = desk_journal.stats(0, t1, hist)
+    return {"today": today, "days": days, "total": {k: total[k] for k in ("n", "wins", "winrate", "pnl", "fees", "maker_exit")},
+            "entry": desk_journal.entry(day)}
+
+
+@app.get("/api/desk/journal/{day}")
+def desk_journal_day(day: str):
+    from . import desk_journal
+    e = desk_journal.entry(day)
+    if not e:
+        raise HTTPException(404, "Geen journaal voor die dag")
+    return e
+
+
+@app.post("/api/desk/journal/{day}/apply")
+def desk_journal_apply(day: str, req: DeskToken | None = None):
+    """Het voorstel van de coach toepassen: alleen als jij erop klikt."""
+    from . import desk_journal
+    e = desk_journal.entry(day)
+    prop = e and (e.get("report") or {}).get("setting")
+    if not prop:
+        raise HTTPException(404, "Geen toepasbaar voorstel voor die dag")
+    try:
+        if desk.status()["live"]:
+            desk.check_token(req.token if req else None)
+        v = prop["value"]
+        swarm.set(**{prop["key"]: int(v) if prop["key"] in ("window_min", "hold_max") else v})
+    except PermissionError as ex:
+        raise HTTPException(403, str(ex))
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
+    e["applied"] = True
+    desk_journal.save_entry(e)
+    return e
 
 
 @app.get("/api/desk/coach")
