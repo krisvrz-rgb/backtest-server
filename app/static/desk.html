@@ -164,6 +164,8 @@
   table.scan th { text-align: left; font: 600 10px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 4px 8px; border-bottom: 1px solid var(--border); }
   table.scan td { padding: 4px 8px; border-bottom: 1px dashed var(--border); white-space: nowrap; }
   table.scan .btn { padding: 3px 8px; font-size: 11px; }
+  .tflt { font: 11px var(--mono); padding: 3px 6px; margin-left: 8px; width: 220px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; text-transform: none; letter-spacing: 0; }
+  table.sortable th { cursor: pointer; user-select: none; } table.sortable th.asc::after { content: " ▲"; } table.sortable th.desc::after { content: " ▼"; }
   .tabs { display: flex; gap: 4px; padding: 8px 18px 0; position: sticky; top: var(--sbarH, 30px); z-index: 900; background: var(--bg); border-bottom: 1px solid var(--border); }  /* blijft bovenaan bij scrollen, onder de statusbalk */
   .tabs button { border: 1px solid var(--border); border-bottom: 0; background: var(--panel-2); padding: 7px 16px; border-radius: 8px 8px 0 0; font: 600 12px inherit; cursor: pointer; color: var(--muted); }
   .tabs button.on { background: var(--panel); color: var(--text); }
@@ -283,11 +285,18 @@
 <section id="tabPnl" style="display:none">
   <div class="panel">
     <div class="ph"><h2>PnL</h2><span class="sub">afgesloten trades, na fees · balkje = winst of verlies in die periode · lijn = totaal</span>
-      <span class="right"><span class="seg" id="pnlSeg"><button data-b="h">uur</button><button data-b="d" class="on">dag</button><button data-b="w">week</button><button data-b="m">maand</button><button data-b="y">jaar</button><button data-b="a">alles</button></span>
+      <span class="right"><span class="seg" id="pnlSeg"><button data-b="h">uur</button><button data-b="d">dag</button><button data-b="w">week</button><button data-b="m">maand</button><button data-b="y">jaar</button><button data-b="a" class="on" title="Elke trade apart, met een pijltje per trade op de lijn">per trade</button></span>
         <span class="seg" id="pnlMode" style="margin-left:8px"><button data-m="paper" class="on">papier</button><button data-m="live">live</button></span></span></div>
     <div id="pnlSum" class="kv" style="display:flex;gap:26px;flex-wrap:wrap;margin:4px 0 10px;font:600 13px var(--mono)"></div>
-    <div id="pnlChart" style="height:380px"></div>
+    <div id="pnlChart" style="height:520px"></div>
     <div style="overflow:auto;margin-top:10px"><table class="scan" id="pnlTable"></table></div>
+  </div>
+  <div class="panel">
+    <div class="ph"><h2>Trades</h2><span class="sub">open en afgesloten · alle tickers · klik een rij om de grafiek te openen</span><span class="right" id="trSum">–</span></div>
+    <div class="trades2">
+      <div><div class="cap">open</div><div class="trwrap"><table class="scan tr" id="trOpen"></table></div></div>
+      <div><div class="cap">afgesloten (nieuwste boven)</div><div class="trwrap"><table class="scan tr" id="trDone"></table></div></div>
+    </div>
   </div>
 </section>
 <section id="tabAll" class="allview" style="display:none">
@@ -302,13 +311,6 @@
       <span class="cap">ring, ranglijst en kaartjes elke 10 s opnieuw · groen = edge boven 0 (kans verslaat de kosten), rood = eronder</span></div>
     <div style="overflow:auto;max-height:420px;margin-bottom:10px"><table class="scan" id="edgeList"></table></div>
     <div class="cards" id="allCards"></div>
-  </div>
-  <div class="panel">
-    <div class="ph"><h2>Trades</h2><span class="sub">open en afgesloten · alle tickers · klik een rij om de grafiek te openen</span><span class="right" id="trSum">–</span></div>
-    <div class="trades2">
-      <div><div class="cap">open</div><div class="trwrap"><table class="scan tr" id="trOpen"></table></div></div>
-      <div><div class="cap">afgesloten (nieuwste boven)</div><div class="trwrap"><table class="scan tr" id="trDone"></table></div></div>
-    </div>
   </div>
   <div class="panel">
     <div class="ph"><h2>Gecombineerde trace</h2><span class="sub">nieuwste boven</span><span class="right" id="allCount">0 regels</span></div>
@@ -944,7 +946,7 @@ function drawTradeSegs() {
 }
 
 // ---------- tabblad PnL: per uur, dag, week, maand, jaar of per trade ----------
-const pnlS = { b: 'd', m: 'paper', rows: [], chart: null };
+const pnlS = { b: 'a', m: 'paper', rows: [], chart: null };
 function bucketStart(ms, b) {
   const d = new Date(ms);
   if (b === 'h') { d.setMinutes(0, 0, 0); return d.getTime(); }
@@ -990,7 +992,16 @@ function renderPnl() {
     const a = agg.get(k); cum += a.p;
     bars.push({ time: ts, value: +a.p.toFixed(4), color: a.p >= 0 ? 'rgba(22,179,100,.55)' : 'rgba(239,58,93,.55)' }); line.push({ time: ts, value: +cum.toFixed(4), color: a.p >= 0 ? '#16b364' : '#ef3a5d' }); }
   for (let i = 0; i < line.length - 1; i++) line[i].color = line[i + 1].value >= line[i].value ? '#16b364' : '#ef3a5d';  // kleur geldt voor het stuk ná het punt
-  pnlS.bars.setData(bars); pnlS.cum.setData(line); pnlS.chart.timeScale().fitContent();
+  pnlS.bars.setData(bars); pnlS.cum.setData(line);
+  // elke trade als pijltje op de totaallijn: groen omhoog = winst, rood omlaag = verlies (per trade: met de ticker erbij)
+  const mk = []; let lastT = -1;
+  rows.forEach(([t, p, , coin]) => { let ts = b === 'a' ? null : Math.floor(bucketStart(t, b) / 1000);
+    if (b === 'a') { ts = Math.floor(t / 1000); if (ts <= lastT) ts = lastT + 1; lastT = ts; }
+    mk.push({ time: ts, position: p >= 0 ? 'belowBar' : 'aboveBar', shape: p >= 0 ? 'arrowUp' : 'arrowDown', color: p >= 0 ? '#16b364' : '#ef3a5d',
+      text: rows.length <= 40 ? `${short(coin)} ${sgn(p, 2)}` : '' }); });
+  mk.sort((x, y) => x.time - y.time);
+  pnlS.cum.setMarkers(b === 'a' ? mk : []);
+  pnlS.chart.timeScale().fitContent();
   const n = rows.length, w = rows.filter(r => r[1] > 0).length, tot = rows.reduce((s, r) => s + r[1], 0);
   const pos = ks.filter(k => agg.get(k).p > 0).length, name = { h: 'uren', d: 'dagen', w: 'weken', m: 'maanden', y: 'jaren', a: 'trades' }[b];
   $('pnlSum').innerHTML = `<span>totaal <b class="${tot >= 0 ? 'up' : 'down'}">${sgn(tot, 2)}</b></span><span>${n} trades · winrate ${n ? fmt(w / n * 100, 0) : '–'}%</span>
@@ -1000,6 +1011,7 @@ function renderPnl() {
       return `<tr><td>${bucketLbl(k, b)}</td><td>${tick(a)}</td><td>${a.n}</td><td>${fmt(a.w / a.n * 100, 0)}%</td><td>${sgn(a.best, 2)}</td><td>${sgn(a.worst, 2)}</td>
         <td class="${a.p >= 0 ? 'up' : 'down'}">${sgn(a.p, 2)}</td><td class="${c >= 0 ? 'up' : 'down'}">${sgn(c, 2)}</td></tr>`; }).join('')
       : `<tr><td colspan="8" class="muted">nog geen afgesloten ${pnlS.m === 'paper' ? 'papier' : 'live'}trades</td></tr>`);
+  tblApply('pnlTable');
 }
 $('pnlSeg').onclick = e => { const b = e.target.dataset.b; if (!b) return; pnlS.b = b;
   $('pnlSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.b === b)); renderPnl(); };
@@ -1341,7 +1353,7 @@ function renderAuto() {
     $('coinAuto').innerHTML = ents.map(([c, v]) => `<button data-c="${c}" class="${v ? 'on' : ''}${blk.has(c) ? ' blk' : ''}" title="${c}: zwerm ${v ? 'volgt' : 'volgt niet'}${blk.has(c) ? ' (uitgezet, ook de scanner zet hem niet aan; klik om terug aan te zetten)' : ''}">${v ? '●' : '○'} ${short(c)}</button>`).join('');
     const onC = ents.filter(e => e[1]).map(e => short(e[0]));
     $('zwCount').textContent = `${onC.length} markten` + (onC.length ? ': ' + onC.slice(0, 6).join(', ') + (onC.length > 6 ? ` +${onC.length - 6}` : '') : '') + (blk.size ? ` · ${blk.size} uitgezet` : '');
-    renderAll(); renderCands();
+    renderAll(); renderCands(); if ($('tabPnl').style.display !== 'none') renderTrades();
   } else $('coinAuto').style.display = 'none';
   if (a && document.activeElement !== $('scanN')) $('scanN').value = String(a.scan_n ?? 25);
   if (a) { $('scanAuto').textContent = 'Auto: ' + (a.auto_scan ? 'AAN' : 'UIT'); $('scanAuto').classList.toggle('danger', !!a.auto_scan); }
@@ -1914,6 +1926,26 @@ const sizeWhy = t => { const w = t.why || {};
     : `Kelly ×${w.kelly} wilde ${usd(w.kelly_raw, 0)} positie (verwachte winst ${fmt(w.mu_bp, 1)} bp na kosten tegenover de schommeling)` + (w.capped ? `, begrensd op max marge ${w.max_margin_pct}% = ${usd(w.cap_margin, 0)}.` : '.');
   return `${base} ${why} Hefboom ${t.lev}x uit de stop op ${fmt(w.sl_bp, 0)} bp × vertrouwen ${fmt((w.lev_conf || 0) * 100, 0)}% × trefzekerheid ${fmt((w.lev_skill || 0) * 100, 0)}% × staat van dienst ${fmt((w.lev_trust || 0) * 100, 0)}%. Edge bij instap ${sgn(w.edge || 0, 1)}¢.`; };
 const confCell = t => { const c = tradeConf(t); return c == null ? '–' : `<span class="${c >= .5 ? 'up' : 'down'}" title="kans volgens het model dat de koers nu de kant van deze trade op gaat">${fmt(c * 100, 0)}%</span>`; };
+// ---------- tabellen: klik een kolomkop om te sorteren, typ in het filtervak om rijen te kiezen ----------
+const TBL = {};
+const cellVal = td => { const t = (td ? td.textContent : '').replace(/−/g, '-').replace(/[$¢%x,\s]/g, '').replace(/^\+/, '');
+  const n = parseFloat(t); return /^-?\d/.test(t) && !/^\d+:\d+/.test(t) && !isNaN(n) ? n : (td ? td.textContent.trim().toLowerCase() : ''); };
+function tblApply(id) {
+  const tb = $(id); if (!tb) return; tb.classList.add('sortable');
+  const S0 = TBL[id] || (TBL[id] = { col: -1, dir: 1, q: '' }), rows = [...tb.querySelectorAll('tr')].filter(r => r.querySelector('td'));
+  tb.querySelectorAll('th').forEach((th, i) => { th.classList.toggle('asc', i === S0.col && S0.dir > 0); th.classList.toggle('desc', i === S0.col && S0.dir < 0); });
+  const words = S0.q.toLowerCase().split(/\s+/).filter(Boolean);
+  rows.forEach(r => { const txt = r.textContent.toLowerCase(); r.style.display = words.every(w => txt.includes(w)) ? '' : 'none'; });
+  if (S0.col < 0) return;
+  const body = rows[0] && rows[0].parentNode; if (!body) return;
+  rows.sort((a, b) => { const x = cellVal(a.children[S0.col]), y = cellVal(b.children[S0.col]);
+    return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y))) * S0.dir; }).forEach(r => body.appendChild(r));
+}
+for (const id of ['trOpen', 'trDone', 'pnlTable']) $(id).addEventListener('click', e => { const th = e.target.closest('th'); if (!th) return;
+  const S0 = TBL[id] || (TBL[id] = { col: -1, dir: 1, q: '' }), i = [...th.parentNode.children].indexOf(th);
+  if (S0.col === i) S0.dir = -S0.dir; else { S0.col = i; S0.dir = -1; } tblApply(id); e.stopPropagation(); }, true);
+document.querySelectorAll('.tflt').forEach(inp => inp.addEventListener('input', () => {
+  const id = inp.dataset.t; (TBL[id] || (TBL[id] = { col: -1, dir: 1, q: '' })).q = inp.value; tblApply(id); }));
 function renderTrades() {
   const a = st.auto, pf = a.portfolio || { open: [] }, d = v => v == null ? '–' : fmt(v, v >= 100 ? 2 : v >= 1 ? 4 : 6);
   const tk = c => `<b style="color:${tColor(c)}">${short(c)}</b>`, side = sd => `<span class="${sd === 'long' ? 'up' : 'down'}">${sd === 'long' ? '▲ long' : '▼ short'}</span>`;
@@ -1927,6 +1959,7 @@ function renderTrades() {
       <td>${usd(h.usd)}</td><td>${d(h.entry)} → ${d(h.exit)}</td><td title="${exitStory(h).replace(/<[^>]+>/g, '').replace(/"/g, '').replace(/\s+/g, ' ').trim()}">${{ SL: 'stop-loss', TP: 'take-profit', venster: 'einde venster', trailing: 'trailing stop' }[h.reason] || h.reason || '–'} · ${h.maker_exit ? 'maker' : 'markt'}</td><td>${sgn(h.edge, 1, '¢')}</td>
       <td class="${h.pnl >= 0 ? 'up' : 'down'}">${sgn(h.pnl, 2)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">nog niets afgerekend</td></tr>');
   const n = hs.length, w = hs.filter(h => h.pnl > 0).length, tot = hs.reduce((s, h) => s + h.pnl, 0);
+  tblApply('trOpen'); tblApply('trDone');
   $('trSum').innerHTML = `${pf.open.length} open · ${n} afgesloten · winrate ${n ? fmt(w / n * 100, 0) + '%' : '–'} · totaal <span class="${tot >= 0 ? 'up' : 'down'}">${sgn(tot, 2)}</span>`;
 }
 for (const id of ['trOpen', 'trDone']) $(id).onclick = e => { const r = e.target.closest('tr[data-c]'); if (!r) return;
@@ -2015,7 +2048,7 @@ document.querySelector('.tabs').onclick = e => { const t = e.target.dataset.tab;
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   $('tabDesk').style.display = t === 'desk' ? '' : 'none'; $('tabAll').style.display = t === 'all' ? '' : 'none';
   $('tabPnl').style.display = t === 'pnl' ? '' : 'none'; $('tabJournal').style.display = t === 'journal' ? '' : 'none';
-  if (t === 'pnl') { loadPnl(); return; }
+  if (t === 'pnl') { loadPnl(); if (st.auto) renderTrades(); return; }
   if (t === 'journal') { loadJournal(); return; }
   placePnl(t);
   if (t === 'all') { renderAll(); renderFeed(); } else chart.applyOptions({ width: $('chart').clientWidth }); };

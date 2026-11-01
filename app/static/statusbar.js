@@ -60,7 +60,8 @@
       + k('waarde', `${usd(s.equity)} <span class="${cls(s.pnl)}">${pct >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(1).replace('.', ',')}%</span>`,
           `start ${usd(s.start)}, winst sinds start ${sgn(s.pnl)}, waarvan open ${sgn(s.upnl || 0)}`)
       + k('open trades', open, `niet-gerealiseerd ${sgn(s.upnl || 0)}`)
-      + k('W/V vandaag', `${t.wins}/${t.losses} <span class="${cls(t.pnl)}">${sgn(t.pnl)}</span>`,
+      + k('W/V vandaag', `${t.wins}/${t.losses}${t.wins + t.losses ? ` · ${Math.round(t.wins / (t.wins + t.losses) * 100)}%` : ''} `
+          + `<span class="${cls(t.pnl)}">${sgn(t.pnl)}${s.start ? ` · ${t.pnl >= 0 ? '+' : '−'}${Math.abs(t.pnl / s.start * 100).toFixed(1).replace('.', ',')}%` : ''}</span>`,
           'handelsdag 22.00 tot 22.00\n' + (days || 'nog geen afgesloten trades'))
       + k('laatste ' + d.what, s.analysis_running ? '<span class="wa">bezig…</span>' : ago(s.analysis_at), clock(s.analysis_at));
   }
