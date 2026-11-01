@@ -1133,28 +1133,33 @@ function connect() {
     else if (m.channel === 'allMids') { st.eth = +m.data.mids[chainCoin()]; }
   };
   ws.onclose = () => setTimeout(connect, 3000);
-  setTimeout(() => { if (!wsOk) startSim(); }, 7000);
+  const me = ws; setTimeout(() => { if (ws === me && !wsOk) startSim(); }, 7000);
   const ping = setInterval(() => ws.readyState === 1 ? ws.send('{"method":"ping"}') : clearInterval(ping), 30000);
 }
 function onCandle(c) {
   const last = candles[candles.length - 1];
+  if (last && last.c > 0 && (c.h > last.c * 1.25 || c.l < last.c * .75)) return;  // uitschieter (foute tick): niet tekenen
   if (last && last.t === c.t) candles[candles.length - 1] = c; else if (!last || c.t > last.t) candles.push(c);
   if (candles.length > 400) candles.shift();
   cs.update({ time: c.t / 1000, open: c.o, high: c.h, low: c.l, close: c.c });
 }
 function onTrade(px, sz, buy, t) {
+  if (st.px > 0 && Math.abs(px / st.px - 1) > .25) return;  // foute tick: niet in de berekeningen
   st.px = px; st.trades.push({ px, sz, buy, t }); st.vwapPV += px * sz; st.vwapV += sz;
   const cut = Date.now() - 60000; while (st.trades.length && st.trades[0].t < cut) st.trades.shift();
-  if (st.sim) {  // candles zelf opbouwen
+  if (st.sim && !st.realHist) {  // candles zelf opbouwen, alleen als er geen echte grafiek is
     const m = Math.floor(t / 60000) * 60000, last = candles[candles.length - 1];
     if (last && last.t === m) onCandle({ t: m, o: last.o, h: Math.max(last.h, px), l: Math.min(last.l, px), c: px, v: last.v + sz });
     else onCandle({ t: m, o: px, h: px, l: px, c: px, v: sz });
   }
 }
 function startSim() {
-  if (st.sim) return; st.sim = true; $('feedBadge').style.display = '';
+  if (st.sim) return;
+  if (st.realHist) { $('fFeed').textContent = 'nog geen live trades van Hyperliquid · grafiek uit de geschiedenis'; return; }  // geen nepkoers in een echte grafiek
+  st.sim = true; $('feedBadge').style.display = '';
   $('fFeed').textContent = 'geen verbinding met Hyperliquid · gesimuleerde koers';
-  if (!st.px) st.px = SIM_PX[st.coin];
+  const lc = candles.length ? candles[candles.length - 1].c : 0;
+  if (!st.px) st.px = lc || SIM_PX[st.coin];  // nooit een vaste prijs van een andere dag in een echte grafiek
   if (!st.eth) st.eth = SIM_PX[chainCoin()];
   let drift = 0;
   simTimer = setInterval(() => {
@@ -1177,8 +1182,9 @@ async function loadHistory() {
   try {
     const r = await fetch(`/api/desk/candles?coin=${encodeURIComponent(st.coin)}&minutes=4320`);
     if (!r.ok) throw new Error(await r.text());
-    candles = await r.json();
+    candles = await r.json(); st.realHist = candles.length > 0;
   } catch (e) {
+    st.realHist = false;
     let p = SIM_PX[st.coin], t = Math.floor(Date.now() / 60000) * 60000 - 240 * 60000;
     for (let i = 0; i < 240; i++) { const o = p; p *= Math.exp((Math.random() - .5) * .003); candles.push({ t: t + i * 60000, o, h: Math.max(o, p) * 1.0004, l: Math.min(o, p) * .9996, c: p, v: Math.random() * 50 }); }
   }
