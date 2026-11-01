@@ -239,6 +239,7 @@ class DeskAuto(BaseModel):
     sl_sigma: float | None = None
     tp_sigma: float | None = None
     hold_max: int | None = None
+    max_open: int | None = None
     learn: bool | None = None
     risk_pct: float | None = None
     trail_on: bool | None = None
@@ -274,7 +275,7 @@ def desk_auto_set(req: DeskAuto):
                   window_min=req.window_min, reset_paper=req.reset_paper, min_edge=req.min_edge, model=req.model,
                   max_lev=req.max_lev, risk_pct=req.risk_pct, auto_scan=req.auto_scan, scan_n=req.scan_n,
                   kelly_frac=req.kelly_frac, max_margin_pct=req.max_margin_pct,
-                  sl_sigma=req.sl_sigma, tp_sigma=req.tp_sigma, hold_max=req.hold_max, learn=req.learn,
+                  sl_sigma=req.sl_sigma, tp_sigma=req.tp_sigma, hold_max=req.hold_max, max_open=req.max_open, learn=req.learn,
                   trail_on=req.trail_on, trail_pct=req.trail_pct, tp_rr=req.tp_rr,
                   block=req.block, why=req.why)
         return swarm.snapshot(swarm.seq)

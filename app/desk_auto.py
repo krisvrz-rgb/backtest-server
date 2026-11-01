@@ -380,6 +380,7 @@ class Swarm:
         self.sl_sigma: float | None = saved.get("sl_sigma")
         self.tp_sigma: float | None = saved.get("tp_sigma")
         self.hold_max: int | None = saved.get("hold_max")
+        self.max_open: int | None = saved.get("max_open")  # None = DESK_MAX_OPEN (5)
         self.trail_on: bool = saved.get("trail_on", True)
         self.trail_pct: float = saved.get("trail_pct", 50.0)
         self.tp_rr: float = saved.get("tp_rr", 3.0)  # take-profit = 3× de stopafstand; 0 = net voor het volgende niveau
@@ -421,7 +422,7 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "anchor": self.anchor, "min_edge": self.min_edge, "blocked": sorted(self.blocked), "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac, "sl_sigma": self.sl_sigma, "tp_sigma": self.tp_sigma, "hold_max": self.hold_max, "learn": LEARN["on"],
+                                          "anchor": self.anchor, "min_edge": self.min_edge, "blocked": sorted(self.blocked), "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac, "sl_sigma": self.sl_sigma, "tp_sigma": self.tp_sigma, "hold_max": self.hold_max, "max_open": self.max_open, "learn": LEARN["on"],
                                           "trail_on": self.trail_on, "trail_pct": self.trail_pct, "tp_rr": self.tp_rr,
                                           "max_margin_pct": self.max_margin_pct, "model": MODEL, "paper": self.paper, "history": list(self.history),
                                           "tickets": [m.ticket for m in self.markets.values() if m.ticket and m.ticket["paper"]]}))
@@ -684,13 +685,17 @@ class Swarm:
                 why += f", laatste {len(last)} {pnl:+.2f}$ (winrate {win * 100:.0f}%)"
         return _clamp(t, .1, 1.0), why
 
+    def open_limit(self, cfg: dict) -> int:
+        """Hoeveel trades er tegelijk open mogen staan (wachtende limietorders tellen mee)."""
+        return int(self.max_open if self.max_open is not None else desk.num(cfg, "DESK_MAX_OPEN", 5))
+
     def kelly(self, m: Market, cfg: dict, live: bool, plan: dict | None = None) -> tuple[int, float] | None:
         """Hefboom uit de volatiliteit: een tegenvaller van 2σ tot het einde van het venster mag hooguit
         risico % (10%) van de marge kosten, begrensd door de max hefboom en de max van de markt.
         Grootte uit Kelly: positie / portefeuille = fractie × μ / σ², met μ = (2p − 1)·E|beweging| − kosten.
         Marge = positie / hefboom, nooit meer dan max marge % van de portefeuille of een kwart van de vrije marge."""
         pf = self.portfolio()
-        if len(pf["open"]) >= desk.num(cfg, "DESK_MAX_OPEN", 5):
+        if len(pf["open"]) >= self.open_limit(cfg):
             self.log("kelly", "VOL", f"al {len(pf['open'])} posities open, geen nieuwe", coin=m.coin)
             return None
         sd = max(m.model.get("sd", 0.0), 1e-5)
@@ -1236,7 +1241,7 @@ class Swarm:
         kf, mp = self.size_limits()
         cap, risk = self.lev_limits(cfg, False)
         return {"window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "max_lev": cap, "risk_pct": risk,
-                "kelly_frac": kf, "max_margin_pct": mp, "hold_max": self.hold_max if self.hold_max is not None else 3,
+                "kelly_frac": kf, "max_margin_pct": mp, "hold_max": self.hold_max if self.hold_max is not None else 3, "max_open": self.open_limit(cfg),
                 "trail_on": self.trail_on, "trail_pct": self.trail_pct, "tp_rr": self.tp_rr, "learn": LEARN["on"],
                 "uitgezet": ", ".join(sorted(self.blocked)) or "geen",
                 "scan": "uit" if not self.auto_scan else (f"top {self.scan_n}" if self.scan_n else "alle liquide"),
@@ -1415,7 +1420,7 @@ class Swarm:
             window_min: int | None = None, reset_paper: float | None = None, min_edge: float | None = None,
             model: dict | None = None, auto_scan: bool | None = None, scan_n: int | None = None, max_lev: float | None = None, risk_pct: float | None = None,
             kelly_frac: float | None = None, max_margin_pct: float | None = None,
-            sl_sigma: float | None = None, tp_sigma: float | None = None, hold_max: int | None = None,
+            sl_sigma: float | None = None, tp_sigma: float | None = None, hold_max: int | None = None, max_open: int | None = None,
             learn: bool | None = None, trail_on: bool | None = None, trail_pct: float | None = None,
             tp_rr: float | None = None, block: dict | None = None, why: str | None = None) -> None:
         """Markten volgen, venster en papier mogen altijd; aan/uit en bevestigen vragen live-toestemming."""
@@ -1495,6 +1500,11 @@ class Swarm:
                     self.trail_pct = float(trail_pct)
                 self.log("closer", "TRAIL", f"trailing stop aan: stop schuift mee tot instap + {self.trail_pct:g}% van de beste koers"
                          if self.trail_on else "trailing stop uit: de stop blijft waar hij bij instap stond")
+            if max_open is not None and int(max_open) != self.open_limit(cfg):
+                if not 1 <= int(max_open) <= 30:
+                    raise ValueError("Max trades tegelijk: 1 tot 30")
+                self.max_open = int(max_open)
+                self.log("kelly", "INSTEL", f"max {self.max_open} trades tegelijk open")
             if hold_max is not None:
                 if not 0 <= int(hold_max) <= 12:
                     raise ValueError("Doorlopen: 0 (altijd sluiten op het einde van het venster) tot 12 vensters")
@@ -1660,7 +1670,7 @@ class Swarm:
                 "auto_scan": self.auto_scan, "scan_n": self.scan_n, "scan_at": int(self.scan_at * 1000),
                 "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)),
                 "size": dict(zip(("kelly", "max_margin_pct"), self.size_limits())),
-                "exits": {"mode": "auto", "hold": self.hold_max if self.hold_max is not None else 3,
+                "exits": {"mode": "auto", "hold": self.hold_max if self.hold_max is not None else 3, "max_open": self.open_limit(cfg),
                           "trail_on": self.trail_on, "trail_pct": self.trail_pct, "tp_rr": self.tp_rr},
                 "learn": {"on": LEARN["on"], **desk_learn.summary(self.window)}, "windows": WINDOWS, "costs": costs(cfg),
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,
