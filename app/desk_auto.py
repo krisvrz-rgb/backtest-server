@@ -746,7 +746,7 @@ class Swarm:
         now_ms = time.time() * 1000
         cand = [(l["px"], f"{'steun' if l['px'] < px else 'weerstand'} {l['px']:,.6g} ({l['n']}x geraakt)", l["n"]) for l in m.levels]
         cand += [(a["px"], f"{a['name']} ({a['px']:,.6g})", 2) for a in m.mas()]
-        cand += [(trend_at(tl, now_ms), f"{'stijgende steunlijn' if tl['kind'] == 'sup' else 'dalende weerstandslijn'} "
+        cand += [(trend_at(tl, now_ms), f"{'stijgende trendlijn (bodems)' if tl['kind'] == 'sup' else 'dalende trendlijn (toppen)'} "
                   f"(nu {trend_at(tl, now_ms):,.6g})", 2) for tl in m.trends]
         d = lambda p: sign * (p - px) / px / sd  # >0 = in de richting van de trade, in σ
         back = sorted([c for c in cand if -2.0 <= d(c[0]) <= -.4], key=lambda c: -d(c[0]))

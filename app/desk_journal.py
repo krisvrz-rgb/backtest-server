@@ -148,7 +148,7 @@ def entry(day: str) -> dict | None:
     return next((j for j in journal() if j["day"] == day), None)
 
 
-def parse_report(text: str) -> dict:
+def parse_report(text: str, current: dict | None = None) -> dict:
     """Het rapport in vaste stukken: GELEERD, CONCLUSIES, TE BEKIJKEN, VOORSTEL. Het voorstel als instelling = waarde."""
     import re
     heads = {"GELEERD": "learned", "CONCLUSIES": "conclusions", "TE BEKIJKEN": "review", "VOORSTEL": "proposal"}
@@ -169,6 +169,8 @@ def parse_report(text: str) -> dict:
         lo, hi = PROPOSABLE[key][1], PROPOSABLE[key][2]
         if lo <= val <= hi and not (key == "window_min" and val not in (15, 60, 240)):
             prop = {"key": key, "value": val, "label": PROPOSABLE[key][0]}
+    if prop and current and current.get(prop["key"]) is not None and float(current[prop["key"]]) == prop["value"]:
+        prop = None  # stelt de huidige waarde voor: niets om toe te passen
     out["setting"] = prop
     if not any(out[k] for k in ("learned", "conclusions", "review", "proposal")):
         out["conclusions"] = text.strip()  # het model hield zich niet aan de koppen: alles tonen
