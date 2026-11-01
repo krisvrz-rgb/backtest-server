@@ -1027,6 +1027,10 @@ class Swarm:
                     # het boek loopt soms achter op de laatste trade: rond de laatste prijs + halve spread afrekenen
                     half = min((ask - bid) / 2, m.px * 5e-4)
                     exit_px = m.px - half if t["side"] == "long" else m.px + half
+                    walk = self.book_walk(m, t["side"] == "short", t["usd"])  # door het boek heen zoals een echte marktorder
+                    if walk:
+                        slip = abs(walk - (bid if t["side"] == "long" else ask))  # bovenop de beste prijs
+                        exit_px += -slip if t["side"] == "long" else slip
             sign = 1 if t["side"] == "long" else -1
             pnl = t["usd"] * sign * (exit_px - t["entry"]) / t["entry"] - t["usd"] * (c["maker"] + exit_fee) / 1e4
             p_up = m.model.get("p")
@@ -1053,6 +1057,22 @@ class Swarm:
             self.save()
         except Exception as e:
             self.log("closer", "FOUT", f"sluiten mislukt: {e}. Controleer Hyperliquid!", coin=m.coin)
+
+    @staticmethod
+    def book_walk(m: Market, buy: bool, usd: float) -> float | None:
+        """Gemiddelde vulprijs van een marktorder van deze grootte door het huidige orderboek."""
+        if not m.book:
+            return None
+        levels = m.book[1] if buy else m.book[0]
+        left, cost, qty = usd, 0.0, 0.0
+        for px, sz in levels:
+            take = min(left, px * sz)
+            cost, qty, left = cost + take, qty + take / px, left - take
+            if left <= 1e-9:
+                break
+        if left > 1e-9 or not qty:  # dieper dan het zichtbare boek: de laatste prijs met een extra stap
+            return None
+        return cost / qty
 
     def risk(self, cfg: dict) -> None:
         """Accountwaarde ophalen; daglimiet op verlies voor alle markten samen."""
