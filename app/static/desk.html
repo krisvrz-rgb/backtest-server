@@ -1242,7 +1242,7 @@ function model(f, now) {
 }
 
 function newWindow(now) {
-  const W = WIN(), ws = Math.floor(now / (W * 1000)) * W * 1000;
+  const W = WIN(), an = (st.auto && st.auto.anchor) || 0, ws = an + Math.floor((now - an) / (W * 1000)) * W * 1000;
   if (ws === st.winStart) return false;
   st.winStart = ws; st.open0 = st.px; st.ethOpen = st.eth;
   openLine.applyOptions({ price: st.px });
@@ -1899,7 +1899,7 @@ function renderFeed() {
 function renderCands() {  // vlak bij de ring: welke gevolgde markten de zwerm overweegt, en waarom (nog) niet
   const a = st.auto; if (!a || !a.markets) return;
   const W = (a.window_min || 60) * 60000, now = Date.now(), floor = a.min_edge ?? 0;
-  const el = (now % W) / W;  // vensters liggen vast op de klok (UTC), net als op de server
+  const el = (((now - (a.anchor || 0)) % W) + W) % W / W;  // vensters tellen vanaf het moment dat je het venster koos
   const mm = f => Math.round(f * W / 60000);
   $('candsHdr').textContent = `· drempel ${sgn(floor, 1, '¢')} · beslist tussen ${mm(.15)} en ${mm(.67)} min in het venster, nu ${Math.max(0, Math.round(el * W / 60000))} min`
     + (el > .67 ? ' (te laat: wacht op het volgende venster)' : el < .15 ? ' (nog te vroeg)' : '');

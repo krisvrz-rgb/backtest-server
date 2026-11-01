@@ -367,6 +367,7 @@ class Swarm:
         self.coins.update(saved.get("coins", {}))
         self.window_min: int = int(saved.get("window_min") or desk.num(cfg, "DESK_WINDOW_MIN", 60))
         self.min_edge: float | None = saved.get("min_edge")
+        self.anchor: int = int(saved.get("anchor") or 0)  # vensters tellen vanaf hier; 0 = op de klok (UTC)
         self.auto_scan: bool = bool(saved.get("auto_scan"))  # elke 5 min de top 25 van de scanner volgen
         self.scan_at = 0.0
         self.scan_n: int = int(saved.get("scan_n", 25))  # 25, 50 of 0 = alle liquide markten met ratio ≥ 1
@@ -420,7 +421,7 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "min_edge": self.min_edge, "blocked": sorted(self.blocked), "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac, "sl_sigma": self.sl_sigma, "tp_sigma": self.tp_sigma, "hold_max": self.hold_max, "learn": LEARN["on"],
+                                          "anchor": self.anchor, "min_edge": self.min_edge, "blocked": sorted(self.blocked), "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac, "sl_sigma": self.sl_sigma, "tp_sigma": self.tp_sigma, "hold_max": self.hold_max, "learn": LEARN["on"],
                                           "trail_on": self.trail_on, "trail_pct": self.trail_pct, "tp_rr": self.tp_rr,
                                           "max_margin_pct": self.max_margin_pct, "model": MODEL, "paper": self.paper, "history": list(self.history),
                                           "tickets": [m.ticket for m in self.markets.values() if m.ticket and m.ticket["paper"]]}))
@@ -507,7 +508,7 @@ class Swarm:
 
     # ---------- de zwerm, per markt ----------
     def new_window(self, m: Market, now: float, cfg: dict) -> None:
-        win = int(now // self.window) * self.window
+        win = self.anchor + int((now - self.anchor) // self.window) * self.window
         if win == m.win:
             return
         if m.ticket and m.ticket.get("hold_win") != win:
@@ -1458,7 +1459,10 @@ class Swarm:
                         self.settle(m, cfg)
                     m.win, m.sample = 0, None  # nieuwe vensters, zonder een half venster te laten leren
                 self.window_min = int(window_min)
-                self.log("prior", "VENSTER", f"vensters van {self.window_min} minuten")
+                now = int(time.time())
+                self.anchor = now - now % 60  # het eerste venster start nu, niet pas op de volgende klokgrens
+                self.log("prior", "VENSTER", f"vensters van {self.window_min} minuten, het eerste start nu "
+                         f"({datetime.fromtimestamp(self.anchor).strftime('%H:%M')})")
             if min_edge is not None and float(min_edge) != self.min_edge:
                 if not -3 <= float(min_edge) <= 10:  # onder 0 = bewust trades met verwacht verlies, alleen op papier
                     raise ValueError("Drempel moet tussen -3¢ en 10¢ liggen")
@@ -1652,7 +1656,7 @@ class Swarm:
                        for c, m in self.markets.items()}
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
-                "coins": self.coins, "blocked": sorted(self.blocked), "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "model": MODEL,
+                "coins": self.coins, "blocked": sorted(self.blocked), "window_min": self.window_min, "anchor": self.anchor * 1000, "min_edge": self.edge_floor(cfg, False), "model": MODEL,
                 "auto_scan": self.auto_scan, "scan_n": self.scan_n, "scan_at": int(self.scan_at * 1000),
                 "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)),
                 "size": dict(zip(("kelly", "max_margin_pct"), self.size_limits())),
