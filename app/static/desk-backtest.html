@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desk-backtest · 2 jaar per munt</title>
+<script src="/static/lightweight-charts.js"></script>
+<style>
+  :root { --bg:#04050b; --panel:#0a0d19; --panel-2:#111528; --text:#e6ebf8; --muted:#7581a3; --border:#1b2140;
+          --accent:#5b8cff; --up:#16b364; --down:#ef3a5d; --warn:#f08c00; --mono: ui-monospace,"SF Mono",Consolas,monospace; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  a { color: var(--muted); }
+  .top { display:flex; gap:20px; align-items:center; padding:10px 18px; background:var(--panel); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .top b { font-size:18px; } .nav { display:flex; gap:14px; font-size:12px; }
+  main { padding:14px 18px; display:grid; gap:14px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px 14px; box-shadow:0 10px 40px -20px rgba(91,140,255,.35); }
+  h2 { margin:0 0 8px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:#fff; }
+  .num, .mono { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .up { color:var(--up); } .down { color:var(--down); } .muted { color:var(--muted); }
+  table { border-collapse:collapse; width:100%; }
+  th, td { padding:5px 8px; border-bottom:1px solid var(--border); text-align:right; white-space:nowrap; }
+  th { font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); }
+  td.l, th.l { text-align:left; } td.wrap { white-space:normal; text-align:left; min-width:280px; color:var(--muted); }
+  tr.coin { cursor:pointer; } tr.coin:hover td { background:var(--panel-2); } tr.sel td { background:#141a33; }
+  .badge { font:700 10px var(--mono); padding:2px 7px; border-radius:5px; border:1.5px solid; letter-spacing:.05em; }
+  .b-voorstel { color:var(--up); border-color:var(--up); } .b-uit { color:var(--down); border-color:var(--down); } .b-zo { color:var(--muted); border-color:var(--muted); }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; }
+  .card { background:var(--panel-2); border-radius:8px; padding:9px 11px; }
+  .card span { display:block; font-size:10px; color:var(--muted); letter-spacing:.07em; text-transform:uppercase; }
+  .card b { font:600 18px var(--mono); }
+  .ctl { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  input, button, select { font:600 12px var(--mono); background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; }
+  button { cursor:pointer; } button.go { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .bar { height:6px; background:var(--panel-2); border-radius:3px; overflow:hidden; min-width:160px; } .bar i { display:block; height:100%; background:var(--accent); }
+  ul.notes { margin:0; padding-left:18px; color:var(--muted); } ul.notes li { margin:2px 0; }
+  #chart { height:260px; } .scroll { overflow:auto; max-height:460px; }
+  .heat td.h { min-width:70px; font-family:var(--mono); }
+  .two { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; } @media (max-width:1000px) { .two { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="top">
+  <b>Desk-backtest</b><span class="muted">de regels van de Swarm Desk, 2 jaar terug, per munt</span>
+  <div class="nav"><a href="/">Overzicht</a><a href="/tool">Backtest</a><a href="/watchlist">Watchlist</a><a href="/aanraders">Aanraders</a><a href="/desk">Desk</a></div>
+</div>
+<main>
+  <div class="panel">
+    <h2>Draaien</h2>
+    <div class="ctl">
+      <input id="coins" size="70" placeholder="munten (Hyperliquid-namen), leeg = standaardlijst">
+      <label class="muted">maanden <input id="months" type="number" value="24" min="3" max="36" style="width:60px"></label>
+      <label class="muted">tegelijk <input id="workers" type="number" value="2" min="1" max="6" style="width:50px"></label>
+      <button class="go" id="run">Backtest starten</button>
+      <span id="st" class="muted"></span>
+    </div>
+    <div style="margin-top:8px" class="ctl"><div class="bar" style="flex:1"><i id="prog" style="width:0"></i></div><span id="prog-t" class="muted num"></span></div>
+    <div id="log" class="muted mono" style="margin-top:6px; font-size:11px; max-height:90px; overflow:auto"></div>
+  </div>
+
+  <div class="panel" id="sum-p" hidden>
+    <h2>Samenvatting</h2>
+    <div class="cards" id="cards"></div>
+    <p class="muted" style="margin:10px 0 0">Out-of-sample = de periode na de eerste 6 maanden. <b>Walk-forward</b> kiest elk kwartaal de beste instelling
+      op alles daarvoor en meet ze op dat kwartaal: dat is wat je echt had kunnen verdienen. De tabel met alle instellingen hieronder
+      toont ook de achteraf-beste, maar die kiezen is overfitting.</p>
+  </div>
+
+  <div class="panel" id="tab-p" hidden>
+    <h2>Per munt</h2>
+    <div class="scroll"><table id="tab"></table></div>
+  </div>
+
+  <div class="panel" id="heat-p" hidden>
+    <h2>Desk-instellingen per venster (out-of-sample rendement, drempel +2¢, geleerd, trailing)</h2>
+    <div class="scroll"><table id="heat" class="heat"></table></div>
+  </div>
+
+  <div class="panel" id="det-p" hidden>
+    <h2 id="det-h"></h2>
+    <p id="det-adv" style="margin:0 0 10px"></p>
+    <div class="two">
+      <div><div class="muted" style="font-size:11px">Rendement out-of-sample (% van $1000): <span style="color:#5b8cff">■</span> walk-forward-keuze · <span style="color:#7581a3">■</span> desk zoals nu</div><div id="chart"></div></div>
+      <div><div class="muted" style="font-size:11px; margin-bottom:4px">Walk-forward per kwartaal</div><table id="steps"></table></div>
+    </div>
+    <div style="margin-top:12px" class="muted" id="costs"></div>
+    <div style="margin-top:12px" class="scroll"><table id="cfg"></table></div>
+  </div>
+
+  <div class="panel">
+    <h2>Wat wel en niet nagebootst kon worden</h2>
+    <ul class="notes" id="notes"><li>Nog geen resultaten.</li></ul>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let DATA = null, SEL = null, chart = null;
+const pct = (v, d = 2) => v == null ? '–' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : 'muted'}">${v > 0 ? '+' : ''}${(+v).toFixed(d)}%</span>`;
+const bp = v => v == null ? '–' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : 'muted'}">${v > 0 ? '+' : ''}${(+v).toFixed(1)}</span>`;
+const day = t => new Date(t).toISOString().slice(0, 10);
+const badge = v => `<span class="badge ${v === 'voorstel' ? 'b-voorstel' : v === 'uit' ? 'b-uit' : 'b-zo'}">${v.toUpperCase()}</span>`;
+
+async function load() {
+  const r = await fetch('/api/desk/backtest').then(r => r.json());
+  DATA = r;
+  const s = r.status || {};
+  $('st').textContent = s.running ? `bezig: ${s.done}/${s.total} munten` : (r.finished ? `laatste run klaar ${new Date(r.finished).toLocaleString('nl-BE')}` : 'nog niet gedraaid');
+  $('prog').style.width = s.total ? `${s.done / s.total * 100}%` : (r.finished ? '100%' : '0');
+  $('prog-t').textContent = s.total ? `${s.done}/${s.total}` : '';
+  $('log').innerHTML = (s.log || []).slice().reverse().map(x => `<div>${x}</div>`).join('');
+  $('run').disabled = !!s.running;
+  if (!$('coins').value && r.default_coins) $('coins').placeholder = 'leeg = ' + r.default_coins.join(' ');
+  if (r.notes) $('notes').innerHTML = r.notes.map(n => `<li>${n}</li>`).join('');
+  render();
+  setTimeout(load, s.running ? 5000 : 60000);
+}
+
+function render() {
+  const cs = Object.values((DATA && DATA.coins) || {});
+  if (!cs.length) return;
+  const ok = cs.filter(c => !c.error), sm = DATA.summary || {};
+  $('sum-p').hidden = $('tab-p').hidden = $('heat-p').hidden = false;
+  $('cards').innerHTML = [
+    ['munten getest', ok.length],
+    ['voorstel (beter OOS)', (sm.propose || []).length],
+    ['beter uitzetten', (sm.off || []).length],
+    ['zo laten', (sm.keep || []).length],
+    ['gem. walk-forward OOS', pct(sm.wf_avg)],
+    ['gem. desk zoals nu OOS', pct(sm.base_avg)],
+    ...[15, 60, 240].map(w => [`desk op ${w}m: gem. / # positief`, `${pct((sm.per_window || {})[w]?.avg)} <small class="muted">${(sm.per_window || {})[w]?.pos ?? '–'}/${ok.length}</small>`]),
+  ].map(([a, b]) => `<div class="card"><span>${a}</span><b>${b}</b></div>`).join('');
+  const rows = cs.slice().sort((a, b) => ((b.wf || {}).ret ?? -99) - ((a.wf || {}).ret ?? -99));
+  $('tab').innerHTML = `<tr><th class="l">munt</th><th class="l">data</th><th class="l">oordeel</th><th>WF rend.</th><th>WF trades</th><th>WF bp/trade</th>
+      <th>desk nu rend.</th><th>trades</th><th>bp/trade</th><th>bruto bp</th><th>juist</th><th class="l">voorstel / advies</th></tr>` +
+    rows.map(c => c.error ? `<tr><td class="l">${c.coin}</td><td class="wrap" colspan="11">${c.error}</td></tr>` :
+      `<tr class="coin ${SEL === c.coin ? 'sel' : ''}" data-c="${c.coin}"><td class="l"><b>${c.coin}</b></td>
+      <td class="l muted num">${day(c.from)} → ${day(c.to)}</td><td class="l">${badge(c.verdict)}</td>
+      <td class="num">${pct(c.wf.ret)}</td><td class="num">${c.wf.n}</td><td class="num">${bp(c.wf.bp)}</td>
+      <td class="num">${pct(c.base.ret)}</td><td class="num">${c.base.n}</td><td class="num">${bp(c.base.bp)}</td><td class="num">${bp(c.base.gross_bp)}</td>
+      <td class="num">${hitOf(c)}</td><td class="wrap">${c.advice}</td></tr>`).join('');
+  document.querySelectorAll('tr.coin').forEach(tr => tr.onclick = () => { SEL = tr.dataset.c; render(); detail(); });
+  $('heat').innerHTML = `<tr><th class="l">munt</th>${[15, 60, 240].map(w => `<th>${w}m rend.</th><th>${w}m trades</th><th>${w}m bp</th><th class="l">${w}m eerlijk gekozen</th>`).join('')}</tr>` +
+    ok.map(c => `<tr><td class="l"><b>${c.coin}</b></td>${[15, 60, 240].map(w => { const p = c.per_window[w]; return `<td class="h">${pct(p.base_like.ret)}</td><td class="num">${p.base_like.n}</td><td class="num">${bp(p.base_like.bp)}</td><td class="l muted">${p.pick ? p.pick.replace(/^\d+m·/, '') + ' ' + pct(p.oos.ret) : 'niet handelen'}</td>`; }).join('')}</tr>`).join('');
+  if (SEL) detail();
+}
+
+function hitOf(c) {  // hoe vaak het teken van de score juist was (vaste β, venster van de desk)
+  const r = (c.table || []).find(x => x.key === c.baseline);
+  return r && r.hit != null ? `${(r.hit * 100).toFixed(1)}%` : '–';
+}
+
+function detail() {
+  const c = DATA.coins[SEL];
+  if (!c || c.error) return;
+  $('det-p').hidden = false;
+  $('det-h').innerHTML = `${c.coin} <span class="muted">(${c.symbol}, ${c.candles.toLocaleString('nl-BE')} candles, funding ${c.funding_source}, out-of-sample vanaf ${day(c.oos_from)})</span>`;
+  $('det-adv').innerHTML = `${badge(c.verdict)} ${c.advice}` + (c.final ? ` <span class="muted">Beste op de hele periode: ${c.final}.</span>` : '');
+  if (!chart) {
+    chart = LightweightCharts.createChart($('chart'), { layout: { background: { color: 'transparent' }, textColor: '#7581a3' },
+      grid: { vertLines: { color: '#111528' }, horzLines: { color: '#111528' } }, rightPriceScale: { borderColor: '#1b2140' }, timeScale: { borderColor: '#1b2140' } });
+    chart.sWf = chart.addLineSeries({ color: '#5b8cff', lineWidth: 2 });
+    chart.sBase = chart.addLineSeries({ color: '#7581a3', lineWidth: 1 });
+  }
+  const pts = a => { const m = new Map(); a.forEach(([t, v]) => m.set(Math.floor(t / 1000), v)); return [...m].map(([time, value]) => ({ time, value })); };
+  chart.sWf.setData(pts(c.curve_wf)); chart.sBase.setData(pts(c.curve_base)); chart.timeScale().fitContent();
+  $('steps').innerHTML = `<tr><th class="l">kwartaal</th><th class="l">gekozen (op het verleden)</th><th>OOS</th><th>trades</th><th>desk nu</th></tr>` +
+    c.steps.map(s => `<tr><td class="l num">${day(s.from)}</td><td class="l">${s.pick || '<span class="muted">niet handelen</span>'}</td>
+      <td class="num">${pct(s.oos.ret)}</td><td class="num">${s.oos.n}</td><td class="num">${pct(s.base.ret)}</td></tr>`).join('');
+  const b = c.base;
+  $('costs').innerHTML = `Desk zoals nu, out-of-sample: bruto ${bp(b.gross_bp)} bp per trade, na kosten ${bp(b.bp)} bp · fees $${b.fees} · funding $${b.funding} · `
+    + `maker-uitstap ${b.maker ?? '–'}% · gem. positie $${b.usd ?? '–'} op ${b.lev ?? '–'}x · uitstap: ${Object.entries(b.reasons || {}).map(([k, v]) => `${k} ${v}`).join(', ')}`;
+  const t = c.table.slice().sort((x, y) => y.oos.ret - x.oos.ret);
+  $('cfg').innerHTML = `<tr><th class="l">instelling</th><th>2 jaar rend.</th><th>trades</th><th>bp/trade</th><th>winst%</th><th>max DD</th>
+      <th>eerste 6 mnd</th><th>OOS rend.</th><th>OOS trades</th><th>OOS bp</th><th>β</th><th>juist</th><th>geleerd</th></tr>` +
+    t.map(r => `<tr${r.key === c.baseline ? ' style="outline:1px solid #5b8cff"' : ''}><td class="l">${r.key}${r.key === c.baseline ? ' <span class="muted">(desk nu)</span>' : ''}</td>
+      <td class="num">${pct(r.all.ret)}</td><td class="num">${r.all.n}</td><td class="num">${bp(r.all.bp)}</td><td class="num">${r.all.win ?? '–'}</td><td class="num">${r.all.dd}%</td>
+      <td class="num">${pct(r.is.ret)}</td><td class="num">${pct(r.oos.ret)}</td><td class="num">${r.oos.n}</td><td class="num">${bp(r.oos.bp)}</td>
+      <td class="num">${r.beta != null ? r.beta.toFixed(3) : '–'}</td><td class="num">${r.hit != null ? (r.hit * 100).toFixed(1) + '%' : '–'}</td><td>${r.learned ? 'ja' : r.model === 'geleerd' ? 'nee' : ''}</td></tr>`).join('');
+}
+
+$('run').onclick = async () => {
+  const coins = $('coins').value.split(/[\s,]+/).filter(Boolean);
+  const r = await fetch('/api/desk/backtest/run', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ coins: coins.length ? coins : null, months: +$('months').value, workers: +$('workers').value }) }).then(r => r.json());
+  $('st').textContent = r.ok ? 'gestart…' : r.error;
+  setTimeout(load, 1500);
+};
+load();
+</script>
+</body>
+</html>
