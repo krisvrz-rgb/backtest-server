@@ -1916,9 +1916,9 @@ function renderCands() {  // vlak bij de ring: welke gevolgde markten de zwerm o
   const show = (pos.length ? pos : rows.slice(0, 5)).slice(0, 12);
   if (!show.length) { $('cands').innerHTML = '<span class="muted">De zwerm volgt nog geen markten of warmt op.</span>'; return; }
   $('cands').innerHTML = (pos.length ? '' : '<div class="muted" style="margin-bottom:4px">Geen enkele markt boven 0¢ edge. De beste vijf:</div>')
-    + '<table>' + show.map(([c, m]) => { const t = m.ticket, v = m.verdict, mo = m.model;
+    + '<table><tr class="muted"><td>munt</td><td>richting</td><td>edge nu</td><td class="r">laatste beoordeling (tijd · reden)</td></tr>' + show.map(([c, m]) => { const t = m.ticket, v = m.verdict, mo = m.model;
       const why = t ? (t.state === 'entering' ? 'limietorder wacht op vulling' : `in trade · ${t.lev}x · ${sgn(t.upnl || 0, 2)}`)
-        : v ? (v.late ? '⏱ ' : '') + (v.text || v.short) : el < .15 ? 'nog te vroeg in het venster' : el > .67 ? '⏱ te laat in het venster' : 'nog niet beoordeeld in dit venster';
+        : v ? (v.t ? hhmmss(v.t).slice(0, 5) + ' · ' : '') + (v.late ? '⏱ ' : '') + (v.text || v.short) : el < .15 ? 'nog te vroeg in het venster' : el > .67 ? '⏱ te laat in het venster' : 'nog niet beoordeeld in dit venster';
       return `<tr data-c="${c}" class="${t || (v && v.ok) ? 'ok' : ''}"><td><b>${short(c)}</b></td><td class="${mo.side === 'long' ? 'up' : 'down'}">${mo.side || ''}</td>`
         + `<td class="${mo.edge >= floor ? 'up' : 'down'}">${edgeTxt(mo.edge)}</td><td class="r">${why.replace(/</g, '&lt;')}</td></tr>`; }).join('') + '</table>';
 }

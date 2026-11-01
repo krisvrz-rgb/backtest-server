@@ -352,8 +352,10 @@ def _vshort(text: str) -> str:
 VERDICTS = {
     ("edge", "PASS"): _vshort,
     ("edge", "EDGE"): lambda t: "trade genomen",
-    ("kelly", "VOL"): lambda t: "max posities/blootstelling bereikt" ,
+    ("kelly", "VOL"): lambda t: "max trades bezet" if "bezet" in t else "max blootstelling",
     ("kelly", "TE KLEIN"): lambda t: "vrije marge te klein",
+    ("taker", "VERLOPEN"): lambda t: "limiet niet gevuld",
+    ("closer", "AFREK"): lambda t: "trade gesloten",
 }
 
 
@@ -433,7 +435,8 @@ class Swarm:
                            "text": f"{coin} · {text}" if coin else text, "val": val, "coin": coin})
         m = self.markets.get(coin) if coin else None
         if m is not None and (agent, act) in VERDICTS:  # de reden blijft bij de markt staan tot de volgende beoordeling
-            m.verdict = {"t": int(time.time() * 1000), "win": m.win, "ok": act == "EDGE", "short": VERDICTS[(agent, act)](text), "text": text}
+            m.verdict = {"t": int(time.time() * 1000), "win": m.win, "ok": act == "EDGE", "short": VERDICTS[(agent, act)](text) + (f" {val}" if act == "AFREK" else ""),
+                         "text": ("ingestapt (limietorder): " if act == "EDGE" else "") + text + (f" ({val})" if act == "AFREK" else "")}
 
     # ---------- marktdata: één websocket voor alle markten ----------
     def feed(self) -> None:
@@ -530,8 +533,9 @@ class Swarm:
             self.log("taker", "NEE", "goedkeuring verlopen: venster voorbij", coin=m.coin)
 
     def decide(self, m: Market, now: float, cfg: dict) -> None:
-        if m.verdict and m.verdict.get("win") != m.win:
-            m.verdict = None  # nieuw venster: de oude reden geldt niet meer
+        if m.verdict and (m.verdict.get("win") != m.win
+                          or (self.coins.get(m.coin) and m.verdict["short"] in ("munt staat uit", "uitgezet"))):
+            m.verdict = None  # nieuw venster, of de munt staat weer aan: de oude reden geldt niet meer
         self._decide(m, now, cfg)
         if m.ticket or not m.model:
             return
@@ -696,7 +700,10 @@ class Swarm:
         Marge = positie / hefboom, nooit meer dan max marge % van de portefeuille of een kwart van de vrije marge."""
         pf = self.portfolio()
         if len(pf["open"]) >= self.open_limit(cfg):
-            self.log("kelly", "VOL", f"al {len(pf['open'])} posities open, geen nieuwe", coin=m.coin)
+            wait = [t["coin"] for t in pf["open"] if t["state"] == "entering"]
+            busy = [t["coin"] for t in pf["open"] if t["state"] != "entering"]
+            self.log("kelly", "VOL", f"al {len(pf['open'])} van max {self.open_limit(cfg)} bezet, geen nieuwe: "
+                     + ", ".join(([f"open {', '.join(busy)}"] if busy else []) + ([f"limiet wacht {', '.join(wait)}"] if wait else [])), coin=m.coin)
             return None
         sd = max(m.model.get("sd", 0.0), 1e-5)
         cap, risk = self.lev_limits(cfg, live)
