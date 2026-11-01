@@ -355,6 +355,7 @@ class Swarm:
         self.hold_max: int | None = saved.get("hold_max")
         self.trail_on: bool = saved.get("trail_on", True)
         self.trail_pct: float = saved.get("trail_pct", 50.0)
+        self.tp_rr: float = saved.get("tp_rr", 3.0)  # take-profit = 3× de stopafstand; 0 = net voor het volgende niveau
         LEARN["on"] = saved.get("learn", True)  # hoeveel vensters een trade mag doorlopen (None = 3)
         self.max_margin_pct: float | None = saved.get("max_margin_pct")
         if saved.get("model"):
@@ -394,7 +395,7 @@ class Swarm:
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
                                           "min_edge": self.min_edge, "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac, "sl_sigma": self.sl_sigma, "tp_sigma": self.tp_sigma, "hold_max": self.hold_max, "learn": LEARN["on"],
-                                          "trail_on": self.trail_on, "trail_pct": self.trail_pct,
+                                          "trail_on": self.trail_on, "trail_pct": self.trail_pct, "tp_rr": self.tp_rr,
                                           "max_margin_pct": self.max_margin_pct, "model": MODEL, "paper": self.paper, "history": list(self.history),
                                           "tickets": [m.ticket for m in self.markets.values() if m.ticket and m.ticket["paper"]]}))
 
@@ -547,7 +548,7 @@ class Swarm:
                 m.decided = True
             return
         bid, ask = m.best()
-        plan = self.exit_plan(m, mo["side"], bid if mo["side"] == "long" else ask, sd)
+        plan = self.exit_plan(m, mo["side"], bid if mo["side"] == "long" else ask, sd, self.tp_rr or None)
         if plan["rr"] < .7:
             self.log("edge", "PASS", f"{mo['side']}: winst tot de take-profit ({plan['tp_sigma']:.2f}σ) is te klein tegenover het "
                      f"risico tot de stop ({plan['sl_sigma']:.2f}σ), verhouding {plan['rr']:.2f}", f"{mo['edge']:+.1f}¢", m.coin)
@@ -734,7 +735,7 @@ class Swarm:
                  f"{t['lev']}x ${t['usd']:g}", m.coin)
 
     @staticmethod
-    def exit_plan(m: Market, side: str, px: float, sd: float) -> dict:
+    def exit_plan(m: Market, side: str, px: float, sd: float, rr: float | None = None) -> dict:
         """Stop-loss en take-profit per trade, uit de structuur van de markt:
         - stop net voorbij de dichtste steun (long) of weerstand (short) of trendlijn erachter, tussen 0,4σ en 2σ;
           niets in dat bereik: 1σ (de beweging die het venster normaal maakt);
@@ -754,7 +755,15 @@ class Swarm:
             sl, sl_why = back[0][0] * (1 - sign * .15 * sd), "net voorbij " + back[0][1]
         else:
             sl, sl_why = px * (1 - sign * sd), "1σ: geen steun of weerstand binnen 2σ, dus de normale schommeling van het venster"
-        if front:
+        if rr:  # vaste verhouding: take-profit op rr × de stopafstand, de trailing stop doet de rest
+            sl_d0 = abs(px - sl) / px
+            tp = px * (1 + sign * rr * sl_d0)
+            tp_why = f"{rr:g}× de stopafstand ({rr * sl_d0 * 1e4:.0f} bp)"
+            block = [c for c in cand if 0 < d(c[0]) < d(tp)]
+            if block:
+                b = min(block, key=lambda c: d(c[0]))
+                tp_why += f"; let op: {b[1]} ligt ervoor op {d(b[0]):.1f}σ, daar kan de koers keren"
+        elif front:
             tp, tp_why = front[0][0] * (1 - sign * .05 * sd), "net voor " + front[0][1]
         else:
             tp, tp_why = px * (1 + sign * 1.5 * sd), "1,5σ: vrije baan tot 3σ, dus anderhalve keer de normale schommeling"
@@ -764,7 +773,7 @@ class Swarm:
 
     def plan_exits(self, m: Market, t: dict, px: float) -> None:
         """Stop-loss en take-profit bij de instap vastleggen, op de echte instapprijs."""
-        e = self.exit_plan(m, t["side"], px, m.model.get("sd", 0.0))
+        e = self.exit_plan(m, t["side"], px, m.model.get("sd", 0.0), self.tp_rr or None)
         t["sl"], t["tp"] = e["sl"], e["tp"]
         t["plan"] = {"sl": e["sl_why"], "tp": e["tp_why"], "rr": round(e["rr"], 2),
                      "sl_sigma": round(e["sl_sigma"], 2), "tp_sigma": round(e["tp_sigma"], 2)}
@@ -1150,7 +1159,7 @@ class Swarm:
         cap, risk = self.lev_limits(cfg, False)
         return {"window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "max_lev": cap, "risk_pct": risk,
                 "kelly_frac": kf, "max_margin_pct": mp, "hold_max": self.hold_max if self.hold_max is not None else 3,
-                "trail_on": self.trail_on, "trail_pct": self.trail_pct, "learn": LEARN["on"],
+                "trail_on": self.trail_on, "trail_pct": self.trail_pct, "tp_rr": self.tp_rr, "learn": LEARN["on"],
                 "scan": "uit" if not self.auto_scan else (f"top {self.scan_n}" if self.scan_n else "alle liquide"),
                 "sl_tp": "per trade uit steun/weerstand/EMA", "exits": "TP als limiet, uitstap als maker, SL markt",
                 "filters": "ruimte ≥0,3σ, R:R ≥0,7, tegenwind dag-backtests en venster-strategieën +1¢",
@@ -1328,7 +1337,8 @@ class Swarm:
             model: dict | None = None, auto_scan: bool | None = None, scan_n: int | None = None, max_lev: float | None = None, risk_pct: float | None = None,
             kelly_frac: float | None = None, max_margin_pct: float | None = None,
             sl_sigma: float | None = None, tp_sigma: float | None = None, hold_max: int | None = None,
-            learn: bool | None = None, trail_on: bool | None = None, trail_pct: float | None = None) -> None:
+            learn: bool | None = None, trail_on: bool | None = None, trail_pct: float | None = None,
+            tp_rr: float | None = None) -> None:
         """Markten volgen, venster en papier mogen altijd; aan/uit en bevestigen vragen live-toestemming."""
         if on is not None or confirm is not None:
             if not desk.status()["auto_allowed"]:
@@ -1375,6 +1385,12 @@ class Swarm:
             if learn is not None and learn != LEARN["on"]:
                 LEARN["on"] = bool(learn)
                 self.log("prior", "LEREN", "geleerde gewichten gebruiken als ze beter zijn" if learn else "alleen de vaste gewichten")
+            if tp_rr is not None and float(tp_rr) != self.tp_rr:
+                if not (float(tp_rr) == 0 or 1 <= float(tp_rr) <= 6):
+                    raise ValueError("Take-profit: 1× tot 6× de stopafstand, of 0 voor net voor het volgende niveau")
+                self.tp_rr = float(tp_rr)
+                self.log("closer", "TP", f"take-profit op {self.tp_rr:g}× de stopafstand" if self.tp_rr
+                         else "take-profit net voor de eerstvolgende steun of weerstand")
             if trail_on is not None or trail_pct is not None:
                 if trail_pct is not None and not 10 <= float(trail_pct) <= 90:
                     raise ValueError("Trailing stop: 10% tot 90% van de winst vasthouden")
@@ -1550,7 +1566,7 @@ class Swarm:
                 "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)),
                 "size": dict(zip(("kelly", "max_margin_pct"), self.size_limits())),
                 "exits": {"mode": "auto", "hold": self.hold_max if self.hold_max is not None else 3,
-                          "trail_on": self.trail_on, "trail_pct": self.trail_pct},
+                          "trail_on": self.trail_on, "trail_pct": self.trail_pct, "tp_rr": self.tp_rr},
                 "learn": {"on": LEARN["on"], **desk_learn.summary(self.window)}, "windows": WINDOWS, "costs": costs(cfg),
                 "halted": self.halted, "feed": self.feed_ok, "markets": markets, "pending": self.pending,
                 "portfolio": self.portfolio(), "history": list(self.history)[-200:],
