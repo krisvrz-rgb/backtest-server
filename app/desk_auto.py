@@ -203,6 +203,7 @@ class Market:
         self.model: dict = {}
         self.ticket: dict | None = None
         self.last_eval = 0
+        self.verdict: dict | None = None  # waarom er (geen) trade kwam bij de laatste beoordeling, voor de bubbel
         self.levels: list[dict] = []
         self.trends: list[dict] = []
         self.levels_at = 0.0
@@ -332,6 +333,30 @@ class Market:
                 "edge": (p_dir - be) * 100, "sd": sd, "left": left, "prior": pr, "eMove": e_move, "src": src}
 
 
+def _vshort(text: str) -> str:
+    import re as _re
+    m = _re.search(r"(weerstand|steun) op .*?ligt maar ([\d.]+)σ", text)
+    if m:
+        return f"{m.group(1)} op {m.group(2).replace('.', ',')}σ"
+    m = _re.search(r"verhouding ([\d.]+)", text)
+    if m and "te klein" in text:
+        return f"winst/risico {m.group(1).replace('.', ',')}"
+    if "dag-backtests" in text:
+        return "tegen dag-backtests"
+    m = _re.search(r"< break-even ([\d.]+)¢ ([+-][\d.]+)¢", text)
+    if m:
+        return f"kans onder break-even {m.group(2)}¢"
+    return text[:40]
+
+
+VERDICTS = {
+    ("edge", "PASS"): _vshort,
+    ("edge", "EDGE"): lambda t: "trade genomen",
+    ("kelly", "VOL"): lambda t: "max posities/blootstelling bereikt" ,
+    ("kelly", "TE KLEIN"): lambda t: "vrije marge te klein",
+}
+
+
 class Swarm:
     def __init__(self) -> None:
         saved = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
@@ -404,6 +429,9 @@ class Swarm:
         self.seq += 1
         self.trace.append({"id": self.seq, "t": int(time.time() * 1000), "agent": agent, "act": act,
                            "text": f"{coin} · {text}" if coin else text, "val": val, "coin": coin})
+        m = self.markets.get(coin) if coin else None
+        if m is not None and (agent, act) in VERDICTS:  # de reden blijft bij de markt staan tot de volgende beoordeling
+            m.verdict = {"t": int(time.time() * 1000), "win": m.win, "ok": act == "EDGE", "short": VERDICTS[(agent, act)](text), "text": text}
 
     # ---------- marktdata: één websocket voor alle markten ----------
     def feed(self) -> None:
@@ -500,6 +528,30 @@ class Swarm:
             self.log("taker", "NEE", "goedkeuring verlopen: venster voorbij", coin=m.coin)
 
     def decide(self, m: Market, now: float, cfg: dict) -> None:
+        if m.verdict and m.verdict.get("win") != m.win:
+            m.verdict = None  # nieuw venster: de oude reden geldt niet meer
+        self._decide(m, now, cfg)
+        if m.ticket or not m.model:
+            return
+        el, W = now - m.win, self.window
+        if not self.coins.get(m.coin):
+            v = "uitgezet" if m.coin in self.blocked else "munt staat uit"
+        elif el < .15 * W:
+            v = f"beslist pas vanaf {int(.15 * W // 60)} min in het venster"
+        elif el > .67 * W:
+            if not m.verdict:
+                v = "te laat in venster"
+            elif not m.verdict["ok"] and not m.verdict.get("late"):
+                m.verdict["late"] = True  # na 2/3 van het venster beslist hij niet meer: de getoonde edge kan intussen anders zijn
+                return
+            else:
+                return
+        else:
+            return
+        if not m.verdict or m.verdict.get("short") != v:
+            m.verdict = {"t": int(now * 1000), "win": m.win, "ok": False, "short": v, "text": v}
+
+    def _decide(self, m: Market, now: float, cfg: dict) -> None:
         f, mo, el, W = m.feat, m.model, now - m.win, self.window
         if not m.sample and el >= .15 * W:
             m.sample = {"s": f["score"], "px": m.px, "sd": mo["sd"], "f": desk_learn.fvec(f), "p": mo["p"], "src": mo.get("src")}
@@ -534,6 +586,10 @@ class Swarm:
                 return
             self.log("edge", "PASS", f"{mo['side']} {mo['pDir'] * 100:.1f}¢ < break-even {mo['be'] * 100:.1f}¢ {min_edge:+g}¢",
                      f"{mo['edge']:+.1f}¢", m.coin)
+            extra = [x for x, on in (("dag-backtests", against_bt), ("venster-strategieën", against_st)) if on]
+            m.verdict["short"] = f"< drempel {min_edge:+g}¢".replace(".", ",") + ("*" if extra else "")  # * = drempel verhoogd door tegenstem
+            m.verdict["text"] = (f"edge {mo['edge']:+.1f}¢ was lager dan de drempel {min_edge:+g}¢".replace(".", ",")
+                                 + (f", die 1¢ hoger ligt per tegenstem: {' en '.join(extra)}" if extra else ""))
             if el + every > .67 * W:
                 m.decided = True
             return
@@ -1587,7 +1643,7 @@ class Swarm:
         with self.lock:
             markets = {c: {"on": self.coins[c], "px": m.px, "open": m.open0, "win": m.win * 1000, "ticket": m.ticket,
                            "model": {k: v for k, v in m.model.items() if k != "prior"},
-                           "prior": m.model.get("prior", {}), "score": m.feat.get("score"),
+                           "prior": m.model.get("prior", {}), "verdict": m.verdict, "score": m.feat.get("score"),
                            "levels": self.shown_levels(m), "trends": m.trends,
                            "mas": [{"name": a["name"], "px": a["px"]} for a in m.mas()], "bt": bt_bias(c),
                            "strat": self.strat_info(c)}

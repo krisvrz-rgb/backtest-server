@@ -1482,9 +1482,18 @@ function drawAllRing(tm) {
     x.fillStyle = TH.text; x.font = '10px ui-monospace, monospace';
     const lbl = t ? `${t.side === 'long' ? '▲' : '▼'} ${t.lev}x ${t.state === 'entering' ? 'wacht op vulling' : sgn(t.upnl, 2)}` : !(m.model && m.model.edge != null) ? 'opwarmen…' : allState.by === 'score' ? `score ${m.score == null ? '–' : sgn(m.score, 2)}` : `edge ${edgeTxt(m.model.edge)}`;
     x.fillText(lbl, px, py + r + 15);
-    allSpots.push({ coin, px, py, r });
+    const vd = !t && m.verdict;  // waarom (nog) geen trade: kort onder de bubbel, volledig bij hover
+    if (vd) { const s0 = (vd.late ? '⏱ ' : '') + vd.short, sv = s0.length > 22 ? s0.slice(0, 21) + '…' : s0;
+      x.fillStyle = vd.ok ? '#16b364' : TH.muted; x.font = '9px ui-monospace, monospace'; x.fillText(sv, px, py + r + 27); }
+    allSpots.push({ coin, px, py, r, why: vd ? vd.short + (vd.text && vd.text !== vd.short ? '\n' + vd.text : '')
+      + (vd.late ? '\n⏱ na 2/3 van het venster beslist de zwerm niet meer; de edge die je nu ziet, kwam te laat' : '') : '' });
   });
 }
+$('allRing').onmousemove = e => {
+  const b = $('allRing').getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
+  const hit = allSpots.find(p => Math.hypot(p.px - mx, p.py - my) < p.r + 26);
+  $('allRing').title = hit ? `${short(hit.coin)}: ${hit.why || 'nog niet beoordeeld in dit venster'}` : '';
+};
 $('allRing').onclick = e => {
   const b = $('allRing').getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
   const hit = allSpots.find(p => Math.hypot(p.px - mx, p.py - my) < p.r + 8); if (!hit) return;
