@@ -25,6 +25,7 @@ from .watchlist import (PORTFOLIO_LIST, default_periods, PORTFOLIO_URL, SCANNER,
                         scan_cached, ticker_detail, watchlist_view)
 from .robust import cross_ticker
 from . import desk, desk_coach
+from .swing_desk import BOOK as swing_book, compare as swing_compare
 from .desk_auto import swarm
 from .picks import picks, strategy_scores
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
@@ -460,6 +461,90 @@ def desk_auto_approve(req: DeskApproval):
         raise HTTPException(400, str(e))
 
 
+# --------------------------------------------------------------------------- Swing Desk (papier)
+
+
+@app.get("/swing", include_in_schema=False)
+def swing_page():
+    return FileResponse(STATIC_DIR / "swing.html")
+
+
+class SwingCfg(BaseModel):
+    auto: bool | None = None
+    kelly: float | None = Field(None, gt=0, le=1)
+    risk_pct: float | None = Field(None, gt=0, le=10)
+    margin_pct: float | None = Field(None, gt=0, le=50)
+    max_lev: int | None = Field(None, ge=1, le=10)
+    max_open: int | None = Field(None, ge=1, le=20)
+    fee_bps: float | None = Field(None, ge=0, le=50)
+    min_volume: float | None = Field(None, ge=0)
+    refresh_at: str | None = Field(None, pattern=r"^\d{1,2}:\d{2}$")
+
+
+class SwingOpen(BaseModel):
+    coin: str
+
+
+class SwingClose(BaseModel):
+    id: str
+
+
+@app.get("/api/swing")
+def swing_view():
+    """Papierportefeuille, voorstellen, instellingen en de voortgang van de analyse."""
+    return swing_book.view()
+
+
+@app.get("/api/swing/summary")
+def swing_summary():
+    """Klein en snel, voor de statusbalk op /desk en /swing."""
+    return swing_book.summary()
+
+
+@app.post("/api/swing/refresh")
+def swing_refresh(symbols: list[str] | None = None):
+    if swing_book.progress["running"]:
+        raise HTTPException(409, "De analyse loopt al")
+    threading.Thread(target=swing_book.refresh, args=(symbols,), daemon=True, name="swing-refresh").start()
+    return {"started": True}
+
+
+@app.post("/api/swing/config")
+def swing_config(req: SwingCfg):
+    return swing_book.set_cfg(**req.model_dump())
+
+
+@app.post("/api/swing/open")
+def swing_open(req: SwingOpen):
+    """Een voorstel op papier openen (alleen papier: deze module plaatst geen echte orders)."""
+    try:
+        return swing_book.open_by_coin(req.coin)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@app.post("/api/swing/close")
+def swing_close(req: SwingClose):
+    try:
+        return swing_book.close(req.id, "manueel")
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@app.post("/api/swing/reset")
+def swing_reset():
+    swing_book.reset()
+    return {"ok": True}
+
+
+@app.get("/api/swing/compare")
+def swing_vs_scalp():
+    """Swing en scalping naast elkaar, allebei op papier."""
+    with swarm.lock:
+        pf, hist = swarm.portfolio(), list(swarm.history)
+    return swing_compare(swing_book.view(), pf, hist)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -788,6 +873,7 @@ def _start_scheduler():
     start_scheduler()
     swarm.start()  # op papier tot live aan staat; volgt alle aangezette markten en leert 24/7
     threading.Thread(target=desk_coach.scheduler, daemon=True, name="desk-coach").start()
+    swing_book.start_background()  # swing op papier: elke minuut SL/TP/funding, elke handelsdag na 22.40 nieuwe voorstellen
 
 
 class ScheduleSettings(BaseModel):

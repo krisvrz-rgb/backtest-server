@@ -420,6 +420,19 @@ def test_desk_page_and_status_paper_by_default():
     assert r.status_code == 403
 
 
+def test_swing_page_and_api(monkeypatch, tmp_path):
+    from app import desk, swing_desk
+    monkeypatch.setattr(desk, "universe", lambda max_age=600: {})
+    monkeypatch.setattr(swing_desk, "STATE_FILE", tmp_path / "s.json")
+    assert client.get("/swing").status_code == 200
+    v = client.get("/api/swing").json()
+    assert v["paper"] is True and "proposals" in v and v["cfg"]["max_open"] >= 1
+    assert client.post("/api/swing/config", json={"max_lev": 2}).json()["max_lev"] == 2
+    assert client.post("/api/swing/open", json={"coin": "xyz:NOPE"}).status_code == 400
+    c = client.get("/api/swing/compare").json()
+    assert set(c) == {"swing", "scalp"}
+
+
 def test_desk_summary_for_statusbar():
     s = client.get("/api/desk/summary").json()
     for k in ("mode", "start", "equity", "pnl", "open", "upnl", "today", "days", "analysis_at", "analysis_running"):
@@ -427,3 +440,11 @@ def test_desk_summary_for_statusbar():
     assert set(s["today"]) >= {"day", "wins", "losses", "pnl"}
     assert client.get("/static/statusbar.js").status_code == 200
     assert "/static/statusbar.js" in client.get("/desk").text
+
+
+def test_swing_summary_for_statusbar(monkeypatch):
+    from app import desk
+    monkeypatch.setattr(desk, "universe", lambda max_age=600: {})
+    s = client.get("/api/swing/summary").json()
+    assert s["mode"] == "paper" and set(s["today"]) >= {"day", "wins", "losses", "pnl"}
+    assert "/static/statusbar.js" in client.get("/swing").text
