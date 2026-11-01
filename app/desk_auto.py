@@ -457,7 +457,7 @@ class Swarm:
             if not t:
                 continue
             upnl = 0.0
-            if t["state"] in ("open", "exiting") and t.get("entry"):
+            if t["state"] in ("open", "exiting") and t.get("entry") and m.px:  # na een herstart is px nog 0: niet als -100% tellen
                 upnl = t["usd"] * (1 if t["side"] == "long" else -1) * (m.px - t["entry"]) / t["entry"]
             tickets.append({"coin": t["coin"], "side": t["side"], "usd": t["usd"], "lev": t["lev"], "margin": t["usd"] / t["lev"],
                             "state": t["state"], "entry": t.get("entry"), "px": m.px, "upnl": round(upnl, 4), "paper": t["paper"],
