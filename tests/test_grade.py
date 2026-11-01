@@ -14,7 +14,7 @@ def test_weight_needs_both_periods_and_profit():
 
 
 def test_score_and_letters():
-    assert grade.score([], [])["grade"] == "F"
+    assert grade.score([], [])["grade"] == "?"  # niets bewezen: geen oordeel
     none_open = grade.score([0.3, 0.3], [False, False])
     assert none_open["score"] == 0 and none_open["grade"] == "F"
     all_open = grade.score([0.4] * 6, [True] * 6)
@@ -44,7 +44,7 @@ def test_grade_result_detail():
     assert [x["strategy"] for x in g["working_list"]] == ["a", "b"]  # open eerst
     assert g["working_list"][0]["open"] and g["working_list"][0]["since"] == "2025-10-20"
     assert [x["strategy"] for x in g["open_other"]] == ["c"]  # open maar niet bewezen: telt niet mee
-    assert 0 < g["vote"] < 1 and g["grade"] in {"A+", "A", "B", "C", "D", "F"}
+    assert 0 < g["vote"] < 1 and g["grade"] in {"A+", "A", "B", "C", "D", "F", "?"}
     assert grade.grade_result({"oos": {"error": "kort"}}) is None
     bulk = grade.grades({"X": _result(), "Y": {}})
     assert list(bulk) == ["X"] and "working_list" not in bulk["X"]

@@ -9,7 +9,7 @@
   if (window.Grade) return;
   const me = document.currentScript;
   const BASE = (me && me.dataset.base) || (me && me.src ? new URL(me.src).origin : location.origin);
-  const COLORS = { 'A+': '#0f9d58', A: '#22c55e', B: '#84cc16', C: '#eab308', D: '#f97316', F: '#ef4444' };
+  const COLORS = { 'A+': '#0f9d58', A: '#22c55e', B: '#84cc16', C: '#eab308', D: '#f97316', F: '#ef4444', '?': '#64748b' };
   const css = `
   .grd { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 18px; padding: 0 5px;
     border-radius: 4px; font: 700 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif; color: #fff; cursor: pointer;

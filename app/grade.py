@@ -25,6 +25,8 @@ from typing import Any
 from .strategies import CATEGORIES, STRATEGIES
 
 GRADES = [("A+", 80), ("A", 65), ("B", 50), ("C", 35), ("D", 20), ("F", 0)]
+# Geen enkele strategie bewees zich voor deze ticker: geen oordeel (geen F, want F zegt "werkt, maar niets staat op koop").
+NONE = "?"
 MAX_EDGE = 0.5
 CONF_SCALE = 0.75
 BASE_CONF = 0.3
@@ -37,6 +39,8 @@ FORMULA = [
     "Stemming = gewogen aandeel van de werkende strategieën dat nu een open koopsignaal heeft.",
     "Vertrouwen groeit met het totaalgewicht: 1 − e^(−gewicht / 0,75).",
     "Score = 100 × stemming × (0,3 + 0,7 × vertrouwen). A+ ≥ 80, A ≥ 65, B ≥ 50, C ≥ 35, D ≥ 20, anders F.",
+    "? = geen enkele strategie bewees zich voor deze ticker (vaak na een sterke stijging die niemand kon verslaan): "
+    "geen oordeel, dus ook geen slecht teken.",
 ]
 
 
@@ -62,7 +66,7 @@ def score(weights: list[float], open_flags: list[bool]) -> dict[str, Any]:
     """Score en grade uit de gewichten van de strategieën en of ze nu open staan (gedeeld met de walk-forward check)."""
     total = sum(weights)
     if total <= 0:
-        return {"score": 0.0, "grade": "F", "vote": 0.0, "confidence": 0.0, "weight": 0.0}
+        return {"score": 0.0, "grade": NONE, "vote": 0.0, "confidence": 0.0, "weight": 0.0}
     w_open = sum(w for w, o in zip(weights, open_flags) if o)
     vote = w_open / total
     conf = 1 - math.exp(-total / CONF_SCALE)
@@ -73,7 +77,12 @@ def score(weights: list[float], open_flags: list[bool]) -> dict[str, Any]:
 
 def _reason(g: dict[str, Any]) -> str:
     if g.get("working", 0) == 0:
-        return "Geen enkele strategie bleef voor deze ticker werken buiten de leerperiode."
+        bt, bh_tr, bh_te = g.get("beat_train"), g.get("bh_train_ret"), g.get("bh_test_ret")
+        if bt is None or bh_tr is None:
+            return "Geen enkele strategie bleef voor deze ticker werken buiten de leerperiode."
+        return (f"Geen oordeel: vasthouden deed {bh_tr * 100:+.0f}% in de leerperiode en maar {bt} strategieën deden beter; "
+                f"geen enkele daarvan verslaat ook in het testjaar vasthouden ({bh_te * 100:+.0f}%) mét winst. "
+                f"Dat zegt niets over koop of verkoop, alleen dat geen strategie zich hier bewees.")
     if g["working"] == 1:
         return ("De enige werkende strategie staat op koop, maar met één strategie is er weinig vertrouwen."
                 if g["open_working"] else "Maar één strategie werkt, en die staat niet op koop.")
@@ -105,6 +114,7 @@ def grade_result(r: dict[str, Any] | None, detail: bool = False) -> dict[str, An
         rows.append((name, pair[0], pair[1], w, name in open_now))
     working = [x for x in rows if x[3] > 0]
     g = score([x[3] for x in working], [x[4] for x in working])
+    g |= {"beat_train": sum(1 for x in rows if x[1] > o["bh_train"]), "bh_train_ret": o["bh_train"], "bh_test_ret": o["bh_test"]}
     g |= {"working": len(working), "open_working": sum(1 for x in working if x[4]), "strategies": len(rows),
           "open_total": len(open_now), "scanned_at": r.get("scanned_at"), "test": o.get("test")}
     g["reason"] = _reason(g)

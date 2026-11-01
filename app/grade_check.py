@@ -27,7 +27,7 @@ import pandas as pd
 
 from .data import DATA_DIR, WARMUP_DAYS, get_prices
 from .engine import run_backtest
-from .grade import GRADES, score, weight
+from .grade import GRADES, NONE, score, weight
 from .strategies import STRATEGIES
 
 CHECK_FILE = DATA_DIR / "grade-check.json"
@@ -120,7 +120,7 @@ def summarize(per_ticker: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     if not rows:
         return {"observations": 0}
     by_grade = []
-    for g, _ in GRADES:
+    for g in [x for x, _ in GRADES] + [NONE]:
         sel = [r for r in rows if r["grade"] == g]
         by_grade.append({"grade": g, **_stats([r["fwd"] for r in sel]),
                          "rel": float(np.mean([min(max(r["fwd"], -CAP_LO), CAP_HI) - (r["fwd"] - r["rel"]) for r in sel])) if sel else None,
