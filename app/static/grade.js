@@ -106,11 +106,11 @@
     if (!c || !c.by_grade) return `<p class="mu">Nog niet gemeten. Start de walk-forward check: die rekent de grade terug voor elke maand
       in het verleden (alleen met de koersen tot die dag) en kijkt wat het aandeel de maand erna deed.</p>`;
     const rows = c.by_grade.map(b => `<tr><td><span class="grd" style="background:${COLORS[b.grade]}">${b.grade}</span></td>
-      <td>${b.n}</td><td class="${cl(b.avg)}">${pct(b.avg, 2)}</td><td class="${cl(b.rel)}">${pct(b.rel, 2)}</td>
+      <td>${b.n}</td><td class="${cl(b.avg)}">${pct(b.avg, 2)}</td><td class="${cl(b.median)}">${pct(b.median, 2)}</td><td class="${cl(b.rel)}">${pct(b.rel, 2)}</td>
       <td>${b.hit == null ? '–' : Math.round(b.hit * 100) + '%'}</td><td class="${cl(b.fwd3)}">${pct(b.fwd3, 1)}</td></tr>`).join('');
     return `<div class="verdict">${esc(c.verdict)}</div>
-      <table><tr><th>Grade</th><th>Meetpunten</th><th>Maand erna gem.</th><th>t.o.v. eigen gem. ticker</th><th>% positief</th><th>3 maanden erna</th></tr>
-      ${rows}<tr><td class="mu">Alle</td><td>${c.all?.n ?? '–'}</td><td class="${cl(c.all?.avg)}">${pct(c.all?.avg, 2)}</td><td>–</td>
+      <table><tr><th>Grade</th><th>Meetpunten</th><th title="Uitschieters afgetopt op −50% en +100%">Maand erna gem.</th><th>Mediaan</th><th>t.o.v. eigen gem. ticker</th><th>% positief</th><th>3 maanden erna</th></tr>
+      ${rows}<tr><td class="mu">Alle</td><td>${c.all?.n ?? '–'}</td><td class="${cl(c.all?.avg)}">${pct(c.all?.avg, 2)}</td><td class="${cl(c.all?.median)}">${pct(c.all?.median, 2)}</td><td>–</td>
       <td>${c.all?.hit == null ? '–' : Math.round(c.all.hit * 100) + '%'}</td><td></td></tr></table>
       <p class="mu">${c.tickers} tickers, ${esc(c.from)} t/m ${esc(c.to)}, een meetpunt op elk maandeinde, rendement over de ${c.horizon_days} handelsdagen erna met instap op de
       opening van de dag erna. Rangcorrelatie score ↔ maand erna (IC): ${c.ic == null ? '–' : c.ic.toFixed(3).replace('.', ',')}.

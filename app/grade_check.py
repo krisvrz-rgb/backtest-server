@@ -34,6 +34,7 @@ CHECK_FILE = DATA_DIR / "grade-check.json"
 START = "2015-01-01"
 HORIZON = 21    # rendement over de 21 handelsdagen erna
 HORIZON_LONG = 63
+CAP_LO, CAP_HI = 0.5, 1.0
 
 
 def ticker_observations(prices: pd.DataFrame, fee_bps: float = 5.0) -> list[dict[str, Any]]:
@@ -93,7 +94,10 @@ def _stats(vals: list[float]) -> dict[str, Any]:
     a = np.array(vals, dtype=float)
     if not len(a):
         return {"n": 0}
-    return {"n": int(len(a)), "avg": float(a.mean()), "median": float(np.median(a)), "hit": float((a > 0).mean())}
+    # Gemiddelde met afgetopte uitschieters (−50% tot +100% per maand): een paar foute koersen bij Yahoo
+    # zouden anders het hele gemiddelde bepalen. De mediaan en % positief zijn ongevoelig voor uitschieters.
+    return {"n": int(len(a)), "avg": float(np.clip(a, -CAP_LO, CAP_HI).mean()), "median": float(np.median(a)),
+            "hit": float((a > 0).mean())}
 
 
 def _spearman(x: list[float], y: list[float]) -> float | None:
@@ -111,7 +115,7 @@ def summarize(per_ticker: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     for sym, obs in per_ticker.items():
         if not obs:
             continue
-        mean = float(np.mean([o["fwd"] for o in obs]))
+        mean = float(np.mean(np.clip([o["fwd"] for o in obs], -CAP_LO, CAP_HI)))
         rows += [o | {"sym": sym, "rel": o["fwd"] - mean} for o in obs]
     if not rows:
         return {"observations": 0}
@@ -119,7 +123,7 @@ def summarize(per_ticker: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     for g, _ in GRADES:
         sel = [r for r in rows if r["grade"] == g]
         by_grade.append({"grade": g, **_stats([r["fwd"] for r in sel]),
-                         "rel": float(np.mean([r["rel"] for r in sel])) if sel else None,
+                         "rel": float(np.mean([min(max(r["fwd"], -CAP_LO), CAP_HI) - (r["fwd"] - r["rel"]) for r in sel])) if sel else None,
                          "fwd3": _stats([r["fwd3"] for r in sel if "fwd3" in r]).get("avg")})
     # Rangcorrelatie per datum over de tickers, dan het gemiddelde (IC) en hoe vaak die positief was.
     dates: dict[str, list[dict[str, Any]]] = {}
@@ -134,7 +138,8 @@ def summarize(per_ticker: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         "all": _stats([r["fwd"] for r in rows]), "by_grade": by_grade,
         "ic": float(np.mean(ics)) if ics else None, "ic_positive": float(np.mean([i > 0 for i in ics])) if ics else None,
         "ic_months": len(ics),
-        "spread": float(np.mean(top) - np.mean(bottom)) if top and bottom else None,
+        # Verschil in mediaan rendement de maand erna tussen A+/A en F (robuust tegen foute koersen).
+        "spread": float(np.median(top) - np.median(bottom)) if top and bottom else None,
         "horizon_days": HORIZON, "step": "maandeinde",
     }
     out["verdict"] = verdict(out)
@@ -153,12 +158,12 @@ def verdict(s: dict[str, Any]) -> str:
     rel = {b["grade"]: b["rel"] for b in s["by_grade"] if b.get("rel") is not None}
     order_ok = rel.get("A+", rel.get("A", 0)) >= rel.get("F", 0)
     if ic >= 0.05 and spread > 0.005 and order_ok:
-        return (f"Voorspelde iets: A+/A deden de maand erna gemiddeld {_nl(spread * 100, '+.1f')} procentpunt beter dan F, "
+        return (f"Voorspelde iets: A+/A deden de maand erna (mediaan) {_nl(spread * 100, '+.1f')} procentpunt beter dan F, "
                 f"rangcorrelatie {_nl(ic, '.2f')}. Bruikbaar als filter, niet als zekerheid.")
     if ic > 0 and spread > 0:
-        return (f"Zwak: A+/A deden de maand erna {_nl(spread * 100, '+.1f')} procentpunt beter dan F, maar de rangcorrelatie "
+        return (f"Zwak: A+/A deden de maand erna (mediaan) {_nl(spread * 100, '+.1f')} procentpunt beter dan F, maar de rangcorrelatie "
                 f"is maar {_nl(ic, '.2f')}. Grotendeels ruis; gebruik het hooguit als één signaal tussen andere.")
-    return (f"Voorspelde niets: A+/A deden de maand erna niet beter dan F ({_nl(spread * 100, '+.1f')} procentpunt, "
+    return (f"Voorspelde niets: A+/A deden de maand erna niet beter dan F (mediaan {_nl(spread * 100, '+.1f')} procentpunt, "
             f"rangcorrelatie {_nl(ic, '.2f')}). Een hoge grade betekent hier vooral dat er een trend bezig was.")
 
 
