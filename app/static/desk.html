@@ -103,7 +103,8 @@
   .ring { position: relative; height: 340px; }
   .cands { margin-top: 8px; } .cands h3 span { text-transform: none; letter-spacing: 0; font-weight: 400; }
   .cands table { width: 100%; border-collapse: collapse; font-size: 11px; } .cands td { padding: 3px 6px; border-top: 1px solid var(--border); white-space: nowrap; }
-  .cands td.r { white-space: normal; color: var(--muted); } .cands tr.ok td.r { color: var(--up); } .cands tr { cursor: pointer; } .cands tr:hover td { background: var(--panel-2); }
+  .cands .cwrap { overflow-x: auto; } .cands .aglg { margin-top: 6px; font: 11px/1.45 system-ui, sans-serif; } .cands .aglg summary { cursor: pointer; color: var(--muted); } .cands .aglg ol { margin: 4px 0 0 18px; padding: 0; } .cands .aglg li { margin: 2px 0; }
+  .cands td.r { min-width: 240px; white-space: normal; color: var(--muted); } .cands tr.ok td.r { color: var(--up); } .cands tr { cursor: pointer; } .cands tr:hover td { background: var(--panel-2); }
   .ring canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   .ring .hud { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: flex-start; pointer-events: none; }
   .ring .big { font: 700 30px var(--mono); }
@@ -1978,6 +1979,10 @@ function renderFeed() {
       <span class="who" style="background:${ag.c}">${t.act}</span><span>${txt}</span><span>${t.val || ''}</span></div>`; }).join('');
   $('allCount').textContent = allState.n + ' regels';
 }
+const CAND_COLS = [['score', 'score', 'som van de gewogen signalen (Prior), −1 = sterk short, +1 = sterk long'],
+  ['flow30', 'koop 3m', 'koopdruk over 3 minuten: agressieve kopers min verkopers, gewicht 35%'], ['flow10', 'koop 30s', 'koopdruk over 30 seconden, gewicht 20%'],
+  ['book', 'boek 5', 'orderboek top 5 niveaus: biedingen versus aanbod, gewicht 25%'], ['bookDeep', 'boek 20', 'orderboek top 20 niveaus, gewicht 10%'],
+  ['mom', 'mom', 'momentum (koersbeweging), gewicht 10%'], ['strat', 'strat', 'vensterstrategieën uit de backtest: + = meer long-signalen. Telt niet in de score, wel als tegenstem (+1¢ drempel)']];
 function renderCands() {  // vlak bij de ring: welke gevolgde markten de zwerm overweegt, en waarom (nog) niet
   const a = st.auto; if (!a || !a.markets) return;
   const W = (a.window_min || 60) * 60000, now = Date.now(), floor = a.min_edge ?? 0;
@@ -1991,11 +1996,31 @@ function renderCands() {  // vlak bij de ring: welke gevolgde markten de zwerm o
   const show = (pos.length ? pos : rows.slice(0, 5)).slice(0, 12);
   if (!show.length) { $('cands').innerHTML = '<span class="muted">De zwerm volgt nog geen markten of warmt op.</span>'; return; }
   $('cands').innerHTML = (pos.length ? '' : '<div class="muted" style="margin-bottom:4px">Geen enkele markt boven 0¢ edge. De beste vijf:</div>')
-    + '<table><tr class="muted"><td>munt</td><td>richting</td><td>edge nu</td><td class="r">laatste beoordeling (tijd · reden)</td></tr>' + show.map(([c, m]) => { const t = m.ticket, v = m.verdict, mo = m.model;
+    + '<div class="cwrap"><table><tr class="muted"><td>munt</td><td>richting</td><td>edge nu</td><td title="kans dat de koers in die richting beweegt, volgens Prior: Φ(β·score)">kans</td>'
+    + CAND_COLS.map(([, lab, tip]) => `<td title="${tip}">${lab}</td>`).join('')
+    + '<td title="Ruimte tot de eerste steun (short) of weerstand (long), in σ van de verwachte beweging. Onder 0,3σ stapt Edge niet in.">ruimte</td>'
+    + '<td title="Kelly rekent pas als Edge boven de drempel komt. Dit is wat Kelly zei bij de laatste instap op deze munt: hefboom en positiegrootte (marge).">Kelly</td>'
+    + '<td class="r">laatste beoordeling (tijd · reden)</td></tr>'
+    + show.map(([c, m]) => { const t = m.ticket, v = m.verdict, mo = m.model, f = m.feat, k = m.kelly;
       const why = t ? (t.state === 'entering' ? 'limietorder wacht op vulling' : `in trade · ${t.lev}x · ${sgn(t.upnl || 0, 2)}`)
         : v ? (v.t ? hhmmss(v.t).slice(0, 5) + ' · ' : '') + (v.late ? '⏱ ' : '') + (v.text || v.short) : el < .15 ? 'nog te vroeg in het venster' : el > .67 ? '⏱ te laat in het venster' : 'nog niet beoordeeld in dit venster';
+      const sig = CAND_COLS.map(([key, lab]) => { if (key === 'score') return `<td class="${(m.score || 0) >= 0 ? 'up' : 'down'}"><b>${m.score == null ? '–' : sgn(m.score, 2)}</b></td>`;
+        const x = f ? f[key] : null; if (x == null) return '<td class="muted">–</td>';
+        const ct = f.contrib && f.contrib[key], tip = ct == null ? 'telt niet mee in de score, alleen als tegenstem of info' : `bijdrage aan de score ${sgn(ct, 3)}`;
+        return `<td class="${Math.abs(x) < .05 ? 'muted' : x > 0 ? 'up' : 'down'}" title="${lab}: ${sgn(x, 2)} · ${tip}">${sgn(x, 2)}</td>`; }).join('');
+      const room = f && f.room != null ? `<td class="${f.room < .3 ? 'down' : ''}" title="${f.wall || ''}">${fmt(f.room, 1)}σ</td>` : '<td class="muted" title="geen niveau in de weg">vrij</td>';
+      const kel = k ? `<td title="${hhmmss(k.t).slice(0, 5)} · ${k.side} · positie $${fmt(k.usd, 0)}, marge $${fmt(k.margin, 0)}${k.kf != null ? ' · Kelly-fractie ' + fmt(k.kf * 100, 1) + '%' : ''}${k.capped ? ' · afgetopt door ' + k.capped : ''}">${k.lev}x · $${fmt(k.margin, 0)}</td>`
+        : '<td class="muted" title="Kelly rekent pas als de edge boven de drempel komt">–</td>';
       return `<tr data-c="${c}" class="${t || (v && v.ok) ? 'ok' : ''}"><td><b>${short(c)}</b></td><td class="${mo.side === 'long' ? 'up' : 'down'}">${mo.side || ''}</td>`
-        + `<td class="${mo.edge >= floor ? 'up' : 'down'}">${edgeTxt(mo.edge)}</td><td class="r">${why.replace(/</g, '&lt;')}</td></tr>`; }).join('') + '</table>';
+        + `<td class="${mo.edge >= floor ? 'up' : 'down'}">${edgeTxt(mo.edge)}</td><td>${mo.pDir == null ? '–' : cents(mo.pDir)}</td>`
+        + sig + room + kel + `<td class="r">${why.replace(/</g, '&lt;')}</td></tr>`; }).join('') + '</table></div>'
+    + `<details class="aglg"><summary>Wie doet wat? (de zes agenten)</summary><ol>
+      <li><b>Spotter</b> leest elke paar seconden de markt: koopdruk (wie koopt of verkoopt agressief, over 3 minuten en 30 seconden), het orderboek (meer biedingen of meer aanbod in de top 5 en top 20 niveaus) en momentum. Elk signaal loopt van −1 (sterk short) tot +1 (sterk long). Samen met de scanner kiest hij welke munten de zwerm volgt.</li>
+      <li><b>Prior</b> telt de signalen op tot één <i>score</i> (gewichten: koop 3m 35%, koop 30s 20%, boek 5 25%, boek 20 10%, mom 10%) en zet die om in een <i>kans</i> met Φ(β·score). β leert hij uit de vorige vensters van die munt: hoe vaak klopte de score?</li>
+      <li><b>Edge</b> vergelijkt de kans met de break-even (de kans die je nodig hebt om de kosten terug te verdienen). Edge = kans − break-even, in ¢. Hij stapt pas in als de edge boven je drempel ligt, tussen 15% en 67% van het venster, met minstens 0,3σ ruimte tot de volgende steun of weerstand. Tegenstemmen (dag-backtests, vensterstrategie) verhogen de drempel met 1¢.</li>
+      <li><b>Kelly</b> beslist hoe groot: welke fractie van de portefeuille de edge waard is, welke hefboom (tot je max), afgetopt door marge % per trade, max trades tegelijk en max 2× de portefeuille in totaal.</li>
+      <li><b>Taker</b> zet de limietorder (maker, goedkoper) en wacht tot de prijs hem raakt. Niet gevuld voor het einde van de beslisperiode betekent VERLOPEN.</li>
+      <li><b>Closer</b> bewaakt de open trade: SL, TP (3× de stopafstand), de trailing stop, en aan het einde van het venster de keuze om te sluiten of nog een venster door te lopen (tot 3).</li></ol></details>`;
 }
 $('cands').onclick = e => { const r = e.target.closest('tr'); if (r && r.dataset.c !== st.coin) setCoin(r.dataset.c); };
 

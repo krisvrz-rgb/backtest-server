@@ -204,6 +204,7 @@ class Market:
         self.ticket: dict | None = None
         self.last_eval = 0
         self.verdict: dict | None = None  # waarom er (geen) trade kwam bij de laatste beoordeling, voor de bubbel
+        self.kelly: dict | None = None  # wat Kelly zei bij de laatste instap op deze markt
         self.levels: list[dict] = []
         self.trends: list[dict] = []
         self.levels_at = 0.0
@@ -627,6 +628,8 @@ class Swarm:
         if not sized:
             return
         lev, usd = sized
+        m.kelly = {"t": int(now * 1000), "lev": lev, "usd": round(usd, 2), "margin": round(usd / lev, 2), "side": mo["side"],
+                   "kf": self.kelly_info.get("kelly"), "capped": self.kelly_info.get("capped"), "want": self.kelly_info.get("want_lev")}
         w = MODEL["w"]  # waarom: welke kenmerken de score maakten, en wat Prior, Edge en Kelly ervan dachten
         parts = [("koopdruk 3 min", w["flow30"] * f["flow30"], f["flow30"]), ("koopdruk 30 s", w["flow10"] * f["flow10"], f["flow10"]),
                  ("orderboek top 5", w["book"] * f["book"], f["book"]), ("orderboek top 20", w["bookDeep"] * f["bookDeep"], f["bookDeep"]),
@@ -1695,6 +1698,23 @@ class Swarm:
         dn = sorted((l for l in lv if l["px"] < m.px), key=lambda l: -l["px"])[:4]
         return dn[::-1] + up
 
+    @staticmethod
+    def feat_view(m: Market) -> dict | None:
+        """Voor de overweeg-lijst: elk signaal (-1..+1), zijn bijdrage aan de score, en de ruimte tot het volgende niveau."""
+        f = m.feat
+        if not f or "score" not in f:
+            return None
+        w = MODEL["w"]
+        out = {k: round(f.get(k, 0.0), 3) for k in ("flow30", "flow10", "book", "bookDeep", "mom", "rsi", "macd", "strat")}
+        out["contrib"] = {k: round(w[k] * (_clamp(f.get(k, 0.0) / 2, -1, 1) if k == "mom" else f.get(k, 0.0)), 3) for k in w}
+        sd = max(m.model.get("sd", 0.0), 1e-5) if m.model else 1e-5
+        if m.px and m.model:
+            sup, res = m.near_levels(m.px)
+            wall = res if m.model.get("side") == "long" else sup
+            out["room"] = round(abs(wall["px"] - m.px) / m.px / sd, 2) if wall else None
+            out["wall"] = (wall.get("name") or ("weerstand" if m.model.get("side") == "long" else "steun")) if wall else None
+        return out
+
     def strat_info(self, coin: str) -> dict | None:
         r = desk_strats.get(coin, self.window)
         if not r:
@@ -1711,7 +1731,7 @@ class Swarm:
                            "prior": m.model.get("prior", {}), "verdict": m.verdict, "score": m.feat.get("score"),
                            "levels": self.shown_levels(m), "trends": m.trends,
                            "mas": [{"name": a["name"], "px": a["px"]} for a in m.mas()], "bt": bt_bias(c),
-                           "strat": self.strat_info(c)}
+                           "strat": self.strat_info(c), "feat": self.feat_view(m), "kelly": m.kelly}
                        for c, m in self.markets.items()}
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
