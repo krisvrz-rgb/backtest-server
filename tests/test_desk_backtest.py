@@ -58,3 +58,15 @@ def test_costs_eat_random_edge():
     tr = bt.Sim(P, window=15, min_edge=0.0, model="vast").run()["trades"]
     if tr:
         assert sum(x["pnl"] for x in tr) - sum(x["gross"] for x in tr) < 0  # kosten zijn altijd negatief
+
+
+def test_weight_search_needs_proof():
+    """Veel gewichtensets op ruis: walk-forward mag geen 'voorstel' opleveren (t ≥ 2 nodig)."""
+    P = bt.prepare(_candles(240, seed=3), {})
+    runs, cfgs = {}, {}
+    for c in bt.weight_grid() + [dict(bt.BASELINE)]:
+        k = bt.config_key(c)
+        runs[k], cfgs[k] = bt.Sim(P, **c).run()["trades"], {x: v for x, v in c.items() if x != "weights"}
+    ev = bt.evaluate("SYN", runs, cfgs, P["t0"], P["t0"] + P["n"] * 60_000, warmup_days=60)
+    assert ev["verdict"] != "voorstel"
+    assert any("·trend" in k for k in runs)

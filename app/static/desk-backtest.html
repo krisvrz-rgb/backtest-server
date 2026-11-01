@@ -51,6 +51,7 @@
       <input id="coins" size="70" placeholder="munten (Hyperliquid-namen), leeg = standaardlijst">
       <label class="muted">maanden <input id="months" type="number" value="24" min="3" max="36" style="width:60px"></label>
       <label class="muted">tegelijk <input id="workers" type="number" value="2" min="1" max="6" style="width:50px"></label>
+      <select id="kind"><option value="basis">instellingen (venster, drempel, model, trailing)</option><option value="gewichten">gewichten van de score</option></select>
       <button class="go" id="run">Backtest starten</button>
       <span id="st" class="muted"></span>
     </div>
@@ -98,10 +99,10 @@ let DATA = null, SEL = null, chart = null;
 const pct = (v, d = 2) => v == null ? '–' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : 'muted'}">${v > 0 ? '+' : ''}${(+v).toFixed(d)}%</span>`;
 const bp = v => v == null ? '–' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : 'muted'}">${v > 0 ? '+' : ''}${(+v).toFixed(1)}</span>`;
 const day = t => new Date(t).toISOString().slice(0, 10);
-const badge = v => `<span class="badge ${v === 'voorstel' ? 'b-voorstel' : v === 'uit' ? 'b-uit' : 'b-zo'}">${v.toUpperCase()}</span>`;
+const badge = v => `<span class="badge ${v === 'voorstel' ? 'b-voorstel' : v === 'uit' ? 'b-uit' : 'b-zo'}" ${v === 'twijfel' ? 'style="color:#f08c00;border-color:#f08c00"' : ''}>${v.toUpperCase()}</span>`;
 
 async function load() {
-  const r = await fetch('/api/desk/backtest').then(r => r.json());
+  const r = await fetch('/api/desk/backtest?set=' + $('kind').value).then(r => r.json());
   DATA = r;
   const s = r.status || {};
   $('st').textContent = s.running ? `bezig: ${s.done}/${s.total} munten` : (r.finished ? `laatste run klaar ${new Date(r.finished).toLocaleString('nl-BE')}` : 'nog niet gedraaid');
@@ -125,22 +126,23 @@ function render() {
     ['voorstel (beter OOS)', (sm.propose || []).length],
     ['beter uitzetten', (sm.off || []).length],
     ['zo laten', (sm.keep || []).length],
+    ['twijfel (kan geluk zijn)', (sm.doubt || []).length],
     ['gem. walk-forward OOS', pct(sm.wf_avg)],
     ['gem. desk zoals nu OOS', pct(sm.base_avg)],
     ...[15, 60, 240].map(w => [`desk op ${w}m: gem. / # positief`, `${pct((sm.per_window || {})[w]?.avg)} <small class="muted">${(sm.per_window || {})[w]?.pos ?? '–'}/${ok.length}</small>`]),
   ].map(([a, b]) => `<div class="card"><span>${a}</span><b>${b}</b></div>`).join('');
   const rows = cs.slice().sort((a, b) => ((b.wf || {}).ret ?? -99) - ((a.wf || {}).ret ?? -99));
-  $('tab').innerHTML = `<tr><th class="l">munt</th><th class="l">data</th><th class="l">oordeel</th><th>WF rend.</th><th>WF trades</th><th>WF bp/trade</th>
+  $('tab').innerHTML = `<tr><th class="l">munt</th><th class="l">data</th><th class="l">oordeel</th><th>WF rend.</th><th>WF trades</th><th>WF bp/trade</th><th>WF t</th>
       <th>desk nu rend.</th><th>trades</th><th>bp/trade</th><th>bruto bp</th><th>juist</th><th class="l">voorstel / advies</th></tr>` +
-    rows.map(c => c.error ? `<tr><td class="l">${c.coin}</td><td class="wrap" colspan="11">${c.error}</td></tr>` :
+    rows.map(c => c.error ? `<tr><td class="l">${c.coin}</td><td class="wrap" colspan="12">${c.error}</td></tr>` :
       `<tr class="coin ${SEL === c.coin ? 'sel' : ''}" data-c="${c.coin}"><td class="l"><b>${c.coin}</b></td>
       <td class="l muted num">${day(c.from)} → ${day(c.to)}</td><td class="l">${badge(c.verdict)}</td>
-      <td class="num">${pct(c.wf.ret)}</td><td class="num">${c.wf.n}</td><td class="num">${bp(c.wf.bp)}</td>
+      <td class="num">${pct(c.wf.ret)}</td><td class="num">${c.wf.n}</td><td class="num">${bp(c.wf.bp)}</td><td class="num">${c.wf.t ?? '–'}</td>
       <td class="num">${pct(c.base.ret)}</td><td class="num">${c.base.n}</td><td class="num">${bp(c.base.bp)}</td><td class="num">${bp(c.base.gross_bp)}</td>
       <td class="num">${hitOf(c)}</td><td class="wrap">${c.advice}</td></tr>`).join('');
   document.querySelectorAll('tr.coin').forEach(tr => tr.onclick = () => { SEL = tr.dataset.c; render(); detail(); });
   $('heat').innerHTML = `<tr><th class="l">munt</th>${[15, 60, 240].map(w => `<th>${w}m rend.</th><th>${w}m trades</th><th>${w}m bp</th><th class="l">${w}m eerlijk gekozen</th>`).join('')}</tr>` +
-    ok.map(c => `<tr><td class="l"><b>${c.coin}</b></td>${[15, 60, 240].map(w => { const p = c.per_window[w]; return `<td class="h">${pct(p.base_like.ret)}</td><td class="num">${p.base_like.n}</td><td class="num">${bp(p.base_like.bp)}</td><td class="l muted">${p.pick ? p.pick.replace(/^\d+m·/, '') + ' ' + pct(p.oos.ret) : 'niet handelen'}</td>`; }).join('')}</tr>`).join('');
+    ok.map(c => `<tr><td class="l"><b>${c.coin}</b></td>${[15, 60, 240].map(w => { const p = c.per_window[w] || { base_like: {}, oos: {} }; return `<td class="h">${pct(p.base_like.ret)}</td><td class="num">${p.base_like.n ?? "–"}</td><td class="num">${bp(p.base_like.bp)}</td><td class="l muted">${p.pick ? p.pick.replace(/^\d+m·/, '') + ' ' + pct(p.oos.ret) : 'niet handelen'}</td>`; }).join('')}</tr>`).join('');
   if (SEL) detail();
 }
 
@@ -178,10 +180,12 @@ function detail() {
       <td class="num">${r.beta != null ? r.beta.toFixed(3) : '–'}</td><td class="num">${r.hit != null ? (r.hit * 100).toFixed(1) + '%' : '–'}</td><td>${r.learned ? 'ja' : r.model === 'geleerd' ? 'nee' : ''}</td></tr>`).join('');
 }
 
+$('kind').onchange = () => { DATA = null; SEL = null; ['sum-p', 'tab-p', 'heat-p', 'det-p'].forEach(i => $(i).hidden = true); load(); };
+if (location.hash === '#gewichten') $('kind').value = 'gewichten';
 $('run').onclick = async () => {
   const coins = $('coins').value.split(/[\s,]+/).filter(Boolean);
   const r = await fetch('/api/desk/backtest/run', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ coins: coins.length ? coins : null, months: +$('months').value, workers: +$('workers').value }) }).then(r => r.json());
+    body: JSON.stringify({ kind: $('kind').value, coins: coins.length ? coins : null, months: +$('months').value, workers: +$('workers').value }) }).then(r => r.json());
   $('st').textContent = r.ok ? 'gestart…' : r.error;
   setTimeout(load, 1500);
 };

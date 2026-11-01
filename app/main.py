@@ -171,14 +171,15 @@ class DeskBacktestRun(BaseModel):
     coins: list[str] | None = None
     months: int = 24
     workers: int = 2
+    kind: Literal["basis", "gewichten"] = "basis"
 
 
 @app.get("/api/desk/backtest")
-def desk_backtest_results():
+def desk_backtest_results(set: Literal["basis", "gewichten"] = "basis"):
     """Resultaten van de 2-jaar-backtest van de zwermregels per munt, met de stand van een lopende run."""
     from . import desk_backtest as dbt
     st = {k: v for k, v in dbt.STATUS.items() if k != "log"}
-    return {**dbt.load_results(), "status": {**st, "log": dbt.STATUS["log"][-30:]}, "default_coins": dbt.DEFAULT_COINS}
+    return {**dbt.load_results(set), "status": {**st, "log": dbt.STATUS["log"][-30:]}, "default_coins": dbt.DEFAULT_COINS}
 
 
 @app.post("/api/desk/backtest/run")
@@ -186,7 +187,7 @@ def desk_backtest_run(req: DeskBacktestRun):
     from . import desk_backtest as dbt
     months = max(3, min(36, req.months))
     coins = [c.strip() for c in (req.coins or []) if c.strip()][:60] or None
-    return dbt.start(coins, months, max(1, min(6, req.workers)))
+    return dbt.start(coins, months, max(1, min(6, req.workers)), req.kind)
 
 
 @app.get("/api/desk/backtest/trades/{coin}")

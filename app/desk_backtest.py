@@ -371,7 +371,8 @@ class Sim:
     def __init__(self, P: dict, window: int = 60, min_edge: float = 2.0, model: str = "geleerd", trail: bool = True,
                  hold_max: int = 3, maker_bps: float = 1.5, taker_bps: float = 4.5, half_spread_bps: float = 1.0,
                  max_lev: float = 10, risk_pct: float = 10, kelly_frac: float = .25, max_margin_pct: float = 5,
-                 beta0: float = .25, k_prior: float = 30, trail_pct: float = 50, weights: dict | None = None) -> None:
+                 beta0: float = .25, k_prior: float = 30, trail_pct: float = 50, weights: dict | None = None,
+                 wname: str | None = None) -> None:
         self.P, self.W, self.min_edge, self.trail_on, self.hold_max = P, window, min_edge, trail, hold_max
         self.maker, self.taker, self.hs = maker_bps, taker_bps, half_spread_bps / 1e4
         self.max_lev, self.risk_pct, self.kf, self.mpct = max_lev, risk_pct, kelly_frac, max_margin_pct
@@ -403,7 +404,11 @@ class Sim:
         f = {"flow30": P["f3"][j], "flow10": P["f1"][j], "mom": mom,
              "rsi": (P["rsi5"][i5] - 50) / 50 if i5 >= 0 else 0.0,
              "macd": _clamp(P["macd5"][i5] / s5 / 2, -1, 1) if i5 >= 0 and s5 else 0.0}
-        f["score"] = _clamp(w["flow30"] * f["flow30"] + w["flow10"] * f["flow10"] + w["mom"] * _clamp(mom / 2, -1, 1), -1, 1)
+        e50 = P["ema"][50][i5] if i5 >= 0 else 0.0  # trend: afstand tot EMA 50 (5m) in σ van 4 uur
+        f["trend"] = _clamp((C[j] / e50 - 1) / math.sqrt(var1 * 14400) / 2, -1, 1) if e50 and var1 else 0.0
+        f["score"] = _clamp(w.get("flow30", 0) * f["flow30"] + w.get("flow10", 0) * f["flow10"]
+                            + w.get("mom", 0) * _clamp(mom / 2, -1, 1) + w.get("rsi", 0) * f["rsi"]
+                            + w.get("macd", 0) * f["macd"] + w.get("trend", 0) * f["trend"], -1, 1)
         return f
 
     @staticmethod
@@ -661,7 +666,34 @@ class Sim:
 
 # ---------- beoordelen: statistiek, walk-forward en voorstel per munt ----------
 def config_key(c: dict) -> str:
-    return f"{c['window']}m·{c['min_edge']:+g}¢·{c['model']}·{'trail' if c['trail'] else 'vast-SL'}"
+    k = f"{c['window']}m·{c['min_edge']:+g}¢·{c['model']}·{'trail' if c['trail'] else 'vast-SL'}"
+    return k + f"·{c['wname']}" if c.get("wname") else k
+
+
+# Gewichten van de score om te doorzoeken. Het teken hoeft niet: Prior leert β per munt, ook negatief
+# (tegendraads). Het orderboek ontbreekt historisch, dus dat zit er niet in.
+WEIGHT_SETS = {
+    "desk": {"flow30": .35, "flow10": .2, "mom": .1},
+    "koopdruk3m": {"flow30": 1.0},
+    "koopdruk1m": {"flow10": 1.0},
+    "koopdruk": {"flow30": .6, "flow10": .4},
+    "momentum": {"mom": 1.0},
+    "rsi": {"rsi": 1.0},
+    "macd": {"macd": 1.0},
+    "trend": {"trend": 1.0},
+    "mom+trend": {"mom": .5, "trend": .5},
+    "rsi+macd": {"rsi": .5, "macd": .5},
+    "flow+mom": {"flow30": .5, "mom": .5},
+    "flow−rsi": {"flow30": .5, "rsi": -.5},  # koopdruk mee, overkocht tegen
+    "trend−rsi": {"trend": .5, "rsi": -.5},  # trend volgen, maar instappen op een terugval
+    "alles": {"flow30": .2, "flow10": .1, "mom": .2, "rsi": .15, "macd": .15, "trend": .2},
+}
+
+
+def weight_grid() -> list[dict]:
+    """Elke gewichtenset op 60m en 240m (15m verliest op kosten), drempel +2¢, vast model, vaste SL."""
+    return [{"window": w, "min_edge": 2.0, "model": "vast", "trail": False, "wname": n, "weights": WEIGHT_SETS[n]}
+            for w in (60, 240) for n in WEIGHT_SETS]
 
 
 def grid() -> list[dict]:
@@ -672,7 +704,7 @@ def stats(trades: list[dict], t_from: int = 0, t_to: int = 1 << 62) -> dict:
     tr = [x for x in trades if t_from <= x["t"] < t_to]
     n = len(tr)
     if not n:
-        return {"n": 0, "ret": 0.0, "win": None, "bp": None, "pf": None, "dd": 0.0, "fees": 0.0, "funding": 0.0, "gross": 0.0}
+        return {"n": 0, "t": None, "ret": 0.0, "win": None, "bp": None, "pf": None, "dd": 0.0, "fees": 0.0, "funding": 0.0, "gross": 0.0}
     eq, peak, dd = 1.0, 1.0, 0.0
     for x in tr:
         eq *= 1 + x["ret"]
@@ -681,7 +713,10 @@ def stats(trades: list[dict], t_from: int = 0, t_to: int = 1 << 62) -> dict:
     gw = sum(x["pnl"] for x in tr if x["pnl"] > 0)
     gl = -sum(x["pnl"] for x in tr if x["pnl"] < 0)
     usd = sum(x["usd"] for x in tr)
-    return {"n": n, "ret": round((eq - 1) * 100, 3), "win": round(sum(1 for x in tr if x["pnl"] > 0) / n * 100, 1),
+    bps = [x["bp"] for x in tr]
+    mean = sum(bps) / n
+    sdv = math.sqrt(sum((b - mean) ** 2 for b in bps) / (n - 1)) if n > 1 else 0.0
+    return {"n": n, "t": round(mean / (sdv / math.sqrt(n)), 2) if sdv else None, "ret": round((eq - 1) * 100, 3), "win": round(sum(1 for x in tr if x["pnl"] > 0) / n * 100, 1),
             "bp": round(sum(x["pnl"] for x in tr) / usd * 1e4, 2) if usd else None,
             "gross_bp": round(sum(x["gross"] for x in tr) / usd * 1e4, 2) if usd else None,
             "pf": round(gw / gl, 2) if gl else None, "dd": round(dd * 100, 2),
@@ -744,13 +779,21 @@ def evaluate(coin: str, runs: dict[str, list[dict]], cfgs: dict[str, dict], t_st
         k, _ = pick(sub, oos_from)
         per_window[str(w)] = {"pick": k, "oos": stats(sub[k], oos_from, t_end) if k else stats([]),
                          "base_like": stats(runs.get(config_key({**BASELINE, "window": w}), []), oos_from, t_end)}
-    propose = bool(final_k) and wf["n"] >= MIN_TRADES and wf["ret"] > 0 and wf["ret"] > base["ret"]
+    # streng: veel instellingen proberen geeft altijd wel een geluksvogel. Daarom ook statistisch bewijs:
+    # t ≥ 2 op de bp per trade van de walk-forward-keten (≈ 95% zeker dat het gemiddelde boven 0 ligt)
+    propose = (bool(final_k) and wf["n"] >= MIN_TRADES and wf["ret"] > 0 and wf["ret"] > base["ret"]
+               and (wf.get("t") or 0) >= 2)
     if propose:
         c = cfgs[final_k]
         advice = (f"Voorstel: venster {c['window']}m, drempel {c['min_edge']:+g}¢, model {c['model']}, "
+                  + (f"gewichten '{c['wname']}' {WEIGHT_SETS.get(c['wname'])}, " if c.get("wname") else "") +
                   f"{'trailing stop aan' if c['trail'] else 'trailing stop uit'}. Walk-forward {wf['ret']:+.2f}% "
                   f"tegen {base['ret']:+.2f}% voor de desk zoals nu, op dezelfde out-of-sample-periode.")
         verdict = "voorstel"
+    elif wf["ret"] > max(0, base["ret"]) and wf["n"] >= MIN_TRADES:
+        advice = (f"Twijfel: walk-forward {wf['ret']:+.2f}% op {wf['n']} trades is beter dan de desk zoals nu "
+                  f"({base['ret']:+.2f}%), maar niet overtuigend (t = {wf.get('t')}, nodig ≥ 2). Kan geluk zijn: op papier volgen.")
+        verdict = "twijfel"
     elif base["ret"] < 0 and wf["ret"] <= 0:
         advice = (f"Uitzetten: de desk zoals nu verloor {base['ret']:+.2f}% out-of-sample en geen instelling die vooraf "
                   f"gekozen kon worden deed het beter ({wf['ret']:+.2f}%).")
@@ -780,7 +823,7 @@ def evaluate(coin: str, runs: dict[str, list[dict]], cfgs: dict[str, dict], t_st
 
 
 # ---------- draaien: per munt downloaden, voorbereiden, alle instellingen simuleren ----------
-def run_coin(coin: str, months: int = 24, cfgs: list[dict] | None = None) -> dict:
+def run_coin(coin: str, months: int = 24, cfgs: list[dict] | None = None, kind: str = "basis") -> dict:
     t = time.time()
     a = load_klines(coin, months)
     if len(a) < 60 * 24 * 30:
@@ -792,10 +835,10 @@ def run_coin(coin: str, months: int = 24, cfgs: list[dict] | None = None) -> dic
     P = prepare(a, fund)
     t_start, t_end = P["t0"], P["t0"] + P["n"] * 60_000
     runs, keys, extra = {}, {}, {}
-    for c in cfgs or grid():
+    for c in cfgs or (weight_grid() if kind == "gewichten" else grid()):
         k = config_key(c)
         r = Sim(P, **c).run()
-        runs[k], keys[k] = r["trades"], c
+        runs[k], keys[k] = r["trades"], {x: v for x, v in c.items() if x != "weights"}
         extra[k] = {"hit": r["hit"], "beta": r["beta"], "learned": r["learned"], "windows": r["n_windows"]}
     if config_key(BASELINE) not in runs:
         r = Sim(P, **BASELINE).run()
@@ -807,10 +850,11 @@ def run_coin(coin: str, months: int = 24, cfgs: list[dict] | None = None) -> dic
               seconds=round(time.time() - t, 1), symbol=bn_symbol(coin))
     # trades van de desk zoals nu en van het voorstel apart bewaren (voor wie wil narekenen)
     keep = {k: runs[k] for k in {ev["baseline"], ev["final"]} if k}
-    (CACHE / f"trades-{coin}.json").write_text(json.dumps(keep))
+    (CACHE / f"trades-{coin}{'' if kind == 'basis' else '-' + kind}.json").write_text(json.dumps(keep))
     return ev
 
 
+_EMPTY = {"base_like": {"ret": 0.0}}
 STATUS: dict = {"running": False, "done": 0, "total": 0, "coin": None, "started": None, "error": None, "log": []}
 
 
@@ -819,29 +863,37 @@ def _summary(coins: dict) -> dict:
     return {"coins": len(ok), "propose": [c["coin"] for c in ok if c["verdict"] == "voorstel"],
             "off": [c["coin"] for c in ok if c["verdict"] == "uit"],
             "keep": [c["coin"] for c in ok if c["verdict"] == "zo laten"],
+            "doubt": [c["coin"] for c in ok if c["verdict"] == "twijfel"],
             "wf_avg": round(sum(c["wf"]["ret"] for c in ok) / len(ok), 2) if ok else None,
             "base_avg": round(sum(c["base"]["ret"] for c in ok) / len(ok), 2) if ok else None,
-            "per_window": {w: {"avg": round(sum(c["per_window"][str(w)]["base_like"]["ret"] for c in ok) / len(ok), 2) if ok else None,
-                               "pos": sum(1 for c in ok if c["per_window"][str(w)]["base_like"]["ret"] > 0)} for w in WINDOWS}}
+            "per_window": {w: {"avg": round(sum(c["per_window"].get(str(w), _EMPTY)["base_like"]["ret"] for c in ok) / len(ok), 2) if ok else None,
+                               "pos": sum(1 for c in ok if c["per_window"].get(str(w), _EMPTY)["base_like"]["ret"] > 0)} for w in WINDOWS}}
 
 
-def load_results() -> dict:
-    return json.loads(RESULTS.read_text()) if RESULTS.exists() else {}
+def results_file(kind: str = "basis"):
+    return RESULTS if kind == "basis" else CACHE / f"results-{kind}.json"
 
 
-def run_all(coins: list[str] | None = None, months: int = 24, workers: int = 2) -> dict:
+def load_results(kind: str = "basis") -> dict:
+    f = results_file(kind)
+    return json.loads(f.read_text()) if f.exists() else {}
+
+
+def run_all(coins: list[str] | None = None, months: int = 24, workers: int = 2, kind: str = "basis") -> dict:
     """Alle munten, `workers` tegelijk (elk in een eigen proces). Tussenresultaten worden meteen bewaard."""
     from concurrent.futures import ProcessPoolExecutor, as_completed
     coins = coins or DEFAULT_COINS
     CACHE.mkdir(parents=True, exist_ok=True)
-    res = load_results()
+    res = load_results(kind)
     res.setdefault("coins", {})
-    res.update(started=int(time.time() * 1000), months=months, grid=[config_key(c) for c in grid()],
+    res.update(started=int(time.time() * 1000), months=months, kind=kind,
+               grid=[config_key(c) for c in (weight_grid() if kind == "gewichten" else grid())],
+               weight_sets=WEIGHT_SETS if kind == "gewichten" else None,
                baseline=config_key(BASELINE), notes=NOTES)
     STATUS.update(running=True, done=0, total=len(coins), started=time.time(), error=None, log=[])
     try:
         with ProcessPoolExecutor(max_workers=max(1, workers)) as ex:
-            futs = {ex.submit(run_coin, c, months): c for c in coins}
+            futs = {ex.submit(run_coin, c, months, None, kind): c for c in coins}
             for f in as_completed(futs):
                 c = futs[f]
                 try:
@@ -851,7 +903,7 @@ def run_all(coins: list[str] | None = None, months: int = 24, workers: int = 2) 
                 STATUS["done"] += 1
                 STATUS["log"].append(f"{c}: " + (res["coins"][c].get("error") or res["coins"][c]["advice"]))
                 res["summary"], res["finished"] = _summary(res["coins"]), int(time.time() * 1000)
-                RESULTS.write_text(json.dumps(res))
+                results_file(kind).write_text(json.dumps(res))
     except Exception as e:
         STATUS["error"] = str(e)
     finally:
@@ -859,10 +911,10 @@ def run_all(coins: list[str] | None = None, months: int = 24, workers: int = 2) 
     return res
 
 
-def start(coins: list[str] | None = None, months: int = 24, workers: int = 2) -> dict:
+def start(coins: list[str] | None = None, months: int = 24, workers: int = 2, kind: str = "basis") -> dict:
     if STATUS["running"]:
         return {"ok": False, "error": "er loopt al een backtest"}
-    threading.Thread(target=run_all, args=(coins, months, workers), daemon=True).start()
+    threading.Thread(target=run_all, args=(coins, months, workers, kind), daemon=True).start()
     return {"ok": True}
 
 
@@ -874,10 +926,13 @@ NOTES = [
     "Maker-instap alleen gevuld als de koers door de limiet handelt; stop-loss als marktorder met halve spread (1 bp).",
     "SL en TP in dezelfde minuut: SL eerst. Elke munt een eigen papierportefeuille van $1000, één positie tegelijk.",
     "Walk-forward: elk kwartaal de instelling kiezen op alles daarvoor (min. 6 maanden, min. 20 trades), meten op dat kwartaal.",
+    "Voorstel pas als de walk-forward ook statistisch overtuigt (t ≥ 2 op de winst per trade); beter maar niet overtuigend = 'twijfel'.",
 ]
 
 
-if __name__ == "__main__":  # python -m app.desk_backtest BTC ETH
+if __name__ == "__main__":  # python -m app.desk_backtest [--gewichten] BTC ETH
     import sys
-    out = run_all(sys.argv[1:] or None)
+    args = sys.argv[1:]
+    kind = "gewichten" if "--gewichten" in args else "basis"
+    out = run_all([a for a in args if not a.startswith("--")] or None, kind=kind)
     print(json.dumps(out.get("summary"), indent=1))
