@@ -175,6 +175,26 @@ zwerm los van jezelf: gebruik een nieuwe wallet die je nergens anders voor gebru
 Wie stort vanaf een exchange met KYC is via die storting te herleiden. Winst blijft gewoon aangifteplichtig.
 Alle live orders komen in `data/desk-orders.jsonl`.
 
+## Swing Desk (`/swing`)
+
+Swing trades van dagen tot weken op de tokenized aandelen van Hyperliquid (HIP-3, bv. `xyz:NVDA`), gekozen uit de
+strategieën van de backtestserver. Alleen papier: deze module plaatst geen echte orders.
+
+* **Koppeling.** Elke HIP-3-markt wordt gekoppeld aan het onderliggende aandeel op Yahoo (`app/swing_desk.py`,
+  `OVERRIDES` voor indexen en grondstoffen). Ligt de prijs op Hyperliquid meer dan 20% naast de slotkoers, dan telt de
+  koppeling niet. Staat een aandeel op meerdere HIP-3-beurzen, dan handelen we op de markt met het meeste volume.
+* **Keuze** (`app/swing.py`). Alle strategieën op 5 jaar dagkoersen, met kosten; alleen swingstrategieën (gemiddeld 2 tot
+  30 handelsdagen per trade). Elke trade krijgt dezelfde stop (2 × ATR) en take-profit als op de desk. Score = t-waarde
+  van de trades × regelmaat over de jaren, en een strategie moet beter doen dan vasthouden over dezelfde dagen.
+  **Walk-forward**: voor elk van de laatste 3 jaar wordt gekozen met alleen de jaren ervoor; die trades zijn het bewijs.
+* **Voorstel** als een topstrategie een signaal heeft van hooguit 5 handelsdagen, de koers niet meer dan 1 ATR
+  weggelopen is, en de walk-forward minstens 10 trades, winstfactor ≥ 1,3 en 2 van de 3 jaren winst haalde.
+* **Grootte**: kwart-Kelly op de walk-forward trades na funding, begrensd door risico per trade (2%), marge per positie
+  (10%) en hefboom (3×); liquidatie altijd minstens 1,5 × verder dan de stop.
+* **Papier**: eigen portefeuille (`data/swing-state.json`, trades in `data/swing-trades.jsonl`), los van de scalping.
+  Elke minuut SL/TP/maximale duur, funding elk uur met de echte rate. Elke handelsdag om 22.40 nieuwe analyse; een
+  positie sluit als het signaal van haar strategie wegvalt. Bovenaan staat swing naast scalping.
+
 ## Tests
 
 ```bash

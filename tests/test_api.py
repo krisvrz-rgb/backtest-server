@@ -418,3 +418,16 @@ def test_desk_page_and_status_paper_by_default():
     assert st["live"] is False and st["reasons"]
     r = client.post("/api/desk/open", json={"coin": "BTC", "side": "long", "usd": 10, "token": "x"})
     assert r.status_code == 403
+
+
+def test_swing_page_and_api(monkeypatch, tmp_path):
+    from app import desk, swing_desk
+    monkeypatch.setattr(desk, "universe", lambda max_age=600: {})
+    monkeypatch.setattr(swing_desk, "STATE_FILE", tmp_path / "s.json")
+    assert client.get("/swing").status_code == 200
+    v = client.get("/api/swing").json()
+    assert v["paper"] is True and "proposals" in v and v["cfg"]["max_open"] >= 1
+    assert client.post("/api/swing/config", json={"max_lev": 2}).json()["max_lev"] == 2
+    assert client.post("/api/swing/open", json={"coin": "xyz:NOPE"}).status_code == 400
+    c = client.get("/api/swing/compare").json()
+    assert set(c) == {"swing", "scalp"}

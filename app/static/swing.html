@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swing Desk · Backtest Server</title>
+<script src="/static/lightweight-charts.js"></script>
+<style>
+  :root { --bg: #04050b; --panel: #0a0d19; --panel-2: #111528; --text: #e6ebf8; --muted: #7581a3; --border: #1b2140;
+    --accent: #5b8cff; --up: #16b364; --down: #ef3a5d; --warn: #f08c00; --mono: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--muted); }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); } .warn { color: var(--warn); }
+  .cap { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .top { display: flex; align-items: center; gap: 22px; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .brand b { font-size: 20px; letter-spacing: .02em; } .brand small { display: block; font-size: 9px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; }
+  .nav { display: flex; gap: 14px; font-size: 12px; } .nav a.on { color: var(--text); }
+  .stat { display: grid; line-height: 1.1; } .stat b { font: 600 17px var(--mono); } .stat span { font-size: 9px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+  .grow { flex: 1; }
+  .badge { font: 700 11px var(--mono); padding: 4px 9px; border-radius: 6px; border: 1.5px solid var(--accent); color: var(--accent); letter-spacing: .06em; }
+  button.btn { font: 600 12px inherit; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  button.btn.go { background: var(--up); border-color: var(--up); color: #fff; } button.btn.danger { color: var(--down); border-color: var(--down); background: transparent; }
+  button.btn:disabled { opacity: .5; cursor: default; }
+  main { padding: 14px 18px; display: grid; gap: 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 0;
+    box-shadow: 0 0 0 1px rgba(91,140,255,.06), 0 10px 40px -20px rgba(91,140,255,.35); }
+  .ph { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; flex-wrap: wrap; }
+  .ph h2 { margin: 0; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #fff; text-shadow: 0 0 10px rgba(91,140,255,.6); }
+  .ph h2::before { content: "◆ "; color: var(--accent); }
+  .ph .sub { font-size: 10px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; } .ph .right { margin-left: auto; }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 12px; align-items: start; }
+  @media (max-width: 1150px) { .row { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; font: 600 10px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 5px 8px; border-bottom: 1px dashed var(--border); white-space: nowrap; vertical-align: top; }
+  td.wrap { white-space: normal; min-width: 260px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
+  .card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--panel-2); }
+  .card h3 { margin: 0 0 2px; font: 700 15px var(--mono); display: flex; gap: 8px; align-items: baseline; }
+  .card h3 small { font: 500 11px var(--mono); color: var(--muted); }
+  .card .lv { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
+  .card .lv div { background: var(--panel); border-radius: 6px; padding: 5px 7px; } .card .lv b { display: block; font: 600 13px var(--mono); }
+  .card ul { margin: 6px 0; padding-left: 16px; color: #c5cde3; } .card li { margin: 2px 0; }
+  .pill { font: 700 10px var(--mono); padding: 2px 7px; border-radius: 10px; border: 1px solid; text-transform: uppercase; letter-spacing: .05em; }
+  .pill.voorstel { color: var(--up); border-color: var(--up); } .pill.held { color: var(--accent); border-color: var(--accent); }
+  .pill.other { color: var(--muted); border-color: var(--border); } .pill.late { color: var(--warn); border-color: var(--warn); }
+  .cfg { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .cfg label { display: flex; gap: 5px; align-items: center; font: 600 12px var(--mono); }
+  .cfg input[type=number], .cfg input[type=text] { width: 64px; font: 600 12px var(--mono); padding: 4px 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+  .cmp td:first-child { color: var(--muted); } .cmp td { font-family: var(--mono); }
+  #curve { height: 180px; }
+  .note { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .bar { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; margin-top: 6px; } .bar i { display: block; height: 100%; background: var(--accent); }
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="brand"><b>SWING DESK</b><small>backteststrategieën · hyperliquid aandelen (HIP-3) · dagen tot weken</small></div>
+  <div class="nav"><a href="/">Overzicht</a><a href="/tool">Backtest</a><a href="/watchlist">Watchlist</a><a href="/aanraders">Aanraders</a><a href="/desk">Swarm Desk</a><a href="/swing" class="on">Swing</a></div>
+  <div class="stat"><b class="num" id="hdEq">–</b><span>swing portefeuille</span></div>
+  <div class="stat"><b class="num" id="hdPnl">–</b><span>pnl</span></div>
+  <div class="stat"><b class="num" id="hdOpen">0</b><span>open posities</span></div>
+  <div class="stat"><b class="num" id="hdAt">–</b><span>laatste analyse</span></div>
+  <div class="grow"></div>
+  <span class="badge">PAPER</span>
+  <button class="btn" id="refreshBtn" title="Alle HIP-3-aandelen opnieuw analyseren (een paar minuten)">Analyse vernieuwen</button>
+</div>
+<main>
+  <div class="panel" id="progress" style="display:none"></div>
+
+  <div class="row">
+    <div class="panel">
+      <div class="ph"><h2>Portefeuille</h2><span class="sub">papier · los van de scalping</span>
+        <span class="right num muted" id="pfLine"></span></div>
+      <div id="curve"></div>
+    </div>
+    <div class="panel">
+      <div class="ph"><h2>Swing vs scalping</h2><span class="sub">allebei papier</span></div>
+      <table class="cmp" id="cmp"></table>
+      <div class="note" style="margin-top:6px">Elk zijn eigen startkapitaal. Scalping = de Swarm Desk (vensters van 15 min tot 4 u), swing = deze pagina (dagen tot weken).</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><h2>Instellingen</h2><span class="sub">gelden voor nieuwe posities</span></div>
+    <div class="cfg">
+      <label><input type="checkbox" id="cAuto"> voorstellen automatisch op papier openen</label>
+      <label title="Hoogste hefboom">max hefboom <input type="number" id="cLev" min="1" max="10" step="1">×</label>
+      <label title="Marge per positie in % van de portefeuille">marge/positie <input type="number" id="cMargin" min="1" max="50" step="1">%</label>
+      <label title="Verlies als de stop geraakt wordt, in % van de portefeuille">risico/trade <input type="number" id="cRisk" min="0.25" max="10" step="0.25">%</label>
+      <label title="Fractie van Kelly">Kelly <input type="number" id="cKelly" min="0.05" max="1" step="0.05"></label>
+      <label>max posities <input type="number" id="cOpen" min="1" max="20" step="1"></label>
+      <label title="Kosten per kant in basispunten">kosten/kant <input type="number" id="cFee" min="0" max="50" step="0.5">bp</label>
+      <label title="Lokale tijd, maandag tot vrijdag">analyse om <input type="text" id="cAt" maxlength="5"></label>
+      <button class="btn" id="saveCfg">Opslaan</button>
+      <button class="btn danger" id="resetBtn" title="Papierportefeuille terug naar het startkapitaal">Papier resetten</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><h2>Voorstellen</h2><span class="sub">vers koopsignaal van een strategie die buiten de keuzeperiode bleef werken</span>
+      <span class="right num muted" id="propLine"></span></div>
+    <div class="cards" id="cards"></div>
+    <div class="note" id="noProps" style="display:none">Vandaag geen voorstellen die door alle poorten komen. Dat is ook een uitkomst: liever geen trade dan een zwakke.</div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><h2>Open posities</h2></div>
+    <table id="posT"></table>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><h2>Afgesloten trades</h2></div>
+    <table id="histT"></table>
+  </div>
+
+  <div class="panel">
+    <details><summary>Alle aandelen op Hyperliquid (<span id="allN">0</span>) en waarom ze geen voorstel zijn</summary>
+      <table id="allT" style="margin-top:8px"></table></details>
+  </div>
+
+  <div class="panel note">
+    <b>Hoe een voorstel tot stand komt.</b> Per aandeel draaien alle strategieën van de backtestserver op 5 jaar dagkoersen van het
+    onderliggende aandeel, met kosten. Alleen swingstrategieën tellen (gemiddeld 2 tot 30 handelsdagen per trade). Elke trade
+    krijgt dezelfde stop (2 × ATR) en take-profit als hier. De score is de t-waarde van de trades × hoe regelmatig de jaren winst
+    gaven, dus niet de hoogste winst: weinig trades of grillige resultaten scoren vanzelf laag, en een strategie moet ook beter doen
+    dan het aandeel gewoon vasthouden over dezelfde dagen. <b>Walk-forward</b>: voor elk van de laatste 3 jaar is de beste strategie
+    gekozen met alleen de jaren ervoor, en die trades tellen als bewijs. Een voorstel vraagt minstens 8 zulke trades met winstfactor ≥ 1,2,
+    een signaal van hooguit 5 handelsdagen oud en een koers die nog niet meer dan 1 ATR weggelopen is.
+    <b>Grootte</b>: kwart-Kelly op de walk-forward trades na funding, begrensd door het risico per trade, de marge per positie
+    en de hefboom; de liquidatieprijs ligt altijd minstens 1,5 × verder dan de stop. <b>Funding</b> wordt elk uur aangerekend met de
+    echte rate van de markt. Alleen long: de strategieën kopen of staan cash. Er gaan geen echte orders uit deze pagina.
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const pct = (v, d = 1) => v == null ? "–" : (v * 100).toFixed(d) + "%";
+const usd = (v, d = 2) => v == null ? "–" : (v < 0 ? "-$" : "$") + Math.abs(v).toFixed(d);
+const sgn = v => v == null ? "" : v >= 0 ? "up" : "down";
+const px = v => v == null ? "–" : v >= 1000 ? v.toFixed(1) : v >= 10 ? v.toFixed(2) : v.toPrecision(4);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const ago = ms => { if (!ms) return "nooit"; const h = (Date.now() - ms) / 3.6e6; return h < 1 ? Math.round(h * 60) + " min" : h < 48 ? h.toFixed(1) + " u" : (h / 24).toFixed(1) + " d"; };
+let V = null, chart, series;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+}
+
+function drawCurve(c) {
+  if (!chart) {
+    chart = LightweightCharts.createChart($("curve"), {height: 180, layout: {background: {color: "transparent"}, textColor: "#7581a3"},
+      grid: {vertLines: {color: "#111528"}, horzLines: {color: "#111528"}}, timeScale: {timeVisible: true}, rightPriceScale: {borderColor: "#1b2140"}});
+    series = chart.addAreaSeries ? chart.addAreaSeries({lineColor: "#5b8cff", topColor: "rgba(91,140,255,.35)", bottomColor: "rgba(91,140,255,0)", lineWidth: 2})
+      : chart.addSeries(LightweightCharts.AreaSeries, {lineColor: "#5b8cff", topColor: "rgba(91,140,255,.35)", bottomColor: "rgba(91,140,255,0)", lineWidth: 2});
+  }
+  const seen = new Set(), data = [];
+  for (const [t, v] of c) { const s = Math.floor(t / 1000); if (!seen.has(s)) { seen.add(s); data.push({time: s, value: v}); } }
+  series.setData(data);
+}
+
+function card(p) {
+  const s = p.size || {}, pk = p.pick || {}, wf = p.wf || {};
+  const cls = p.held ? "held" : p.status === "voorstel" ? "voorstel" : p.status === "loopt al" ? "late" : "other";
+  const btn = p.held ? `<span class="pill held">loopt</span>`
+    : `<button class="btn ${p.status === "voorstel" ? "go" : ""}" data-open="${esc(p.coin)}" ${s.ok ? "" : "disabled"}>Open op papier</button>`;
+  const wfYears = (wf.years || []).map(y => `${y.year_start.slice(0, 4)}: ${y.strategy ? esc(y.strategy) + " " + pct(y.sum) + " (" + y.n + ")" : "niets gekozen"}`).join(" · ");
+  return `<div class="card">
+    <h3>${esc(p.coin)} <small>${esc(p.yahoo)} · ${px(p.px)}</small><span class="grow"></span><span class="pill ${cls}">${p.held ? "open" : esc(p.status)}</span></h3>
+    <div class="muted" style="font-size:12px">${esc(pk.strategy)} · ${esc(pk.category)} · signaal ${pk.bars_since_buy} d oud (${esc(pk.last_buy)})</div>
+    <div class="lv">
+      <div><span class="cap">instap</span><b>${px(p.px)}</b></div>
+      <div><span class="cap">stop</span><b class="down">${px(p.sl)}</b><span class="muted num">-${pct(p.sl_dist)}</span></div>
+      <div><span class="cap">doel</span><b class="up">${px(p.tp)}</b><span class="muted num">+${pct(p.tp_dist)}</span></div>
+      <div><span class="cap">hefboom</span><b>${s.ok ? s.lev + "×" : "–"}</b><span class="muted num">${s.ok ? "liq " + px(p.liq) : ""}</span></div>
+      <div><span class="cap">positie</span><b>${s.ok ? usd(s.notional, 0) : "–"}</b></div>
+      <div><span class="cap">marge</span><b>${s.ok ? usd(s.margin, 0) : "–"}</b></div>
+      <div><span class="cap">risico</span><b>${s.ok ? usd(s.risk_usd) : "–"}</b><span class="muted num">bij stop</span></div>
+      <div><span class="cap">funding</span><b class="${p.funding_frac > 0 ? "down" : "up"}">${pct(p.funding_frac, 2)}</b><span class="muted num">${p.hold_days ? p.hold_days.toFixed(0) + " d" : ""}</span></div>
+    </div>
+    <ul>${(p.why || []).map(w => `<li>${esc(w)}</li>`).join("")}</ul>
+    <div class="muted" style="font-size:11px">5 jaar: ${pk.n} trades, ${pct(pk.win, 0)} winst, gem. ${pct(pk.mean, 2)}/trade, PF ${pk.pf ? pk.pf.toFixed(2) : "–"},
+      laatste 12 m: ${pk.last12 ? pk.last12.n + " trades " + pct(pk.last12.sum) : "–"} · uitstap: ${pk.exits ? `${pk.exits.tp} TP / ${pk.exits.sl} SL / ${pk.exits.signaal} signaal` : ""}<br>
+      walk-forward: ${wfYears || "–"}${s.ok ? `<br>grootte begrensd door ${esc(s.limited_by)} (Kelly op ${esc(s.src)})` : ""}</div>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center">${btn}<span class="muted" style="font-size:11px">max ${p.max_days || "–"} dagen</span></div>
+  </div>`;
+}
+
+function render(v) {
+  V = v;
+  $("hdEq").textContent = usd(v.equity);
+  $("hdPnl").textContent = usd(v.equity - v.start); $("hdPnl").className = "num " + sgn(v.equity - v.start);
+  $("hdOpen").textContent = v.positions.length;
+  $("hdAt").textContent = ago(v.analysis_at);
+  $("pfLine").innerHTML = `start ${usd(v.start, 0)} · cash ${usd(v.cash)} · in marge ${usd(v.used)} · vrij ${usd(v.free)}`;
+  drawCurve(v.curve.concat([[Date.now(), v.equity]]));
+  const pr = v.progress || {};
+  $("progress").style.display = pr.running || pr.error ? "" : "none";
+  $("progress").innerHTML = pr.running ? `Analyse loopt: ${pr.done}/${pr.total} aandelen · nu ${esc(pr.current)}<div class="bar"><i style="width:${pr.total ? 100 * pr.done / pr.total : 0}%"></i></div>`
+    : pr.error ? `<span class="down">Analyse mislukt: ${esc(pr.error)}</span>` : "";
+  $("refreshBtn").disabled = !!pr.running;
+
+  const props = v.proposals.filter(p => p.pick && ["voorstel", "loopt al", "te weinig bewijs", "te duur", "te illiquide"].includes(p.status));
+  const good = props.filter(p => p.status === "voorstel");
+  $("propLine").textContent = `${good.length} voorstel(len) · ${props.length - good.length} met signaal maar niet door de poorten`;
+  $("cards").innerHTML = props.map(card).join("");
+  $("noProps").style.display = good.length ? "none" : "";
+
+  $("posT").innerHTML = `<tr><th>markt</th><th>strategie</th><th>instap</th><th>nu</th><th>stop</th><th>doel</th><th>hefboom</th><th>positie</th><th>funding</th><th>pnl</th><th>dagen</th><th></th></tr>` +
+    (v.positions.length ? v.positions.map(p => `<tr><td><b>${esc(p.coin)}</b></td><td>${esc(p.strategy)}</td><td class="num">${px(p.entry)}</td>
+      <td class="num">${px(p.px)}</td><td class="num down">${px(p.sl)}</td><td class="num up">${px(p.tp)}</td><td class="num">${p.lev}×</td>
+      <td class="num">${usd(p.notional, 0)}</td><td class="num">${usd(-p.funding)}</td><td class="num ${sgn(p.upnl)}">${usd(p.upnl)}</td>
+      <td class="num">${p.days.toFixed(1)}</td><td><button class="btn danger" data-close="${p.id}">Sluiten</button></td></tr>`).join("")
+      : `<tr><td colspan="12" class="muted">Geen open posities.</td></tr>`);
+
+  $("histT").innerHTML = `<tr><th>gesloten</th><th>markt</th><th>strategie</th><th>instap → uit</th><th>koers</th><th>hefboom</th><th>funding</th><th>kosten</th><th>pnl</th><th>reden</th></tr>` +
+    (v.history.length ? v.history.map(h => `<tr><td class="num">${new Date(h.t).toLocaleString("nl-BE", {dateStyle: "short", timeStyle: "short"})}</td>
+      <td><b>${esc(h.coin)}</b></td><td>${esc(h.strategy)}</td><td class="num">${px(h.entry)} → ${px(h.exit)}</td><td class="num ${sgn(h.ret)}">${pct(h.ret)}</td>
+      <td class="num">${h.lev}×</td><td class="num">${usd(-h.funding)}</td><td class="num">${usd(-h.fees)}</td><td class="num ${sgn(h.pnl)}">${usd(h.pnl)}</td><td>${esc(h.reason)}</td></tr>`).join("")
+      : `<tr><td colspan="10" class="muted">Nog geen afgesloten swingtrades.</td></tr>`);
+
+  $("allN").textContent = v.proposals.length;
+  $("allT").innerHTML = `<tr><th>markt</th><th>aandeel</th><th>status</th><th>beste strategie (5 j)</th><th>walk-forward</th><th>waarom</th></tr>` +
+    v.proposals.map(p => `<tr><td><b>${esc(p.coin)}</b>${p.alts && p.alts.length ? ` <span class="muted">+${p.alts.length}</span>` : ""}</td><td>${esc(p.yahoo)}</td>
+      <td>${esc(p.status)}</td><td>${p.best ? esc(p.best.strategy) + ` <span class="muted">${p.best.n} tr, PF ${p.best.pf ? p.best.pf.toFixed(2) : "–"}</span>` : "–"}</td>
+      <td class="num">${p.wf && p.wf.n ? `${p.wf.n} tr, PF ${p.wf.pf ? p.wf.pf.toFixed(2) : "–"}, ${pct(p.wf.sum)}` : "–"}</td>
+      <td class="wrap muted">${esc((p.why || []).join(" · "))}</td></tr>`).join("");
+
+  const c = v.cfg;
+  if (!document.activeElement || !document.activeElement.closest(".cfg")) {
+    $("cAuto").checked = c.auto; $("cLev").value = c.max_lev; $("cMargin").value = c.margin_pct; $("cRisk").value = c.risk_pct;
+    $("cKelly").value = c.kelly; $("cOpen").value = c.max_open; $("cFee").value = c.fee_bps; $("cAt").value = c.refresh_at;
+  }
+}
+
+async function loadCompare() {
+  try {
+    const c = await api("/api/swing/compare");
+    const row = (lbl, f) => `<tr><td>${lbl}</td><td>${f(c.swing)}</td><td>${f(c.scalp)}</td></tr>`;
+    $("cmp").innerHTML = `<tr><th></th><th>swing</th><th>scalping</th></tr>` +
+      row("rendement", s => `<span class="${sgn(s.ret)}">${pct(s.ret, 2)}</span>`) + row("pnl", s => usd(s.pnl)) +
+      row("trades", s => s.n) + row("winst %", s => pct(s.win, 0)) + row("winstfactor", s => s.pf ? s.pf.toFixed(2) : "–") +
+      row("max daling", s => pct(s.max_dd)) + row("kosten", s => s.fees == null ? "–" : usd(-s.fees)) +
+      row("funding", s => s.funding == null ? "–" : usd(-s.funding)) +
+      row("gem. duur", s => s.avg_hours == null ? "–" : s.avg_hours >= 48 ? (s.avg_hours / 24).toFixed(1) + " d" : s.avg_hours.toFixed(1) + " u");
+  } catch (e) { $("cmp").innerHTML = `<tr><td class="muted">${esc(e.message)}</td></tr>`; }
+}
+
+async function load() {
+  try { render(await api("/api/swing")); } catch (e) { $("progress").style.display = ""; $("progress").innerHTML = `<span class="down">${esc(e.message)}</span>`; }
+}
+
+document.addEventListener("click", async e => {
+  const o = e.target.closest("[data-open]"), c = e.target.closest("[data-close]");
+  try {
+    if (o) { o.disabled = true; await api("/api/swing/open", {coin: o.dataset.open}); await load(); }
+    if (c && confirm("Deze papierpositie sluiten tegen de huidige koers?")) { await api("/api/swing/close", {id: c.dataset.close}); await load(); }
+  } catch (err) { alert(err.message); if (o) o.disabled = false; }
+});
+$("refreshBtn").onclick = async () => { try { await api("/api/swing/refresh", null); } catch (e) { alert(e.message); } setTimeout(load, 800); };
+$("saveCfg").onclick = async () => {
+  try {
+    await api("/api/swing/config", {auto: $("cAuto").checked, max_lev: +$("cLev").value, margin_pct: +$("cMargin").value, risk_pct: +$("cRisk").value,
+      kelly: +$("cKelly").value, max_open: +$("cOpen").value, fee_bps: +$("cFee").value, refresh_at: $("cAt").value});
+    document.activeElement.blur(); await load();
+  } catch (e) { alert(e.message); }
+};
+$("resetBtn").onclick = async () => { if (confirm("Swing-papierportefeuille resetten? Alle swing-papiertrades worden gewist.")) { await api("/api/swing/reset", {}); await load(); } };
+
+load(); loadCompare();
+setInterval(() => { load(); }, 30000);
+setInterval(loadCompare, 120000);
+setInterval(() => { if (V && V.progress && V.progress.running) load(); }, 4000);
+</script>
+</body>
+</html>
