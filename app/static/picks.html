@@ -154,7 +154,7 @@ function render() {
     const b = r.best, s = b.signal, p2 = b.periods['2j'] || {};
     const short = r.tv.includes(':') ? r.tv.split(':')[1] : r.tv;
     const row = `<tr class="row${open === r.yahoo ? ' opened' : ''}" data-sym="${esc(r.yahoo)}"><td>${i + 1}</td>` +
-      `<td class="left"><span class="sym">${esc(short)}</span><small>${esc(r.group)}${r.last_close != null ? ' · ' + nl(r.last_close) : ''}</small></td>` +
+      `<td class="left"><span data-gsym="${esc(r.yahoo)}"></span><span class="sym">${esc(short)}</span><small>${esc(r.group)}${r.last_close != null ? ' · ' + nl(r.last_close) : ''}</small></td>` +
       `<td><span class="score ${scoreCls(r.score)}">${nl(r.score, 1)}</span></td>` +
       `<td class="left">${esc(b.strategy)}<small>${esc(b.category_label)} · ${s.trades ?? '?'} trades · ${pct(s.win_rate)} rendabel</small></td>` +
       `<td>${esc(s.date)}<small>${s.bars} handelsdagen geleden</small></td>` +
@@ -204,5 +204,6 @@ $('group').addEventListener('change', load);
 $('reload').addEventListener('click', load);
 loadLists().then(load).catch(e => $('status').textContent = 'Kon niet laden: ' + e.message);
 </script>
+<script src="/static/grade.js"></script>
 </body>
 </html>

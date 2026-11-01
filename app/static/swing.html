@@ -237,7 +237,7 @@ function card(p) {
     : `<button class="btn ${p.status === "voorstel" ? "go" : ""}" data-open="${esc(p.coin)}" ${s.ok ? "" : "disabled"}>Open op papier</button>`;
   const wfYears = (wf.years || []).map(y => `${y.year_start.slice(0, 4)}: ${y.strategy ? esc(y.strategy) + " " + pct(y.sum) + " (" + y.n + ")" : "niets gekozen"}`).join(" · ");
   return `<div class="card">
-    <h3>${esc(p.coin)} <small>${esc(p.yahoo)} · ${px(p.px)}</small><span class="grow"></span><span class="pill ${cls}">${p.held ? "open" : esc(p.status)}</span></h3>
+    <h3><span data-gsym="${esc(p.yahoo)}"></span>${esc(p.coin)} <small>${esc(p.yahoo)} · ${px(p.px)}</small><span class="grow"></span><span class="pill ${cls}">${p.held ? "open" : esc(p.status)}</span></h3>
     <div class="muted" style="font-size:12px">${esc(pk.strategy)} · ${esc(pk.category)} · signaal ${pk.bars_since_buy} d oud (${esc(pk.last_buy)})</div>
     <div class="lv">
       <div><span class="cap">instap</span><b>${px(p.px)}</b></div>
@@ -277,7 +277,7 @@ function render(v) {
   $("noProps").style.display = good.length ? "none" : "";
 
   $("posT").innerHTML = `<tr><th>markt</th><th>strategie</th><th>instap</th><th>nu</th><th>stop</th><th>doel</th><th>hefboom</th><th>positie</th><th>funding</th><th>pnl</th><th>dagen</th><th></th></tr>` +
-    (v.positions.length ? v.positions.map(p => `<tr><td><b>${esc(p.coin)}</b></td><td>${esc(p.strategy)}</td><td class="num">${px(p.entry)}</td>
+    (v.positions.length ? v.positions.map(p => `<tr><td><span data-gsym="${esc(p.yahoo || '')}"></span><b>${esc(p.coin)}</b></td><td>${esc(p.strategy)}</td><td class="num">${px(p.entry)}</td>
       <td class="num">${px(p.px)}</td><td class="num down">${px(p.sl)}</td><td class="num up">${px(p.tp)}</td><td class="num">${p.lev}×</td>
       <td class="num">${usd(p.notional, 0)}</td><td class="num">${usd(-p.funding)}</td><td class="num ${sgn(p.upnl)}">${usd(p.upnl)}</td>
       <td class="num">${p.days.toFixed(1)}</td><td><button class="btn danger" data-close="${p.id}">Sluiten</button></td></tr>`).join("")
@@ -291,7 +291,7 @@ function render(v) {
 
   $("allN").textContent = v.proposals.length;
   $("allT").innerHTML = `<tr><th>markt</th><th>aandeel</th><th>status</th><th>beste strategie (5 j)</th><th>walk-forward</th><th>waarom</th></tr>` +
-    v.proposals.map(p => `<tr><td><b>${esc(p.coin)}</b>${p.alts && p.alts.length ? ` <span class="muted">+${p.alts.length}</span>` : ""}</td><td>${esc(p.yahoo)}</td>
+    v.proposals.map(p => `<tr><td><span data-gsym="${esc(p.yahoo)}"></span><b>${esc(p.coin)}</b>${p.alts && p.alts.length ? ` <span class="muted">+${p.alts.length}</span>` : ""}</td><td>${esc(p.yahoo)}</td>
       <td>${esc(p.status)}</td><td>${p.best ? esc(p.best.strategy) + ` <span class="muted">${p.best.n} tr, PF ${p.best.pf ? p.best.pf.toFixed(2) : "–"}</span>` : "–"}</td>
       <td class="num">${p.wf && p.wf.n ? `${p.wf.n} tr, PF ${p.wf.pf ? p.wf.pf.toFixed(2) : "–"}, ${pct(p.wf.sum)}` : "–"}</td>
       <td class="wrap muted">${esc((p.why || []).join(" · "))}</td></tr>`).join("");
@@ -343,5 +343,6 @@ setInterval(loadCompare, 120000);
 setInterval(() => { if (V && V.progress && V.progress.running) load(); }, 4000);
 </script>
 <script src="/static/statusbar.js"></script>
+<script src="/static/grade.js"></script>
 </body>
 </html>

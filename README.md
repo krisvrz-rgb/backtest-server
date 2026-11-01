@@ -195,6 +195,21 @@ strategieën van de backtestserver. Alleen papier: deze module plaatst geen echt
   Elke minuut SL/TP/maximale duur, funding elk uur met de echte rate. Elke handelsdag om 22.40 nieuwe analyse; een
   positie sluit als het signaal van haar strategie wegvalt. Bovenaan staat swing naast scalping.
 
+## Ticker-grade (A+ tot F)
+
+Eén cijfer per ticker uit de laatste watchlist-scan (`app/grade.py`). Alleen strategieën die buy & hold verslaan in
+de leerperiode (2 jaar) én in het testjaar erna, met winst in dat testjaar, tellen mee. Hun gewicht is hun voorsprong
+op buy & hold. Stemming = gewogen aandeel dat nu een open koopsignaal heeft; vertrouwen groeit met het totaalgewicht.
+Score = 100 × stemming × (0,3 + 0,7 × vertrouwen); A+ ≥ 80, A ≥ 65, B ≥ 50, C ≥ 35, D ≥ 20, anders F.
+
+- `GET /api/grades` (alle tickers; `?symbols=AAPL,NASDAQ:MSFT`, `?list=`, `?group=`) met `aliases` voor TradingView-symbolen en kale tickers.
+- `GET /api/grade/{ticker}`: werkende strategieën, welke open staan (sinds, instap, trade nu, winst-trades) en hun gewicht.
+- `GET/POST /api/grade/check`: walk-forward check (`app/grade_check.py`, ook `python -m app.grade_check`). Op elk
+  maandeinde de grade berekenen met alleen de koersen tot die dag, en het rendement van de 21 handelsdagen erna meten.
+- `app/static/grade.js` zet de grade bij elke `<span data-gsym="AAPL">` (overzicht, watchlist, aanraders, swing,
+  backtest) en toont bij een klik de details. GET-antwoorden hebben CORS `*`, zodat ook de portfolio server
+  `<script src="http://192.168.1.202:9000/static/grade.js"></script>` kan laden.
+
 ## Tests
 
 ```bash
