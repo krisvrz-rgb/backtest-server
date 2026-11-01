@@ -13,7 +13,7 @@
   .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); } .warn { color: var(--warn); }
   .cap { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-  .top { display: flex; align-items: center; gap: 22px; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .top { position: sticky; top: var(--sbarH, 30px); z-index: 900; display: flex; align-items: center; gap: 22px; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .brand b { font-size: 20px; letter-spacing: .02em; } .brand small { display: block; font-size: 9px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; }
   .nav { display: flex; gap: 14px; font-size: 12px; } .nav a.on { color: var(--text); }
   .stat { display: grid; line-height: 1.1; } .stat b { font: 600 17px var(--mono); } .stat span { font-size: 9px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
@@ -148,7 +148,7 @@
     krijgt dezelfde stop (2 × ATR) en take-profit als hier. De score is de t-waarde van de trades × hoe regelmatig de jaren winst
     gaven, dus niet de hoogste winst: weinig trades of grillige resultaten scoren vanzelf laag, en een strategie moet ook beter doen
     dan het aandeel gewoon vasthouden over dezelfde dagen. <b>Walk-forward</b>: voor elk van de laatste 3 jaar is de beste strategie
-    gekozen met alleen de jaren ervoor, en die trades tellen als bewijs. Een voorstel vraagt minstens 8 zulke trades met winstfactor ≥ 1,2,
+    gekozen met alleen de jaren ervoor, en die trades tellen als bewijs. Een voorstel vraagt minstens 10 zulke trades, winstfactor ≥ 1,3 en winst in 2 van de 3 testjaren,
     een signaal van hooguit 5 handelsdagen oud en een koers die nog niet meer dan 1 ATR weggelopen is.
     <b>Grootte</b>: kwart-Kelly op de walk-forward trades na funding, begrensd door het risico per trade, de marge per positie
     en de hefboom; de liquidatieprijs ligt altijd minstens 1,5 × verder dan de stop. <b>Funding</b> wordt elk uur aangerekend met de
@@ -343,5 +343,7 @@ setInterval(loadCompare, 120000);
 setInterval(() => { if (V && V.progress && V.progress.running) load(); }, 4000);
 </script>
 <script src="/static/statusbar.js"></script>
+<script>{ const fit = () => { const b = document.getElementById('sbar'); document.documentElement.style.setProperty('--sbarH', (b ? b.offsetHeight : 0) + 'px'); };
+  fit(); setTimeout(fit, 500); addEventListener('resize', fit); }</script>
 </body>
 </html>
