@@ -70,3 +70,14 @@ def test_weight_search_needs_proof():
     ev = bt.evaluate("SYN", runs, cfgs, P["t0"], P["t0"] + P["n"] * 60_000, warmup_days=60)
     assert ev["verdict"] != "voorstel"
     assert any("·trend" in k for k in runs)
+
+
+def test_entry_rules_abc():
+    """B en C mogen vóór 15% van het venster instappen, A nooit; C alleen met 3× de drempel."""
+    P = bt.prepare(_candles(120, seed=5), {})
+    res = {e: bt.Sim(P, window=60, min_edge=0.0, model="vast", entry=e).run()["trades"] for e in ("A", "B", "C")}
+    assert not any(x["early"] for x in res["A"])
+    assert sum(x["early"] for x in res["B"]) >= sum(x["early"] for x in res["C"])
+    assert all(x["edge"] >= 3.0 for x in res["C"] if x["early"])
+    assert bt.config_key({**bt.BASELINE, "entry": "B"}).endswith("instap B")
+    assert bt.config_key({**bt.BASELINE, "entry": "A"}) == bt.config_key(bt.BASELINE)

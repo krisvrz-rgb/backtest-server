@@ -372,7 +372,7 @@ class Sim:
                  hold_max: int = 3, maker_bps: float = 1.5, taker_bps: float = 4.5, half_spread_bps: float = 1.0,
                  max_lev: float = 10, risk_pct: float = 10, kelly_frac: float = .25, max_margin_pct: float = 5,
                  beta0: float = .25, k_prior: float = 30, trail_pct: float = 50, weights: dict | None = None,
-                 wname: str | None = None) -> None:
+                 wname: str | None = None, entry: str = "A") -> None:
         self.P, self.W, self.min_edge, self.trail_on, self.hold_max = P, window, min_edge, trail, hold_max
         self.maker, self.taker, self.hs = maker_bps, taker_bps, half_spread_bps / 1e4
         self.max_lev, self.risk_pct, self.kf, self.mpct = max_lev, risk_pct, kelly_frac, max_margin_pct
@@ -388,6 +388,9 @@ class Sim:
         self.lead = max(1, int(min(.25 * window, 10)))
         self.nwait = max(1, int(min(.1 * window * 60, 300) // 60))
         self.step = max(1, window // 40)
+        # instapregel: A = tussen 15% en 67% van het venster (zoals live), B = vanaf 0%,
+        # C = vóór 15% alleen bij een edge van minstens 3× de drempel, daarna zoals A
+        self.entry = entry
 
     # --- model, zoals Market.features / prior / compute ---
     def rcost(self) -> float:
@@ -510,7 +513,7 @@ class Sim:
         self.trades.append({"t": t0 + (tk["j_fill"] + 1) * 60_000, "tx": t0 + (j + 1) * 60_000, "side": side,
                             "entry": e, "exit": px, "usd": round(usd, 2), "lev": tk["lev"], "pnl": pnl, "gross": gross,
                             "fees": fees, "funding": fund, "ret": pnl / eq0, "bp": pnl / usd * 1e4, "reason": reason,
-                            "maker": maker, "edge": round(tk["edge"], 2), "holds": tk["holds"]})
+                            "maker": maker, "edge": round(tk["edge"], 2), "holds": tk["holds"], "early": bool(tk.get("early"))})
 
     def exit_px(self, tk: dict, px: float) -> float:
         return px * (1 - tk["side"] * self.hs)  # markt: de halve spread kwijt
@@ -608,6 +611,8 @@ class Sim:
         P, W = self.P, self.W
         C, HRS, N, t0 = P["c"], P["hours"], P["n"], P["t0"]
         lo_el, hi_el = .15 * W, .67 * W
+        dec_lo = lo_el if self.entry == "A" else 1
+        early_edge = 3 * self.min_edge if self.min_edge > 0 else 3.0
         tk: dict | None = None
         sample = None
         for wi in range(1, N // W):
@@ -632,7 +637,7 @@ class Sim:
                     f = self.feats(j, a, hr)
                     mo = self.compute(f, (W - el) * 60, hr)
                     sample = {"s": f["score"], "px": C[j], "sd": mo["sd"], "fv": self.fvec(f), "p": mo["p"]}
-                if tk is not None or decided or el < lo_el or el > hi_el:
+                if tk is not None or decided or el < dec_lo or el > hi_el:
                     continue
                 first = el if first is None else first
                 if (el - first) % self.step:
@@ -640,7 +645,8 @@ class Sim:
                 f = self.feats(j, a, hr)
                 mo = self.compute(f, (W - el) * 60, hr)
                 last_eval = el + self.step > hi_el
-                if mo["edge"] < self.min_edge:
+                need = early_edge if (self.entry == "C" and el < lo_el) else self.min_edge
+                if mo["edge"] < need:
                     decided = last_eval
                     continue
                 px, side, sd = C[j], mo["side"], max(mo["sd"], 1e-5)
@@ -656,7 +662,7 @@ class Sim:
                 sz = self.size(mo, pl["sl_d"])
                 if sz:
                     tk = {"state": "entering", "side": side, "limit": px, "lev": sz[0], "usd": sz[1],
-                          "edge": mo["edge"], "sd": sd, "dec": j, "holds": 0}
+                          "edge": mo["edge"], "sd": sd, "dec": j, "holds": 0, "early": el < lo_el}
         if tk and tk["state"] != "entering":
             self.close(tk, N - 1, C[N - 1], False, "einde data")
         return {"trades": self.trades, "eq": self.eq, "hit": self.hits / len(self.samples) if self.samples else None,
@@ -667,7 +673,9 @@ class Sim:
 # ---------- beoordelen: statistiek, walk-forward en voorstel per munt ----------
 def config_key(c: dict) -> str:
     k = f"{c['window']}m·{c['min_edge']:+g}¢·{c['model']}·{'trail' if c['trail'] else 'vast-SL'}"
-    return k + f"·{c['wname']}" if c.get("wname") else k
+    if c.get("wname"):
+        k += f"·{c['wname']}"
+    return k + f"·instap {c['entry']}" if c.get("entry", "A") != "A" else k
 
 
 # Gewichten van de score om te doorzoeken. Het teken hoeft niet: Prior leert β per munt, ook negatief
@@ -690,6 +698,11 @@ WEIGHT_SETS = {
 }
 
 
+def entry_grid() -> list[dict]:
+    """Instapregels A/B/C naast elkaar, op 15m, 1u en 4u, met de rest zoals de desk nu (+2¢, geleerd, trailing)."""
+    return [{**BASELINE, "window": w, "entry": e} for w in WINDOWS for e in ("A", "B", "C")]
+
+
 def weight_grid() -> list[dict]:
     """Elke gewichtenset op 60m en 240m (15m verliest op kosten), drempel +2¢, vast model, vaste SL."""
     return [{"window": w, "min_edge": 2.0, "model": "vast", "trail": False, "wname": n, "weights": WEIGHT_SETS[n]}
@@ -704,7 +717,7 @@ def stats(trades: list[dict], t_from: int = 0, t_to: int = 1 << 62) -> dict:
     tr = [x for x in trades if t_from <= x["t"] < t_to]
     n = len(tr)
     if not n:
-        return {"n": 0, "t": None, "ret": 0.0, "win": None, "bp": None, "pf": None, "dd": 0.0, "fees": 0.0, "funding": 0.0, "gross": 0.0}
+        return {"n": 0, "t": None, "pnl": 0.0, "early_n": 0, "early_bp": None, "ret": 0.0, "win": None, "bp": None, "pf": None, "dd": 0.0, "fees": 0.0, "funding": 0.0, "gross": 0.0}
     eq, peak, dd = 1.0, 1.0, 0.0
     for x in tr:
         eq *= 1 + x["ret"]
@@ -716,7 +729,9 @@ def stats(trades: list[dict], t_from: int = 0, t_to: int = 1 << 62) -> dict:
     bps = [x["bp"] for x in tr]
     mean = sum(bps) / n
     sdv = math.sqrt(sum((b - mean) ** 2 for b in bps) / (n - 1)) if n > 1 else 0.0
-    return {"n": n, "t": round(mean / (sdv / math.sqrt(n)), 2) if sdv else None, "ret": round((eq - 1) * 100, 3), "win": round(sum(1 for x in tr if x["pnl"] > 0) / n * 100, 1),
+    early = [x for x in tr if x.get("early")]
+    return {"n": n, "t": round(mean / (sdv / math.sqrt(n)), 2) if sdv else None, "pnl": round(sum(x["pnl"] for x in tr), 2),
+            "early_n": len(early), "early_bp": round(sum(x["pnl"] for x in early) / max(1e-9, sum(x["usd"] for x in early)) * 1e4, 2) if early else None, "ret": round((eq - 1) * 100, 3), "win": round(sum(1 for x in tr if x["pnl"] > 0) / n * 100, 1),
             "bp": round(sum(x["pnl"] for x in tr) / usd * 1e4, 2) if usd else None,
             "gross_bp": round(sum(x["gross"] for x in tr) / usd * 1e4, 2) if usd else None,
             "pf": round(gw / gl, 2) if gl else None, "dd": round(dd * 100, 2),
@@ -835,7 +850,7 @@ def run_coin(coin: str, months: int = 24, cfgs: list[dict] | None = None, kind: 
     P = prepare(a, fund)
     t_start, t_end = P["t0"], P["t0"] + P["n"] * 60_000
     runs, keys, extra = {}, {}, {}
-    for c in cfgs or (weight_grid() if kind == "gewichten" else grid()):
+    for c in cfgs or GRIDS[kind]():
         k = config_key(c)
         r = Sim(P, **c).run()
         runs[k], keys[k] = r["trades"], {x: v for x, v in c.items() if x != "weights"}
@@ -855,12 +870,35 @@ def run_coin(coin: str, months: int = 24, cfgs: list[dict] | None = None, kind: 
 
 
 _EMPTY = {"base_like": {"ret": 0.0}}
+GRIDS = {"basis": lambda: grid(), "gewichten": lambda: weight_grid(), "instap": lambda: entry_grid()}
 STATUS: dict = {"running": False, "done": 0, "total": 0, "coin": None, "started": None, "error": None, "log": []}
+
+
+def entry_compare(coins: dict) -> dict:
+    """Per venster en instapregel: alle munten samen, alleen out-of-sample."""
+    ok = [c for c in coins.values() if "error" not in c]
+    out: dict = {}
+    for w in WINDOWS:
+        for e in ("A", "B", "C"):
+            rows = [r for c in ok for r in c.get("table", []) if r.get("window") == w and r.get("entry", "A") == e]
+            if not rows:
+                continue
+            o = [r["oos"] for r in rows]
+            n = sum(x["n"] for x in o)
+            usd = sum((x.get("usd") or 0) * x["n"] for x in o)
+            out[f"{w}m {e}"] = {"window": w, "entry": e, "coins": len(rows), "n": n,
+                                "win": round(sum((x["win"] or 0) * x["n"] for x in o) / n, 1) if n else None,
+                                "pnl": round(sum(x.get("pnl", 0) for x in o), 2),
+                                "bp": round(sum(x.get("pnl", 0) for x in o) / usd * 1e4, 2) if usd else None,
+                                "fees": round(sum(x["fees"] for x in o), 2),
+                                "pos": sum(1 for x in o if x["ret"] > 0), "ret_avg": round(sum(x["ret"] for x in o) / len(o), 3),
+                                "early_n": sum(x.get("early_n", 0) for x in o)}
+    return out
 
 
 def _summary(coins: dict) -> dict:
     ok = [c for c in coins.values() if "error" not in c]
-    return {"coins": len(ok), "propose": [c["coin"] for c in ok if c["verdict"] == "voorstel"],
+    return {"entry": entry_compare(coins) if any(r.get("entry") for c in ok for r in c.get("table", [])) else None,"coins": len(ok), "propose": [c["coin"] for c in ok if c["verdict"] == "voorstel"],
             "off": [c["coin"] for c in ok if c["verdict"] == "uit"],
             "keep": [c["coin"] for c in ok if c["verdict"] == "zo laten"],
             "doubt": [c["coin"] for c in ok if c["verdict"] == "twijfel"],
@@ -887,8 +925,11 @@ def run_all(coins: list[str] | None = None, months: int = 24, workers: int = 2, 
     res = load_results(kind)
     res.setdefault("coins", {})
     res.update(started=int(time.time() * 1000), months=months, kind=kind,
-               grid=[config_key(c) for c in (weight_grid() if kind == "gewichten" else grid())],
+               grid=[config_key(c) for c in GRIDS[kind]()],
                weight_sets=WEIGHT_SETS if kind == "gewichten" else None,
+               entry_note=("Let op: Prior/β en het geleerde model zijn geijkt op de score bij 15% van het venster. Bij B en C "
+                           "rekent de replay de kans vóór 15% uit met diezelfde β (zoals live zou gebeuren); dat kan B en C "
+                           "bevoordelen of benadelen.") if kind == "instap" else None,
                baseline=config_key(BASELINE), notes=NOTES)
     STATUS.update(running=True, done=0, total=len(coins), started=time.time(), error=None, log=[])
     try:
@@ -933,6 +974,6 @@ NOTES = [
 if __name__ == "__main__":  # python -m app.desk_backtest [--gewichten] BTC ETH
     import sys
     args = sys.argv[1:]
-    kind = "gewichten" if "--gewichten" in args else "basis"
+    kind = next((k for k in GRIDS if f"--{k}" in args), "basis")
     out = run_all([a for a in args if not a.startswith("--")] or None, kind=kind)
     print(json.dumps(out.get("summary"), indent=1))

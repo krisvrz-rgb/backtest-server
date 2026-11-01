@@ -51,7 +51,7 @@
       <input id="coins" size="70" placeholder="munten (Hyperliquid-namen), leeg = standaardlijst">
       <label class="muted">maanden <input id="months" type="number" value="24" min="3" max="36" style="width:60px"></label>
       <label class="muted">tegelijk <input id="workers" type="number" value="2" min="1" max="6" style="width:50px"></label>
-      <select id="kind"><option value="basis">instellingen (venster, drempel, model, trailing)</option><option value="gewichten">gewichten van de score</option></select>
+      <select id="kind"><option value="basis">instellingen (venster, drempel, model, trailing)</option><option value="gewichten">gewichten van de score</option><option value="instap">instapregel A/B/C (wanneer in het venster)</option></select>
       <button class="go" id="run">Backtest starten</button>
       <span id="st" class="muted"></span>
     </div>
@@ -62,6 +62,7 @@
   <div class="panel" id="sum-p" hidden>
     <h2>Samenvatting</h2>
     <div class="cards" id="cards"></div>
+    <div id="entry" style="margin-top:10px"></div>
     <p class="muted" style="margin:10px 0 0">Out-of-sample = de periode na de eerste 6 maanden. <b>Walk-forward</b> kiest elk kwartaal de beste instelling
       op alles daarvoor en meet ze op dat kwartaal: dat is wat je echt had kunnen verdienen. De tabel met alle instellingen hieronder
       toont ook de achteraf-beste, maar die kiezen is overfitting.</p>
@@ -131,6 +132,11 @@ function render() {
     ['gem. desk zoals nu OOS', pct(sm.base_avg)],
     ...[15, 60, 240].map(w => [`desk op ${w}m: gem. / # positief`, `${pct((sm.per_window || {})[w]?.avg)} <small class="muted">${(sm.per_window || {})[w]?.pos ?? '–'}/${ok.length}</small>`]),
   ].map(([a, b]) => `<div class="card"><span>${a}</span><b>${b}</b></div>`).join('');
+  const en = sm.entry;
+  $('entry').innerHTML = en ? `<div class="muted" style="font-size:11px;margin-bottom:4px">Instapregel, alle munten samen, out-of-sample. A = 15–67% van het venster (zoals live), B = vanaf 0%, C = vóór 15% alleen bij edge ≥ 3× de drempel. ${DATA.entry_note || ''}</div>
+    <table><tr><th class="l">venster · regel</th><th>munten</th><th>trades</th><th>waarvan vóór 15%</th><th>winst%</th><th>pnl na kosten</th><th>bp/trade</th><th>fees</th><th>munten in de plus</th><th>gem. rend.</th></tr>` +
+    Object.entries(en).map(([k, r]) => `<tr><td class="l"><b>${k}</b></td><td class="num">${r.coins}</td><td class="num">${r.n}</td><td class="num">${r.early_n}</td><td class="num">${r.win ?? '–'}</td>
+      <td class="num">${r.pnl > 0 ? '<span class=up>+' : '<span class=down>'}$${r.pnl}</span></td><td class="num">${bp(r.bp)}</td><td class="num">$${r.fees}</td><td class="num">${r.pos}/${r.coins}</td><td class="num">${pct(r.ret_avg, 3)}</td></tr>`).join('') + '</table>' : '';
   const rows = cs.slice().sort((a, b) => ((b.wf || {}).ret ?? -99) - ((a.wf || {}).ret ?? -99));
   $('tab').innerHTML = `<tr><th class="l">munt</th><th class="l">data</th><th class="l">oordeel</th><th>WF rend.</th><th>WF trades</th><th>WF bp/trade</th><th>WF t</th>
       <th>desk nu rend.</th><th>trades</th><th>bp/trade</th><th>bruto bp</th><th>juist</th><th class="l">voorstel / advies</th></tr>` +
@@ -181,7 +187,7 @@ function detail() {
 }
 
 $('kind').onchange = () => { DATA = null; SEL = null; ['sum-p', 'tab-p', 'heat-p', 'det-p'].forEach(i => $(i).hidden = true); load(); };
-if (location.hash === '#gewichten') $('kind').value = 'gewichten';
+if (['#gewichten', '#instap'].includes(location.hash)) $('kind').value = location.hash.slice(1);
 $('run').onclick = async () => {
   const coins = $('coins').value.split(/[\s,]+/).filter(Boolean);
   const r = await fetch('/api/desk/backtest/run', { method: 'POST', headers: { 'content-type': 'application/json' },

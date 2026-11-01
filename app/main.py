@@ -171,11 +171,11 @@ class DeskBacktestRun(BaseModel):
     coins: list[str] | None = None
     months: int = 24
     workers: int = 2
-    kind: Literal["basis", "gewichten"] = "basis"
+    kind: Literal["basis", "gewichten", "instap"] = "basis"
 
 
 @app.get("/api/desk/backtest")
-def desk_backtest_results(set: Literal["basis", "gewichten"] = "basis"):
+def desk_backtest_results(set: Literal["basis", "gewichten", "instap"] = "basis"):
     """Resultaten van de 2-jaar-backtest van de zwermregels per munt, met de stand van een lopende run."""
     from . import desk_backtest as dbt
     st = {k: v for k, v in dbt.STATUS.items() if k != "log"}
