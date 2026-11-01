@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from io import StringIO
 from typing import Any, Literal
@@ -159,6 +160,45 @@ def picks_page():
 @app.get("/desk", include_in_schema=False)
 def desk_page():
     return FileResponse(STATIC_DIR / "desk.html")
+
+
+@app.get("/desk/backtest", include_in_schema=False)
+def desk_backtest_page():
+    return FileResponse(STATIC_DIR / "desk-backtest.html")
+
+
+class DeskBacktestRun(BaseModel):
+    coins: list[str] | None = None
+    months: int = 24
+    workers: int = 2
+    kind: Literal["basis", "gewichten"] = "basis"
+
+
+@app.get("/api/desk/backtest")
+def desk_backtest_results(set: Literal["basis", "gewichten"] = "basis"):
+    """Resultaten van de 2-jaar-backtest van de zwermregels per munt, met de stand van een lopende run."""
+    from . import desk_backtest as dbt
+    st = {k: v for k, v in dbt.STATUS.items() if k != "log"}
+    return {**dbt.load_results(set), "status": {**st, "log": dbt.STATUS["log"][-30:]}, "default_coins": dbt.DEFAULT_COINS}
+
+
+@app.post("/api/desk/backtest/run")
+def desk_backtest_run(req: DeskBacktestRun):
+    from . import desk_backtest as dbt
+    months = max(3, min(36, req.months))
+    coins = [c.strip() for c in (req.coins or []) if c.strip()][:60] or None
+    return dbt.start(coins, months, max(1, min(6, req.workers)), req.kind)
+
+
+@app.get("/api/desk/backtest/trades/{coin}")
+def desk_backtest_trades(coin: str):
+    from . import desk_backtest as dbt
+    if "/" in coin or "\\" in coin or ".." in coin:
+        raise HTTPException(404, "geen trades voor deze munt")
+    f = dbt.CACHE / f"trades-{coin}.json"
+    if not f.exists():
+        raise HTTPException(404, "geen trades voor deze munt")
+    return json.loads(f.read_text())
 
 
 class DeskOrder(BaseModel):
