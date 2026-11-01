@@ -110,6 +110,20 @@ def stats(trades: list[dict], start: float, curve: list) -> dict:
             "max_dd": mdd, "avg_hours": sum(t.get("hours", 0) for t in trades) / len(trades) if trades else None}
 
 
+def trade_stats(pnls: list[float]) -> dict:
+    """Zelfde vorm als trade_stats in main.py (Swarm): winrate, gem. winnaar/verliezer ($, positief), break-even-winrate
+    en verwachting per trade. Een pnl ≤ 0 telt als verliezer. pnl is netto na kosten en funding."""
+    w = [p for p in pnls if p > 0]
+    l = [-p for p in pnls if p <= 0]
+    aw = sum(w) / len(w) if w else 0.0
+    al = sum(l) / len(l) if l else 0.0
+    n = len(pnls)
+    return {"n": n, "wins": len(w), "losses": len(l), "winrate": round(len(w) / n, 4) if n else None,
+            "avg_win": round(aw, 2), "avg_loss": round(al, 2),
+            "be_winrate": round(al / (aw + al), 4) if aw + al > 0 else None,
+            "expectancy": round(sum(pnls) / n, 2) if n else None}
+
+
 class SwingBook:
     def __init__(self, loader: Callable[[str], pd.DataFrame] | None = None) -> None:
         saved = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
@@ -368,7 +382,8 @@ class SwingBook:
                                                      - p["funding"] - p["fees"] for p in self.positions),
                 "today": days.get(today, {"day": today, "wins": 0, "losses": 0, "pnl": 0.0}),
                 "days": sorted(days.values(), key=lambda r: r["day"])[-30:],
-                "analysis_at": self.analysis.get("at"), "analysis_running": self.progress["running"]}
+                "analysis_at": self.analysis.get("at"), "analysis_running": self.progress["running"],
+                "all": trade_stats([h["pnl"] for h in self.history])}
 
     # ---------- achtergrond ----------
     def due(self, now: datetime | None = None) -> bool:

@@ -193,3 +193,8 @@ def test_summary_counts_wins_per_day(book):
     s = book.summary()
     assert s["open"] == 0 and s["today"]["wins"] == 1 and s["today"]["losses"] == 1
     assert s["today"]["pnl"] == pytest.approx(1.0) and s["mode"] == "paper"
+    a = s["all"]
+    assert a["n"] == 2 and a["wins"] == 1 and a["losses"] == 1 and a["winrate"] == 0.5
+    assert a["avg_win"] == 2.0 and a["avg_loss"] == 1.0 and a["be_winrate"] == pytest.approx(1 / 3, abs=1e-4)
+    assert a["expectancy"] == 0.5
+    assert swing_desk.trade_stats([])["winrate"] is None
