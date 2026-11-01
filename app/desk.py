@@ -215,14 +215,22 @@ def scan(top: int = 25, min_volume: float = 2e6) -> list[dict]:
 
 def _coin(coin: str) -> str:
     """Normaliseer een coinnaam en controleer dat Hyperliquid hem verhandelt (HIP-3: 'dex:TICKER')."""
-    coin = coin.strip()
-    dex, _, name = coin.rpartition(":")
+    raw = coin.strip()
+    if raw in COINS:
+        return raw
+    dex, _, name = raw.rpartition(":")
     coin = f"{dex.lower()}:{name.upper()}" if dex else name.upper()
     if coin in COINS:
         return coin
-    if coin not in universe():
-        raise ValueError(f"{coin} is geen markt op Hyperliquid")
-    return coin
+    uni = universe()
+    if raw in uni:  # namen met kleine letters zoals kPEPE, kBONK
+        return raw
+    if coin in uni:
+        return coin
+    hit = next((c for c in uni if c.upper() == coin.upper()), None)  # kpepe of KPEPE → kPEPE
+    if hit:
+        return hit
+    raise ValueError(f"{raw} is geen markt op Hyperliquid")
 
 
 def _exchange(cfg: dict):

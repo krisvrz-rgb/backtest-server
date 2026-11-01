@@ -1423,8 +1423,10 @@ class Swarm:
                 raise PermissionError("DESK_AUTO=1 ontbreekt in data/desk.env")
         cfg = desk.config()
         self.start()
+        block = {desk._coin(c): v for c, v in (block or {}).items()}  # eerst alle namen nakijken: een foute naam wijzigt niets
+        coins = {desk._coin(c): v for c, v in (coins or {}).items()} or None
         with self.lock:
-            for coin, val in (block or {}).items():
+            for coin, val in block.items():
                 coin = desk._coin(coin)
                 if bool(val) and coin not in self.blocked:
                     self.blocked.add(coin)
