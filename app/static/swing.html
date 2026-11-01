@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Swing Desk · Backtest Server</title>
-<script src="/static/lightweight-charts.js"></script>
 <style>
   :root { --bg: #04050b; --panel: #0a0d19; --panel-2: #111528; --text: #e6ebf8; --muted: #7581a3; --border: #1b2140;
     --accent: #5b8cff; --up: #16b364; --down: #ef3a5d; --warn: #f08c00; --mono: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace; }
@@ -50,10 +49,19 @@
   .cfg label { display: flex; gap: 5px; align-items: center; font: 600 12px var(--mono); }
   .cfg input[type=number], .cfg input[type=text] { width: 64px; font: 600 12px var(--mono); padding: 4px 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
   .cmp td:first-child { color: var(--muted); } .cmp td { font-family: var(--mono); }
-  #curve { height: 180px; }
   .note { font-size: 11px; color: var(--muted); line-height: 1.5; }
   details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
   .bar { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; margin-top: 6px; } .bar i { display: block; height: 100%; background: var(--accent); }
+  .pnlbig { font: 700 44px var(--mono); color: var(--down); text-shadow: 0 0 18px currentColor; } .pnlbig.pos { color: var(--up); } .pnlbig sup { font-size: 22px; }
+  .stats4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
+  .stats4 b { font: 700 17px var(--mono); display: block; } .stats4 span { font-size: 9px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+  .pfm { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--panel-2); margin: 8px 0 2px; } .pfm i { display: block; height: 100%; }
+  .pfo { font: 11px var(--mono); margin: 4px 0 6px; }
+  .pfo div { display: grid; grid-template-columns: 70px 64px 1fr 92px 64px 64px; gap: 6px; align-items: center; padding: 2px 0; }
+  .pfo .bar { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; } .pfo .bar i { display: block; height: 100%; }
+  canvas.fill { width: 100%; display: block; } #balChart { height: 150px; } #pnlBars { height: 50px; }
+  .conf { display: grid; grid-template-columns: 90px 1fr 90px; gap: 6px; align-items: center; font: 600 10px var(--mono); margin: 3px 0; }
+  .conf .track { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; } .conf .track div { height: 100%; border-radius: 3px; }
 </style>
 </head>
 <body>
@@ -72,11 +80,23 @@
   <div class="panel" id="progress" style="display:none"></div>
 
   <div class="row">
-    <div class="panel">
-      <div class="ph"><h2>Portefeuille</h2><span class="sub">papier · los van de scalping</span>
-        <span class="right num muted" id="pfLine"></span></div>
-      <div id="curve"></div>
-    </div>
+    <section class="panel" id="pnlPanel">
+      <div class="ph"><h2>Swing PnL</h2><span class="sub">één portefeuille · alle aandelen</span><span class="right cap">PAPER</span></div>
+      <div class="cap" id="pnlWho">papierportefeuille</div>
+      <div class="pnlbig num" id="balance">–</div>
+      <div class="num muted" id="lastSettle">nog niets afgerekend</div>
+      <div id="pfMargin" class="pfm"></div>
+      <div id="pfOpen" class="pfo"></div>
+      <div class="stats4">
+        <div><b id="stTickets">0</b><span>trades</span></div>
+        <div><b id="stWin">–</b><span>win rate</span></div>
+        <div><b id="stAvg">–</b><span>gem. pnl</span></div>
+        <div><b id="stDd">–</b><span>max dd</span></div>
+      </div>
+      <canvas id="balChart" class="fill" height="150"></canvas>
+      <canvas id="pnlBars" class="fill" height="50"></canvas>
+      <div id="split" style="margin-top:8px"></div>
+    </section>
     <div class="panel">
       <div class="ph"><h2>Swing vs scalping</h2><span class="sub">allebei papier</span></div>
       <table class="cmp" id="cmp"></table>
@@ -143,7 +163,7 @@ const sgn = v => v == null ? "" : v >= 0 ? "up" : "down";
 const px = v => v == null ? "–" : v >= 1000 ? v.toFixed(1) : v >= 10 ? v.toFixed(2) : v.toPrecision(4);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const ago = ms => { if (!ms) return "nooit"; const h = (Date.now() - ms) / 3.6e6; return h < 1 ? Math.round(h * 60) + " min" : h < 48 ? h.toFixed(1) + " u" : (h / 24).toFixed(1) + " d"; };
-let V = null, chart, series;
+let V = null;
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
@@ -152,16 +172,62 @@ async function api(path, body) {
   return j;
 }
 
-function drawCurve(c) {
-  if (!chart) {
-    chart = LightweightCharts.createChart($("curve"), {height: 180, layout: {background: {color: "transparent"}, textColor: "#7581a3"},
-      grid: {vertLines: {color: "#111528"}, horzLines: {color: "#111528"}}, timeScale: {timeVisible: true}, rightPriceScale: {borderColor: "#1b2140"}});
-    series = chart.addAreaSeries ? chart.addAreaSeries({lineColor: "#5b8cff", topColor: "rgba(91,140,255,.35)", bottomColor: "rgba(91,140,255,0)", lineWidth: 2})
-      : chart.addSeries(LightweightCharts.AreaSeries, {lineColor: "#5b8cff", topColor: "rgba(91,140,255,.35)", bottomColor: "rgba(91,140,255,0)", lineWidth: 2});
+const COLORS = ["#5b8cff", "#f08c00", "#13b5a6", "#e5383b", "#2fbf4a", "#12b5e5", "#b46cff", "#f5a524", "#ff6fb1", "#9fd356"];
+const tColor = c => { let h = 0; for (const ch of String(c)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return COLORS[h % COLORS.length]; };
+const short = c => String(c).includes(":") ? c.split(":")[1] : c;
+const sg = (v, d = 2) => v == null ? "–" : (v >= 0 ? "+" : "") + v.toFixed(d);
+function canvasCtx(c) {
+  const r = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight || +c.getAttribute("height");
+  if (c.width !== Math.round(w * r) || c.height !== Math.round(h * r)) { c.width = Math.round(w * r); c.height = Math.round(h * r); }
+  const x = c.getContext("2d"); x.setTransform(r, 0, 0, r, 0, 0); x.clearRect(0, 0, w, h); return [x, w, h];
+}
+// zelfde lijn als de Swarm PnL: groen waar hij stijgt, rood waar hij daalt, gestippelde startwaarde, laatste punt = nu
+function drawEquity(x, w, h, d, base) {
+  const lo = Math.min(base, ...d), hi = Math.max(base, ...d), pad = (hi - lo) * .12 || 1;
+  const X = i => 4 + i / (d.length - 1) * (w - 8), Y = v => h - 6 - (v - lo + pad) / (hi - lo + 2 * pad) * (h - 12);
+  x.strokeStyle = "#1b2140"; x.setLineDash([3, 4]); x.beginPath(); x.moveTo(0, Y(base)); x.lineTo(w, Y(base)); x.stroke(); x.setLineDash([]);
+  const path = () => { x.lineTo(X(0), Y(d[0])); for (let i = 1; i < d.length - 1; i++) x.quadraticCurveTo(X(i), Y(d[i]), (X(i) + X(i + 1)) / 2, (Y(d[i]) + Y(d[i + 1])) / 2); x.lineTo(X(d.length - 1), Y(d[d.length - 1])); };
+  for (const [up, col] of [[true, "22,179,100"], [false, "239,58,93"]]) {
+    x.save(); x.beginPath(); up ? x.rect(0, 0, w, Y(base)) : x.rect(0, Y(base), w, h); x.clip();
+    const g = x.createLinearGradient(0, up ? 0 : h, 0, Y(base)); g.addColorStop(0, `rgba(${col},.28)`); g.addColorStop(1, `rgba(${col},0)`);
+    x.beginPath(); x.moveTo(X(0), Y(base)); path(); x.lineTo(X(d.length - 1), Y(base)); x.closePath(); x.fillStyle = g; x.fill(); x.restore();
   }
-  const seen = new Set(), data = [];
-  for (const [t, v] of c) { const s = Math.floor(t / 1000); if (!seen.has(s)) { seen.add(s); data.push({time: s, value: v}); } }
-  series.setData(data);
+  x.lineWidth = 2.2; x.lineCap = "round"; x.shadowBlur = 8;
+  const n = d.length, P = i => [X(i), Y(d[i])], M = k => k < 0 ? P(0) : k >= n - 1 ? P(n - 1) : [(X(k) + X(k + 1)) / 2, (Y(d[k]) + Y(d[k + 1])) / 2];
+  const V = k => k < 0 ? d[0] : k >= n - 1 ? d[n - 1] : (d[k] + d[k + 1]) / 2;
+  for (let k = 0; k < n; k++) { const col = V(k) >= V(k - 1) ? "#16b364" : "#ef3a5d"; x.strokeStyle = col; x.shadowColor = col;
+    x.beginPath(); x.moveTo(...M(k - 1)); x.quadraticCurveTo(...P(k), ...M(k)); x.stroke(); }
+  x.shadowBlur = 0;
+  const last = d[n - 1]; x.beginPath(); x.arc(X(n - 1), Y(last), 4, 0, 7); x.fillStyle = last >= base ? "#16b364" : "#ef3a5d"; x.fill();
+}
+function renderPnl(v) {
+  const hs = v.history.slice().reverse(), n = hs.length, wins = hs.filter(h => h.pnl > 0).length, real = hs.reduce((a, h) => a + h.pnl, 0);
+  const upnl = v.positions.reduce((a, p) => a + p.upnl, 0), pnl = v.equity - v.start;
+  $("balance").innerHTML = `<sup>$</sup>${v.equity.toFixed(2)}`; $("balance").classList.toggle("pos", pnl >= 0);
+  $("pnlWho").textContent = `papierportefeuille · start ${usd(v.start, 0)} · alle aandelen`;
+  const lt = hs[n - 1];
+  $("lastSettle").innerHTML = (lt ? `laatste: ${esc(short(lt.coin))} long <span class="${sgn(lt.pnl)}">${sg(lt.pnl)}</span> · ` : "")
+    + `gerealiseerd ${sg(real)} · open ${sg(upnl)}`;
+  const eq = Math.max(v.equity, 1e-9);
+  $("pfMargin").innerHTML = v.positions.map(p => `<i title="${esc(p.coin)} marge ${usd(p.margin)}" style="width:${p.margin / eq * 100}%;background:${tColor(p.coin)}"></i>`).join("");
+  $("pfOpen").innerHTML = `<div class="muted"><span>vrij</span><span>${usd(v.free, 0)}</span><span>in gebruik ${usd(v.used)}</span><span title="positie = marge × hefboom; marge = wat er van je portefeuille vastligt">positie · marge</span><span title="winkans van de gekozen strategie in de walk-forward (trades die ze bij het kiezen niet zag)">vertrouwen</span><span>pnl</span></div>`
+    + v.positions.map(p => `<div title="${esc(p.strategy)} · stop ${px(p.sl)} · doel ${px(p.tp)} · ${p.days.toFixed(1)} d"><b style="color:${tColor(p.coin)}">${esc(short(p.coin))}</b><span>long ${p.lev}x</span>
+      <span class="bar"><i style="width:${Math.min(100, p.margin / eq * 400)}%;background:${tColor(p.coin)}"></i></span>
+      <span>${usd(p.notional, 0)} <span class="muted">· ${usd(p.margin)}</span></span><span>${p.wf && p.wf.win != null ? Math.round(p.wf.win * 100) + "%" : "–"}</span>
+      <span class="${sgn(p.upnl)}">${sg(p.upnl)}</span></div>`).join("");
+  const curve = v.curve.map(c => c[1]).concat([v.equity]);
+  let peak = -Infinity, dd = 0; for (const c of curve) { peak = Math.max(peak, c); if (peak > 0) dd = Math.max(dd, (peak - c) / peak); }
+  $("stTickets").textContent = n; $("stWin").textContent = n ? (wins / n * 100).toFixed(1) + "%" : "–";
+  $("stAvg").textContent = n ? sg(real / n) : "–"; $("stDd").textContent = (dd * 100).toFixed(1) + "%";
+  const [x, w, h] = canvasCtx($("balChart"));
+  if (curve.length < 2) { x.fillStyle = "#7581a3"; x.font = "12px system-ui"; x.fillText("Verloop verschijnt na het eerste kwartier", 8, h / 2); }
+  else drawEquity(x, w, h, curve, v.start);
+  const [y, w2, h2] = canvasCtx($("pnlBars")), last = hs.slice(-120);
+  const mx = Math.max(1e-9, ...last.map(t => Math.abs(t.pnl))), bw = w2 / Math.max(last.length, 60);
+  last.forEach((t, i) => { const bh = Math.abs(t.pnl) / mx * (h2 / 2 - 2); y.fillStyle = tColor(t.coin); y.fillRect(i * bw, t.pnl >= 0 ? h2 / 2 - bh : h2 / 2, Math.max(1, bw - 1), bh); });
+  // swing is altijd long (de strategieën kopen of staan cash): daarom winst/verlies in plaats van long/short
+  $("split").innerHTML = `<div class="conf"><span>LONG / SHORT</span><div class="track"><div style="width:${n ? 100 : 50}%;background:#16b364"></div></div><span class="num">${n} / 0</span></div>
+    <div class="conf"><span>WIN / VERLIES</span><div class="track"><div style="width:${n ? wins / n * 100 : 0}%;background:#2463eb"></div></div><span class="num">${wins} / ${n - wins}</span></div>`;
 }
 
 function card(p) {
@@ -197,8 +263,7 @@ function render(v) {
   $("hdPnl").textContent = usd(v.equity - v.start); $("hdPnl").className = "num " + sgn(v.equity - v.start);
   $("hdOpen").textContent = v.positions.length;
   $("hdAt").textContent = ago(v.analysis_at);
-  $("pfLine").innerHTML = `start ${usd(v.start, 0)} · cash ${usd(v.cash)} · in marge ${usd(v.used)} · vrij ${usd(v.free)}`;
-  drawCurve(v.curve.concat([[Date.now(), v.equity]]));
+  renderPnl(v);
   const pr = v.progress || {};
   $("progress").style.display = pr.running || pr.error ? "" : "none";
   $("progress").innerHTML = pr.running ? `Analyse loopt: ${pr.done}/${pr.total} aandelen · nu ${esc(pr.current)}<div class="bar"><i style="width:${pr.total ? 100 * pr.done / pr.total : 0}%"></i></div>`
