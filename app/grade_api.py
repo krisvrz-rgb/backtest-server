@@ -33,6 +33,10 @@ def _aliases() -> dict[str, str]:
             if ":" in tv:
                 out.setdefault(tv.split(":", 1)[1], y)
             out.setdefault(y.upper(), y)
+            if y.upper().endswith("-USD"):  # crypto: de portfolio server zegt ETH, de scan ETH-USD
+                out.setdefault(y.upper()[:-4], y)
+            if "." in y:  # Europese noteringen: SOF.BR -> SOF
+                out.setdefault(y.upper().split(".")[0], y)
     return out
 
 

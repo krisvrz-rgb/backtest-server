@@ -16,6 +16,7 @@
     vertical-align: middle; margin-right: 6px; letter-spacing: .02em; user-select: none; }
   .grd.none { background: transparent; color: #8b93a1; border: 1px dashed #8b93a1; font-weight: 500; }
   .grd:hover { filter: brightness(1.15); }
+  .grd.gbig { font-size: 15px; height: 26px; min-width: 34px; margin: 0 8px; }
   #grd-pop { position: fixed; inset: 0; z-index: 3000; background: rgba(0,0,0,.55); display: flex; align-items: flex-start;
     justify-content: center; padding: 40px 12px; overflow: auto; }
   #grd-pop .box { background: #151820; color: #e6e8eb; border: 1px solid #262b36; border-radius: 10px; max-width: 980px;
@@ -60,13 +61,32 @@
     const txt = g ? g.grade : '–';
     if (el.dataset.gdone === txt) return;
     el.dataset.gdone = txt;
-    el.className = 'grd' + (g ? '' : ' none');
+    el.className = 'grd' + (g ? '' : ' none') + (el.dataset.gbig ? ' gbig' : '');
     el.style.background = g ? COLORS[g.grade] : '';
     el.textContent = txt;
     el.title = g ? `Grade ${g.grade} · score ${String(g.score).replace('.', ',')}/100 · ${g.reason} Klik voor details.`
       : (grades ? 'Nog geen grade: ticker niet volledig gescand' : 'Grade laden…');
   }
-  function decorate(root = document) { root.querySelectorAll('[data-gsym]').forEach(fill); }
+  // Automatisch (bv. op de portfolio server, script met data-auto): een grade vóór elke klikbare ticker
+  // (elementen met onclick="tkNaar(...)" of class ticker-link). Tickers zonder grade krijgen niets, zodat het rustig blijft.
+  const AUTO = !!(me && me.dataset.auto !== undefined);
+  const AUTO_SEL = me && me.dataset.auto ? me.dataset.auto : '[onclick*="tkNaar"], .ticker-link';
+  function autoTag() {
+    if (!AUTO || !grades) return;
+    document.querySelectorAll(AUTO_SEL).forEach(el => {
+      if (el.dataset.gauto || el.closest('#grd-pop') || el.querySelector('[data-gsym]')) return;
+      const m = /tkNaar\(\s*['"]([^'"]+)['"]/.exec(el.getAttribute('onclick') || '');
+      const t = (el.dataset.t || (m && m[1]) || el.textContent || '').trim().toUpperCase();
+      el.dataset.gauto = '1';
+      if (!t || t.length > 15 || !get(t)) return;
+      const b = document.createElement('span');
+      b.dataset.gsym = t;
+      const host = el.querySelector('.wl-sym') || el;
+      if (host.tagName === 'A' || !host.children.length && host.textContent.trim() === t) host.before(b);
+      else host.prepend(b);
+    });
+  }
+  function decorate(root = document) { autoTag(); root.querySelectorAll('[data-gsym]').forEach(fill); }
   let timer = null;
   new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(decorate, 50); })
     .observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-gsym'] });
@@ -76,6 +96,7 @@
       const d = await (await fetch(BASE + '/api/grades')).json();
       grades = d.grades || {}; aliases = d.aliases || {}; check = d.check; formula = d.formula || [];
       document.querySelectorAll('[data-gsym]').forEach(el => { delete el.dataset.gdone; });
+      document.querySelectorAll('[data-gauto]').forEach(el => { delete el.dataset.gauto; });
       decorate();
       document.dispatchEvent(new CustomEvent('grades-loaded'));
     } catch (e) { console.warn('grades', e); }
