@@ -402,6 +402,22 @@ def desk_journal_apply(day: str, req: DeskToken | None = None):
     return e
 
 
+@app.get("/api/desk/rustig")
+def desk_rustig_get(force: bool = False):
+    """Je desk tegen Rustig (trage relatieve-kracht-strategie, kosten eerst), zelfde start en bedrag, op papier.
+    Plus houdtijden en waar het geld van je eigen trades heen ging."""
+    from . import desk_learn, desk_rustig
+    from .desk_auto import costs
+    cfg = desk.config()
+    try:
+        # de history in het geheugen is kaal; uitstapreden, waarom en kosten staan in desk-trades.jsonl
+        full = {(h.get("t"), h.get("coin")): h for h in desk_learn.trades()}
+        hist = [{**full.get((h.get("t"), h.get("coin")), {}), **h} for h in list(swarm.history)]
+        return desk_rustig.compare(hist, swarm.paper, costs(cfg)["taker"], force=force)
+    except Exception as e:  # nooit de pagina laten vallen op een vergelijking
+        raise HTTPException(502, f"vergelijking mislukt: {e}")
+
+
 @app.get("/api/desk/coach")
 def desk_coach_get():
     """Je lokale taalmodel als dagelijkse coach: instellingen, of hij bezig is, en de laatste rapporten."""
