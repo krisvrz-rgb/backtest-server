@@ -25,6 +25,8 @@ PROPOSABLE = {
     "max_margin_pct": ("max marge per trade in % van de portefeuille", 0.5, 25),
     "hold_max": ("hoeveel vensters een trade mag doorlopen", 0, 12),
     "risk_pct": ("risico per trade in % van de marge", 1, 50),
+    "tp_rr": ("take-profit in × de stopafstand (0 = net voor het volgende niveau)", 0, 6),
+    "trail_pct": ("trailing stop: % van de winst vasthouden", 10, 90),
 }
 
 
