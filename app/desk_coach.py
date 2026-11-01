@@ -76,6 +76,7 @@ def _fmt_groups(gs: list[dict]) -> str:
 
 
 def _day_prompt(day: str, st: dict, rules: list[dict], hs: list[dict], learn: dict, prev: dict | None) -> str:
+    cur = rules[-1]["rules"] if rules else {}
     base = _prompt(hs, learn).split("Schrijf in het Nederlands")[0]
     wr = f"{st['winrate'] * 100:.0f}%" if st["winrate"] is not None else "-"
     prev_txt = ""
@@ -96,10 +97,11 @@ def _day_prompt(day: str, st: dict, rules: list[dict], hs: list[dict], learn: di
         "GELEERD: wat de cijfers van vandaag tonen (welke regel, markt, uitstapreden of edge werkte of niet).\n"
         "CONCLUSIES: twee of drie conclusies, elk met het cijfer erbij.\n"
         "TE BEKIJKEN: wat de eigenaar morgen moet nakijken of wat beter kan.\n"
-        "VOORSTEL: precies één instelling in de vorm sleutel = waarde, gevolgd door | en waarom. Kies uit: "
-        + ", ".join(f"{k} ({v[0]}, {v[1]} tot {v[2]})" for k, v in desk_journal.PROPOSABLE.items())
-        + ". Stel alleen iets voor dat de cijfers steunen; is er te weinig data, stel dan voor om niets te veranderen "
-        "en zeg dat eerlijk.\nVerzin geen cijfers die hierboven niet staan."
+        "VOORSTEL: precies één instelling die je ANDERS wilt dan nu, in de vorm sleutel = nieuwe waarde, gevolgd door | en waarom. "
+        "Kies uit (huidige waarde tussen haakjes): "
+        + ", ".join(f"{k} = {v[0]}, {v[1]} tot {v[2]} (nu {cur.get(k, '?')})" for k, v in desk_journal.PROPOSABLE.items())
+        + ". Een voorstel met de huidige waarde telt niet. Steunen de cijfers geen wijziging, schrijf dan 'VOORSTEL: niets "
+        "veranderen | waarom' en zeg eerlijk wat er meer data nodig heeft.\nVerzin geen cijfers die hierboven niet staan."
     )
 
 
@@ -184,7 +186,7 @@ def run(force: bool = False, day: str | None = None) -> dict:
         REPORT_FILE.write_text(json.dumps(all_[-30:]))
         desk_journal.save_entry({"day": day, "from": t_start, "to": t_end, "at": rep["at"], "model": cfg["model"],
                                  "seconds": rep["seconds"], "stats": st, "rules": rules, "text": text,
-                                 "report": desk_journal.parse_report(text), "applied": False})
+                                 "report": desk_journal.parse_report(text, rules[-1]["rules"] if rules else None), "applied": False})
         return rep
     except Exception as e:
         STATUS["error"] = str(e)

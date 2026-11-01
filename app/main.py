@@ -326,6 +326,34 @@ def desk_pnl():
     return {"trades": rows, "paper_start": swarm.paper.get("start")}
 
 
+@app.get("/api/desk/summary")
+def desk_summary():
+    """Klein en snel, voor de statusbalk op /desk en /swing: waarde, open trades, W/V per handelsdag, laatste analyse.
+    Zelfde vorm als /api/swing/summary."""
+    from datetime import datetime
+    from . import desk_journal
+    pf = swarm.portfolio()
+    live = pf["mode"] == "live"
+    t0, t1, today = desk_journal.day_bounds()
+    since = t1 - 30 * 86400_000
+    days: dict[str, dict] = {}
+    for h in desk_journal._trades(since, t1, list(swarm.history)):
+        if bool(h.get("paper", True)) == live:
+            continue
+        day = datetime.fromtimestamp(h["t"] / 1000 + (24 - desk_journal.DAY_END_HOUR) * 3600).date().isoformat()
+        r = days.setdefault(day, {"day": day, "wins": 0, "losses": 0, "pnl": 0.0})
+        r["wins" if h["pnl"] > 0 else "losses"] += 1
+        r["pnl"] = round(r["pnl"] + h["pnl"], 4)
+    reps = desk_coach.reports()
+    return {"mode": pf["mode"], "start": pf["start"], "equity": pf["equity"], "pnl": pf["equity"] - pf["start"],
+            "open": len([t for t in pf["open"] if t["state"] in ("open", "exiting")]),
+            "pending": len([t for t in pf["open"] if t["state"] not in ("open", "exiting")]),
+            "upnl": pf["upnl"], "today": days.get(today, {"day": today, "wins": 0, "losses": 0, "pnl": 0.0}),
+            "days": sorted(days.values(), key=lambda r: r["day"]),
+            "analysis_at": reps[-1]["at"] if reps else None, "analysis_running": bool(desk_coach.STATUS.get("running")),
+            "on": swarm.on}
+
+
 @app.get("/api/desk/journal")
 def desk_journal_list():
     """Dagjournaal: de lopende dag (live cijfers en regels) en alle afgesloten dagen, nieuwste eerst."""

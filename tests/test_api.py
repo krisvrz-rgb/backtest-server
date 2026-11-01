@@ -420,6 +420,7 @@ def test_desk_page_and_status_paper_by_default():
     assert r.status_code == 403
 
 
+<<<<<<< HEAD
 def test_swing_page_and_api(monkeypatch, tmp_path):
     from app import desk, swing_desk
     monkeypatch.setattr(desk, "universe", lambda max_age=600: {})
@@ -431,3 +432,12 @@ def test_swing_page_and_api(monkeypatch, tmp_path):
     assert client.post("/api/swing/open", json={"coin": "xyz:NOPE"}).status_code == 400
     c = client.get("/api/swing/compare").json()
     assert set(c) == {"swing", "scalp"}
+=======
+def test_desk_summary_for_statusbar():
+    s = client.get("/api/desk/summary").json()
+    for k in ("mode", "start", "equity", "pnl", "open", "upnl", "today", "days", "analysis_at", "analysis_running"):
+        assert k in s
+    assert set(s["today"]) >= {"day", "wins", "losses", "pnl"}
+    assert client.get("/static/statusbar.js").status_code == 200
+    assert "/static/statusbar.js" in client.get("/desk").text
+>>>>>>> origin/claude/project-thread-t4kesn

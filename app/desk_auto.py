@@ -746,7 +746,7 @@ class Swarm:
         now_ms = time.time() * 1000
         cand = [(l["px"], f"{'steun' if l['px'] < px else 'weerstand'} {l['px']:,.6g} ({l['n']}x geraakt)", l["n"]) for l in m.levels]
         cand += [(a["px"], f"{a['name']} ({a['px']:,.6g})", 2) for a in m.mas()]
-        cand += [(trend_at(tl, now_ms), f"{'stijgende steunlijn' if tl['kind'] == 'sup' else 'dalende weerstandslijn'} "
+        cand += [(trend_at(tl, now_ms), f"{'stijgende trendlijn (bodems)' if tl['kind'] == 'sup' else 'dalende trendlijn (toppen)'} "
                   f"(nu {trend_at(tl, now_ms):,.6g})", 2) for tl in m.trends]
         d = lambda p: sign * (p - px) / px / sd  # >0 = in de richting van de trade, in σ
         back = sorted([c for c in cand if -2.0 <= d(c[0]) <= -.4], key=lambda c: -d(c[0]))
@@ -1027,6 +1027,10 @@ class Swarm:
                     # het boek loopt soms achter op de laatste trade: rond de laatste prijs + halve spread afrekenen
                     half = min((ask - bid) / 2, m.px * 5e-4)
                     exit_px = m.px - half if t["side"] == "long" else m.px + half
+                    walk = self.book_walk(m, t["side"] == "short", t["usd"])  # door het boek heen zoals een echte marktorder
+                    if walk:
+                        slip = abs(walk - (bid if t["side"] == "long" else ask))  # bovenop de beste prijs
+                        exit_px += -slip if t["side"] == "long" else slip
             sign = 1 if t["side"] == "long" else -1
             pnl = t["usd"] * sign * (exit_px - t["entry"]) / t["entry"] - t["usd"] * (c["maker"] + exit_fee) / 1e4
             p_up = m.model.get("p")
@@ -1053,6 +1057,22 @@ class Swarm:
             self.save()
         except Exception as e:
             self.log("closer", "FOUT", f"sluiten mislukt: {e}. Controleer Hyperliquid!", coin=m.coin)
+
+    @staticmethod
+    def book_walk(m: Market, buy: bool, usd: float) -> float | None:
+        """Gemiddelde vulprijs van een marktorder van deze grootte door het huidige orderboek."""
+        if not m.book:
+            return None
+        levels = m.book[1] if buy else m.book[0]
+        left, cost, qty = usd, 0.0, 0.0
+        for px, sz in levels:
+            take = min(left, px * sz)
+            cost, qty, left = cost + take, qty + take / px, left - take
+            if left <= 1e-9:
+                break
+        if left > 1e-9 or not qty:  # dieper dan het zichtbare boek: de laatste prijs met een extra stap
+            return None
+        return cost / qty
 
     def risk(self, cfg: dict) -> None:
         """Accountwaarde ophalen; daglimiet op verlies voor alle markten samen."""

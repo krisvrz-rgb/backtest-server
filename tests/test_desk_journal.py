@@ -50,3 +50,8 @@ def test_journal_keeps_every_day(tmp_path, monkeypatch):
     desk_journal.save_entry({"day": "2026-11-01", "at": 2})
     assert [j["day"] for j in desk_journal.journal()] == ["2026-10-31", "2026-11-01"]
     assert desk_journal.entry("2026-11-01")["at"] == 2
+
+
+def test_proposal_equal_to_current_is_not_applicable():
+    r = desk_journal.parse_report("VOORSTEL: min_edge = -2 | houden", {"min_edge": -2.0})
+    assert r["setting"] is None and "houden" in r["proposal"]
