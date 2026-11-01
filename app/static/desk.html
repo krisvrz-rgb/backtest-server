@@ -170,7 +170,7 @@
   .tabs { display: flex; gap: 4px; padding: 8px 18px 0; position: sticky; top: var(--sbarH, 30px); z-index: 900; background: var(--bg); border-bottom: 1px solid var(--border); }  /* blijft bovenaan bij scrollen, onder de statusbalk */
   .tabs button { border: 1px solid var(--border); border-bottom: 0; background: var(--panel-2); padding: 7px 16px; border-radius: 8px 8px 0 0; font: 600 12px inherit; cursor: pointer; color: var(--muted); }
   .tabs button.on { background: var(--panel); color: var(--text); }
-  .trades2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; }
+  .trades2 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }  /* open bovenaan over de volle breedte, afgesloten eronder */
   .trwrap { max-height: 320px; overflow: auto; }
   table.tr td { font: 11px var(--mono); } table.tr tr[data-c] { cursor: pointer; } table.tr tr[data-c]:hover td { background: var(--panel-2); }
   @media (max-width: 1250px) { .trades2 { grid-template-columns: 1fr; } }
@@ -236,7 +236,7 @@
   .pfm{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--panel-2);margin:8px 0 2px}
   .pfm i{display:block;height:100%}
   .pfo{font:11px var(--mono);margin:4px 0 6px}
-  .pfo div{display:grid;grid-template-columns:70px 64px 1fr 60px 64px 64px;gap:6px;align-items:center;padding:2px 0}
+  .pfo div{display:grid;grid-template-columns:70px 64px 1fr 60px 64px 76px;gap:6px;align-items:center;padding:2px 0}
   .pfo div[data-c], .exhaust div[data-c] { cursor: pointer; } .pfo div[data-c]:hover, .exhaust div[data-c]:hover { background: var(--panel-2); }
   .layers { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; font: 600 10px var(--mono); }
   .layers button { border: 1px solid var(--border); background: var(--panel); color: var(--muted); border-radius: 10px; padding: 2px 8px; cursor: pointer; font: inherit; }
@@ -251,6 +251,7 @@
   .mc .mh .r { margin-left: auto; }
   .mc .mw { position: relative; height: 190px; } .mc .mw > div { position: absolute; inset: 0; z-index: 1; } .mc .mw > canvas { z-index: 2; }
   .chartwrap { position: relative; } .chartwrap #heat { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 0; } .chartwrap #chart { position: relative; z-index: 1; }
+  .pfo .pfx{grid-column:1/-1;color:var(--muted);font-size:10.5px;margin:-2px 0 3px} .bigpnl, table.scan td.bigpnl{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
   .pfo .bar{height:6px;border-radius:3px;background:var(--panel-2);overflow:hidden}.pfo .bar i{display:block;height:100%}
 </style>
 </head>
@@ -1819,7 +1820,8 @@ function tick() {
     $('pfOpen').innerHTML = `<div class="muted"><span>vrij</span><span>${usd(pf.free, 0)}</span><span>in gebruik ${usd(pf.used, 2)}</span><span title="positie = marge × hefboom; marge = wat er van je portefeuille vastligt">positie · marge</span><span title="kans volgens het model, nu, dat de koers de kant van de trade op gaat">vertrouwen</span><span>pnl</span></div>`
       + pf.open.map(t => `<div data-c="${t.coin}" title="Open ${t.coin} op de grafiek"><b style="color:${tColor(t.coin)}">${short(t.coin)}</b><span>${t.side} ${t.lev}x</span>
         <span class="bar"><i style="width:${Math.min(100, t.margin / eq * 400)}%;background:${tColor(t.coin)}"></i></span>
-        <span title="${sizeWhy(t)}">${usd(t.usd, 0)} <span class="muted">· ${usd(t.margin, 2)}</span></span><span>${confCell(t)}</span><span class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}</span></div>`).join('');
+        <span title="${sizeWhy(t)}">${usd(t.usd, 0)} <span class="muted">· ${usd(t.margin, 2)}</span></span><span>${confCell(t)}</span><span class="bigpnl ${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? 'limiet' : sgn(t.upnl, 2)}</span>
+        <span class="pfx">${(o => `kans TP eerst ${o[0]} · bij TP ${o[1]} · bij SL ${o[2]} · verwacht ${o[3]}`)(outCells(t))}</span></div>`).join('');
     $('stTickets').textContent = n; $('stWin').textContent = n ? fmt(pf.wins / n * 100, 1) + '%' : '–';
     $('stAvg').textContent = n ? sgn(pf.pnl / n, 2) : '–'; $('stDd').textContent = fmt(dd * 100, 1) + '%';
     $('hdPnl').innerHTML = `<span class="${pnl >= 0 ? 'up' : 'down'}">${sgn(pnl, 2)}</span>`; $('hdTickets').textContent = n;
@@ -1915,6 +1917,36 @@ const btCell = b => !b ? '<span class="muted">wacht op backtest</span>'
   : `<span class="${b.trend === 'stijgend' ? 'up' : b.trend === 'zwak' ? 'down' : 'muted'}" title="beste strategie: ${b.best || '–'}${b.best_open ? ' (koopsignaal open)' : ''} · gebacktest ${b.at || ''}">${b.trend} · ${b.open}/${b.prof}</span>`;
 const sortVal = (a, c) => { const m = a.markets[c] || {}; return allState.by === 'score' ? Math.abs(m.score || 0) : ((m.model || {}).edge ?? -1e9); };
 // vertrouwen in een open trade: de huidige kans van het model dat de koers zijn kant op gaat tot het venster sluit
+// Wat een open trade kan opleveren: winst bij TP en verlies bij SL (na kosten), de kans dat TP eerst geraakt wordt,
+// en de verwachte uitkomst. Kans TP eerst: koers als random walk met drift; de drift volgt uit het huidige vertrouwen
+// (c = Φ(μ/σ) over één venster), σ = verwachte beweging per venster. Zonder drift is dat gewoon SL-afstand ÷ (SL + TP).
+// Een schatting: exits op het einde van het venster en de trailing stop zitten er niet in.
+function invPhi(p) { p = Math.min(.999, Math.max(.001, p)); const a = [-39.696830, 220.946098, -275.928510, 138.357751, -30.664798, 2.506628],
+  b = [-54.476098, 161.585836, -155.698979, 66.801311, -13.280681], c = [-0.007784894, -0.32239645, -2.40075828, -2.54973254, 4.37466414, 2.93816398], d = [0.00778469571, 0.32246712, 2.445134, 3.75440866];
+  if (p < .02425) { const q = Math.sqrt(-2 * Math.log(p)); return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+  if (p > 1 - .02425) return -invPhi(1 - p);
+  const q = p - .5, r = q * q; return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1); }
+function tradeOut(t) {
+  const e = t.entry || t.px, fee = t.usd * costBps() / 1e4; if (!e) return {};
+  const win = t.tp ? t.usd * Math.abs(t.tp - e) / e - fee : null, loss = t.sl ? t.usd * Math.abs(t.sl - e) / e + fee : null;
+  const m = st.auto && st.auto.markets && st.auto.markets[t.coin], sd = m && m.model && m.model.sd, c = tradeConf(t), px = t.px || e;
+  let pTp = null;
+  if (t.tp && t.sl && px) {
+    const A = Math.abs(t.tp - px) / px, B = Math.abs(t.sl - px) / px;  // nog te gaan vanaf de huidige koers
+    const onTp = (t.side === 'long' ? px < t.tp : px > t.tp), onSl = (t.side === 'long' ? px > t.sl : px < t.sl);
+    if (!onTp) pTp = 1; else if (!onSl) pTp = 0;
+    else if (sd && c != null) { const th = 2 * invPhi(c) / sd; pTp = Math.abs(th) < 1e-9 ? B / (A + B) : (1 - Math.exp(th * B)) / (Math.exp(-th * A) - Math.exp(th * B)); }
+    else pTp = B / (A + B);
+    pTp = Math.min(1, Math.max(0, pTp));
+  }
+  const ev = pTp != null && win != null && loss != null ? pTp * win - (1 - pTp) * loss : null;
+  return { win, loss, pTp, ev };
+}
+const outCells = t => { const o = tradeOut(t), tip = 'Geschat: kans dat TP vóór SL geraakt wordt, vanaf de huidige koers, met het vertrouwen van het model als drift. Exits op het einde van het venster en de trailing stop zitten er niet in.';
+  return [o.pTp == null ? '<span class="muted">–</span>' : `<span class="${o.ev >= 0 ? 'up' : 'down'}" title="${tip}">${fmt(o.pTp * 100, 0)}%</span>`,
+    o.win == null ? '<span class="muted" title="geen TP">–</span>' : `<span class="up" title="winst als TP geraakt wordt, na kosten">${sgn(o.win, 2)}</span>`,
+    o.loss == null ? '<span class="muted" title="geen SL">–</span>' : `<span class="down" title="verlies als SL geraakt wordt, na kosten">${sgn(-o.loss, 2)}</span>`,
+    o.ev == null ? '<span class="muted">–</span>' : `<span class="${o.ev >= 0 ? 'up' : 'down'}" title="verwacht = kans TP × winst − (1 − kans TP) × verlies">${sgn(o.ev, 2)}</span>`]; };
 function tradeConf(t) {
   const m = st.auto && st.auto.markets && st.auto.markets[t.coin], p = m && m.model && m.model.p;
   return p == null ? null : (t.side === 'long' ? p : 1 - p);
@@ -1950,10 +1982,10 @@ document.querySelectorAll('.tflt').forEach(inp => inp.addEventListener('input', 
 function renderTrades() {
   const a = st.auto, pf = a.portfolio || { open: [] }, d = v => v == null ? '–' : fmt(v, v >= 100 ? 2 : v >= 1 ? 4 : 6);
   const tk = c => `<b style="color:${tColor(c)}">${short(c)}</b>`, side = sd => `<span class="${sd === 'long' ? 'up' : 'down'}">${sd === 'long' ? '▲ long' : '▼ short'}</span>`;
-  $('trOpen').innerHTML = '<tr><th>ticker</th><th>kant</th><th>positie</th><th>instap</th><th>nu</th><th>status</th><th>vertrouwen</th><th>pnl</th></tr>'
+  $('trOpen').innerHTML = '<tr><th>ticker</th><th>kant</th><th>positie</th><th>instap</th><th>nu</th><th>status</th><th title="kans volgens het model dat de koers nu de kant van deze trade op gaat">vertrouwen</th><th title="geschatte kans dat TP vóór SL geraakt wordt">kans TP eerst</th><th>bij TP</th><th>bij SL</th><th title="verwachte uitkomst van de trade">verwacht</th><th>pnl</th></tr>'
     + (pf.open.map(t => `<tr data-c="${t.coin}"><td>${tk(t.coin)}</td><td>${side(t.side)} ${t.lev}x</td><td>${usd(t.usd)}</td><td>${d(t.entry)}</td><td>${d(t.px)}</td>
-      <td>${{ entering: 'limiet wacht', open: 'open', exiting: 'uitstap' }[t.state] || t.state}</td><td>${confCell(t)}</td><td class="${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? '–' : sgn(t.upnl, 2)}</td></tr>`).join('')
-      || '<tr><td colspan="8" class="muted">geen open trades</td></tr>');
+      <td>${{ entering: 'limiet wacht', open: 'open', exiting: 'uitstap' }[t.state] || t.state}</td><td>${confCell(t)}</td>${outCells(t).map(x => `<td>${x}</td>`).join('')}<td class="bigpnl ${t.upnl >= 0 ? 'up' : 'down'}">${t.state === 'entering' ? '–' : sgn(t.upnl, 2)}</td></tr>`).join('')
+      || '<tr><td colspan="12" class="muted">geen open trades</td></tr>');
   const hs = (a.history || []).slice().reverse();
   $('trDone').innerHTML = '<tr><th>dicht</th><th>ticker</th><th>kant</th><th>positie</th><th>in → uit</th><th>uitstap</th><th>edge</th><th>pnl</th></tr>'
     + (hs.map(h => `<tr data-c="${h.coin}"><td class="muted">${hhmmss(h.t).slice(0, 5)}</td><td>${tk(h.coin)}${h.paper ? '' : ' <b class="down">LIVE</b>'}</td><td>${side(h.side)} ${h.lev}x</td>
