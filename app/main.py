@@ -244,6 +244,8 @@ class DeskAuto(BaseModel):
     trail_on: bool | None = None
     trail_pct: float | None = None
     tp_rr: float | None = None
+    block: dict[str, bool] | None = None  # true = uitzetten en ook voor de scanner blokkeren
+    why: str | None = None  # reden in het dagjournaal
 
 
 class DeskToken(BaseModel):
@@ -273,7 +275,8 @@ def desk_auto_set(req: DeskAuto):
                   max_lev=req.max_lev, risk_pct=req.risk_pct, auto_scan=req.auto_scan, scan_n=req.scan_n,
                   kelly_frac=req.kelly_frac, max_margin_pct=req.max_margin_pct,
                   sl_sigma=req.sl_sigma, tp_sigma=req.tp_sigma, hold_max=req.hold_max, learn=req.learn,
-                  trail_on=req.trail_on, trail_pct=req.trail_pct, tp_rr=req.tp_rr)
+                  trail_on=req.trail_on, trail_pct=req.trail_pct, tp_rr=req.tp_rr,
+                  block=req.block, why=req.why)
         return swarm.snapshot(swarm.seq)
     except PermissionError as e:
         raise HTTPException(403, str(e))

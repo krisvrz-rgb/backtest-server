@@ -995,7 +995,7 @@ const journal = { day: null, data: null };
 const RLBL = { window_min: v => `venster ${v}m`, min_edge: v => `drempel ${sgn(v, 0, '¢')}`, max_lev: v => `max ${v}x`, risk_pct: v => `risico ${v}%`,
   kelly_frac: v => `Kelly ×${v}`, max_margin_pct: v => `marge ${v}%`, hold_max: v => `doorlopen ${v}`, trail_on: v => v ? 'trailing aan' : 'trailing uit',
   trail_pct: v => `trailing ${v}%`, tp_rr: v => v ? `TP ${v}× stop` : 'TP structuur', learn: v => v ? 'leermodel aan' : 'leermodel uit', scan: v => `scanner ${v}`, sl_tp: v => `SL/TP ${v}`,
-  exits: v => v, filters: v => v, max_pos: v => `positie max ${v}` };
+  exits: v => v, filters: v => v, max_pos: v => `positie max ${v}`, uitgezet: v => `uitgezet: ${v}` };
 function dayKpis(st, total) {
   const pc = v => v == null ? '–' : fmt(v * 100, 0) + '%';
   return [[`<b class="${st.pnl >= 0 ? 'up' : 'down'}">${sgn(st.pnl, 2)}</b>`, 'pnl na kosten', `bruto ${sgn(st.gross, 2)} · kosten ${usd(st.fees, 2)}`],

@@ -345,6 +345,7 @@ class Swarm:
         self.auto_scan: bool = bool(saved.get("auto_scan"))  # elke 5 min de top 25 van de scanner volgen
         self.scan_at = 0.0
         self.scan_n: int = int(saved.get("scan_n", 25))  # 25, 50 of 0 = alle liquide markten met ratio ≥ 1
+        self.blocked: set = set(saved.get("blocked", []))  # bewust uitgezet (bv. na de 2-jaar-backtest): ook de scanner zet ze niet aan
         self.drop: set = set()  # uit de top 25 gevallen, maar nog een open trade: gaat uit zodra die afgerekend is
         self.max_lev: float | None = saved.get("max_lev")    # None = DESK_MAX_LEV; live nooit boven DESK_MAX_LEV
         self.risk_pct: float | None = saved.get("risk_pct")  # None = DESK_RISK_PCT
@@ -394,7 +395,7 @@ class Swarm:
         self.paper["curve"] = self.paper["curve"][-3000:]
         STATE_FILE.write_text(json.dumps({"on": self.on, "confirm": self.confirm, "coins": self.coins, "day": self.day,
                                           "day_start": self.day_start, "halted": self.halted, "window_min": self.window_min,
-                                          "min_edge": self.min_edge, "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac, "sl_sigma": self.sl_sigma, "tp_sigma": self.tp_sigma, "hold_max": self.hold_max, "learn": LEARN["on"],
+                                          "min_edge": self.min_edge, "blocked": sorted(self.blocked), "auto_scan": self.auto_scan, "scan_n": self.scan_n, "max_lev": self.max_lev, "risk_pct": self.risk_pct, "kelly_frac": self.kelly_frac, "sl_sigma": self.sl_sigma, "tp_sigma": self.tp_sigma, "hold_max": self.hold_max, "learn": LEARN["on"],
                                           "trail_on": self.trail_on, "trail_pct": self.trail_pct, "tp_rr": self.tp_rr,
                                           "max_margin_pct": self.max_margin_pct, "model": MODEL, "paper": self.paper, "history": list(self.history),
                                           "tickets": [m.ticket for m in self.markets.values() if m.ticket and m.ticket["paper"]]}))
@@ -1180,6 +1181,7 @@ class Swarm:
         return {"window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "max_lev": cap, "risk_pct": risk,
                 "kelly_frac": kf, "max_margin_pct": mp, "hold_max": self.hold_max if self.hold_max is not None else 3,
                 "trail_on": self.trail_on, "trail_pct": self.trail_pct, "tp_rr": self.tp_rr, "learn": LEARN["on"],
+                "uitgezet": ", ".join(sorted(self.blocked)) or "geen",
                 "scan": "uit" if not self.auto_scan else (f"top {self.scan_n}" if self.scan_n else "alle liquide"),
                 "sl_tp": "per trade uit steun/weerstand/EMA", "exits": "TP als limiet, uitstap als maker, SL markt",
                 "filters": "ruimte ≥0,3σ, R:R ≥0,7, tegenwind dag-backtests en venster-strategieën +1¢",
@@ -1317,7 +1319,7 @@ class Swarm:
                 continue
             self.scan_at = time.time()
             try:
-                top = [r["coin"] for r in desk.scan_cached(max_age=290, top=self.scan_n)["rows"]]
+                top = [r["coin"] for r in desk.scan_cached(max_age=290, top=self.scan_n)["rows"] if r["coin"] not in self.blocked]
             except Exception as e:
                 self.log("spotter", "FOUT", f"scanner mislukt: {e}")
                 continue
@@ -1358,7 +1360,7 @@ class Swarm:
             kelly_frac: float | None = None, max_margin_pct: float | None = None,
             sl_sigma: float | None = None, tp_sigma: float | None = None, hold_max: int | None = None,
             learn: bool | None = None, trail_on: bool | None = None, trail_pct: float | None = None,
-            tp_rr: float | None = None) -> None:
+            tp_rr: float | None = None, block: dict | None = None, why: str | None = None) -> None:
         """Markten volgen, venster en papier mogen altijd; aan/uit en bevestigen vragen live-toestemming."""
         if on is not None or confirm is not None:
             if not desk.status()["auto_allowed"]:
@@ -1366,8 +1368,19 @@ class Swarm:
         cfg = desk.config()
         self.start()
         with self.lock:
+            for coin, val in (block or {}).items():
+                coin = desk._coin(coin)
+                if bool(val) and coin not in self.blocked:
+                    self.blocked.add(coin)
+                    coins = {**(coins or {}), coin: False}
+                    self.log("prior", "BLOK", "uitgezet, ook de scanner zet deze markt niet meer aan", coin=coin)
+                elif not val and coin in self.blocked:
+                    self.blocked.discard(coin)
+                    self.log("prior", "BLOK", "mag weer gevolgd worden", coin=coin)
             for coin, val in (coins or {}).items():
                 coin = desk._coin(coin)
+                if val:
+                    self.blocked.discard(coin)  # handmatig aangezet: de blokkering vervalt
                 if coin not in self.markets:  # nieuwe markt uit de scanner
                     self.add_market(coin)
                 self.drop.discard(coin)  # handmatig gezet: de scanner-regel vervalt
@@ -1508,7 +1521,7 @@ class Swarm:
                 self.errors = 0
                 self.log("closer", "AAN" if on else "UIT", "live handel " + ("aan" if on else "uit, alles gesloten"))
             self.save()
-            desk_journal.log_rules(self.rules(), "instelling gewijzigd")
+            desk_journal.log_rules(self.rules(), why or "instelling gewijzigd")
 
     def set_level(self, coin: str, kind: str, price: float | None) -> dict:
         """Stop-loss of take-profit van een open trade met de hand verschuiven (of met None weghalen)."""
@@ -1581,7 +1594,7 @@ class Swarm:
                        for c, m in self.markets.items()}
             return {
                 "allowed": st["auto_allowed"], "live": self.on and st["auto_allowed"], "on": self.on, "confirm": self.confirm,
-                "coins": self.coins, "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "model": MODEL,
+                "coins": self.coins, "blocked": sorted(self.blocked), "window_min": self.window_min, "min_edge": self.edge_floor(cfg, False), "model": MODEL,
                 "auto_scan": self.auto_scan, "scan_n": self.scan_n, "scan_at": int(self.scan_at * 1000),
                 "lev": dict(zip(("max", "risk"), self.lev_limits(cfg, False)), live_max=desk.num(cfg, "DESK_MAX_LEV", 3)),
                 "size": dict(zip(("kelly", "max_margin_pct"), self.size_limits())),
