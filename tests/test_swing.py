@@ -185,3 +185,11 @@ def test_due_schedule(book):
     assert book.due(datetime(2026, 10, 30, 22, 45))      # vrijdag na 22.40
     assert not book.due(datetime(2026, 10, 30, 21, 0))   # nog voor de slot
     assert not book.due(datetime(2026, 10, 31, 23, 0))   # zaterdag
+
+
+def test_summary_counts_wins_per_day(book):
+    now = int(time.time() * 1000)
+    book.history = [{"t": now, "pnl": 2.0}, {"t": now, "pnl": -1.0}]
+    s = book.summary()
+    assert s["open"] == 0 and s["today"]["wins"] == 1 and s["today"]["losses"] == 1
+    assert s["today"]["pnl"] == pytest.approx(1.0) and s["mode"] == "paper"

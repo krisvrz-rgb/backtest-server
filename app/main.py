@@ -448,6 +448,12 @@ def swing_view():
     return swing_book.view()
 
 
+@app.get("/api/swing/summary")
+def swing_summary():
+    """Klein en snel, voor de statusbalk op /desk en /swing."""
+    return swing_book.summary()
+
+
 @app.post("/api/swing/refresh")
 def swing_refresh(symbols: list[str] | None = None):
     if swing_book.progress["running"]:

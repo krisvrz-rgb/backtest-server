@@ -346,6 +346,30 @@ class SwingBook:
                 "analysis_at": self.analysis.get("at"), "progress": self.progress,
                 "proposals": self.proposals(uni) if uni else []}
 
+    def summary(self) -> dict:
+        """Licht overzicht voor de statusbalk: waarde, open trades, winst/verlies per handelsdag, laatste analyse.
+        Handelsdag zoals het dagjournaal van de Swarm Desk (22.00 tot 22.00 lokale tijd)."""
+        from .desk_journal import DAY_END_HOUR, day_bounds
+        try:
+            uni = desk.universe()
+        except Exception:  # noqa: BLE001
+            uni = {}
+        eq = self.equity(uni)
+        days: dict[str, dict] = {}
+        for h in self.history:
+            # handelsdag = de datum waarop de dag om 22.00 eindigt
+            day = datetime.fromtimestamp(h["t"] / 1000 + (24 - DAY_END_HOUR) * 3600).date().isoformat()
+            r = days.setdefault(day, {"day": day, "wins": 0, "losses": 0, "pnl": 0.0})
+            r["wins" if h["pnl"] > 0 else "losses"] += 1
+            r["pnl"] += h["pnl"]
+        t0, t1, today = day_bounds()
+        return {"mode": "paper", "start": self.start, "equity": eq, "pnl": eq - self.start,
+                "open": len(self.positions), "upnl": sum(self.upnl(p, (uni.get(p["coin"]) or {}).get("px") or p["px"])
+                                                     - p["funding"] - p["fees"] for p in self.positions),
+                "today": days.get(today, {"day": today, "wins": 0, "losses": 0, "pnl": 0.0}),
+                "days": sorted(days.values(), key=lambda r: r["day"])[-30:],
+                "analysis_at": self.analysis.get("at"), "analysis_running": self.progress["running"]}
+
     # ---------- achtergrond ----------
     def due(self, now: datetime | None = None) -> bool:
         now = now or datetime.now()
