@@ -128,6 +128,8 @@
           <option value="open">Beste strategie staat in een open buy</option>
           <option value="new">Open buy ≤ 5 dagen geleden</option>
           <option value="beaten">Beste strategie verslaat buy &amp; hold</option>
+          <option value="gradeA">Grade A+ of A</option>
+          <option value="gradeB">Grade B of beter</option>
         </select>
       </div>
     </div>
@@ -195,6 +197,7 @@ const toolLink = (s, p, strategy, view) => {
 
 function value(s, key) {
   if (key === 'tv') return s.tv;
+  if (key === 'grade') return window.Grade ? window.Grade.score(s.yahoo) : null;
   if (key.startsWith('p:')) { const x = per(s, key.slice(2)); return x ? x.bh_rank : null; }
   const r = per(s, $('focus').value);
   if (!r || !r.best) return null;
@@ -209,6 +212,7 @@ function passes(s) {
   if (q && !s.tv.toUpperCase().includes(q) && !(s.yahoo || '').toUpperCase().includes(q)) return false;
   const f = $('filter').value, b = per(s, $('focus').value)?.best;
   if (!f) return true;
+  if (f.startsWith('grade')) { const g = window.Grade?.get(s.yahoo)?.grade; return f === 'gradeA' ? ['A+', 'A'].includes(g) : ['A+', 'A', 'B'].includes(g); }
   if (!b) return false;
   if (f === 'open') return !!b.signal_open;
   if (f === 'new') return !!b.signal_open && b.bars_since_buy <= 5;
@@ -218,12 +222,12 @@ function passes(s) {
 
 function renderHead() {
   const f = $('focus').value;
-  $('thead').innerHTML = `<tr><th class="left" rowspan="2" data-sort="tv">Symbool</th><th rowspan="2" data-sort="change_pct">Koers</th>` +
+  $('thead').innerHTML = `<tr><th class="left" rowspan="2"><span data-sort="grade" title="Sorteer op grade (A+ tot F). Klik op een grade voor de uitleg.">Grade</span> · <span data-sort="tv">Symbool</span></th><th rowspan="2" data-sort="change_pct">Koers</th>` +
     `<th class="pgroup" colspan="${shown().length}">Plaats van buy &amp; hold tussen alle strategieën en rendement van vasthouden</th>` +
     `<th rowspan="2" data-sort="avg_return" title="Winst van alle strategieën samen (elk €10.000) gedeeld door het aantal strategieën">Gem. winst / strategie</th>` +
     `<th class="left" rowspan="2" data-sort="vs_bh">Beste strategie (${esc(pinfo(f).label)})</th></tr><tr>` +
     shown().map(p => `<th class="pcell ${p.key === f ? 'focus' : ''}" data-sort="p:${p.key}">${esc(p.label)}</th>`).join('') + '</tr>';
-  document.querySelectorAll('th[data-sort]').forEach(th => {
+  document.querySelectorAll('#thead [data-sort]').forEach(th => {
     th.classList.toggle('sorted', th.dataset.sort === sortKey);
     th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
   });
@@ -263,7 +267,7 @@ function bestCell(s, f) {
 
 function row(s, g) {
   const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
-  const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.name || s.tv)}</small>`;
+  const sym = `<span data-gsym="${esc(s.yahoo || '')}"></span><span class="sym">${esc(tvShort)}</span><small>${esc(s.name || s.tv)}</small>`;
   const cols = shown().length + 4;
   const any = PERIODS.map(p => per(s, p.key)).find(Boolean);
   if (!s.result || s.result.error || !any) {
@@ -378,7 +382,7 @@ $('pchips').addEventListener('click', e => {
 $('focus').addEventListener('change', () => { try { localStorage.setItem('ov-focus', $('focus').value); } catch {} render(); });
 ['search', 'filter', 'group'].forEach(id => $(id).addEventListener('input', render));
 $('thead').addEventListener('click', e => {
-  const th = e.target.closest('th[data-sort]'); if (!th) return;
+  const th = e.target.closest('[data-sort]'); if (!th) return;
   if (sortKey === th.dataset.sort) sortAsc = !sortAsc;
   else { sortKey = th.dataset.sort; sortAsc = sortKey === 'tv' || sortKey.startsWith('p:'); }
   render();
@@ -422,6 +426,8 @@ $('a-save').addEventListener('click', async () => {
 });
 
 load().then(loadSchedule).catch(e => $('status').textContent = 'Kon overzicht niet laden: ' + e.message);
+document.addEventListener('grades-loaded', () => { if (sortKey === 'grade' || $('filter').value.startsWith('grade')) render(); });
 </script>
+<script src="/static/grade.js"></script>
 </body>
 </html>

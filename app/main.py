@@ -28,6 +28,7 @@ from . import desk, desk_coach
 from .swing_desk import BOOK as swing_book, compare as swing_compare
 from .desk_auto import swarm
 from .picks import picks, strategy_scores
+from .grade_api import router as grade_router
 from .strategies import CATEGORIES, STRATEGIES, get_strategy
 from .strategies.plot import indicators
 from .strategies.explain import explain_strategy, indicator_info
@@ -36,6 +37,7 @@ app = FastAPI(title="Backtest Server", version="0.1.0",
               description="Backtest handelsstrategieën op aandelen en exporteer ze naar TradingView Pine Script.")
 # Grote JSON-antwoorden (watchlist) gecomprimeerd versturen.
 app.add_middleware(GZipMiddleware, minimum_size=2000)
+app.include_router(grade_router)  # ticker-grade A+ tot F (app/grade_api.py)
 
 
 Source = Literal["csv", "yahoo", "ibkr", "hyperliquid", "synthetic"]

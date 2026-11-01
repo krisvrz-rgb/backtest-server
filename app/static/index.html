@@ -131,7 +131,7 @@
 </header>
 <main>
   <form class="panel" id="form">
-    <label for="symbol">Symbool</label>
+    <label for="symbol">Symbool <span id="symgrade" data-gsym="AAPL"></span></label>
     <input id="symbol" value="AAPL" required>
     <label for="source">Databron</label>
     <select id="source">
@@ -930,5 +930,12 @@ if (new URLSearchParams(location.search).get('embed')) {
 
 loadStrategies().then(() => { applyQuery(); markQuick(); }).catch(err => $('error').textContent = 'Kon strategieën niet laden: ' + err.message);
 </script>
+<script>
+// Grade van het gekozen symbool naast het invoerveld.
+(() => { const el = document.getElementById('symgrade'), inp = document.getElementById('symbol');
+  const upd = () => { const v = inp.value.trim(); if (el.dataset.gsym !== v) { el.dataset.gsym = v; delete el.dataset.gdone; } };
+  inp.addEventListener('change', upd); setInterval(upd, 1000); upd(); })();
+</script>
+<script src="/static/grade.js"></script>
 </body>
 </html>

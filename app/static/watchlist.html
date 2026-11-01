@@ -320,7 +320,7 @@ function sizeDetail() {
 function rowHtml(s, group) {
   const r = res(s), link = `/tool?symbol=${encodeURIComponent(s.yahoo || '')}&source=yahoo&start=${startDate()}`;
   const tvShort = s.tv.includes(':') ? s.tv.split(':')[1] : s.tv;
-  const sym = `<span class="sym">${esc(tvShort)}</span><small>${esc(s.tv)}${s.yahoo && s.yahoo !== tvShort ? ' · ' + esc(s.yahoo) : ''}</small>`;
+  const sym = `${s.yahoo ? `<span data-gsym="${esc(s.yahoo)}"></span>` : ''}<span class="sym">${esc(tvShort)}</span><small>${esc(s.tv)}${s.yahoo && s.yahoo !== tvShort ? ' · ' + esc(s.yahoo) : ''}</small>`;
   const del = `<button class="x" title="Verwijderen" data-del="${esc(s.tv)}" data-group="${esc(group.name)}" data-list="${esc(group.list)}">×</button>`;
   if (!s.yahoo) return `<tr><td class="left">${sym}</td><td colspan="11" class="left desc">Geen koersdata (index, future of macro)</td><td>${del}</td></tr>`;
   if (!r) return `<tr class="row" data-link="${link}"><td class="left">${sym}</td><td colspan="11" class="left desc">Nog niet gescand${s.result ? ' voor deze periode' : ''}</td><td>${del}</td></tr>`;
@@ -560,5 +560,6 @@ window.addEventListener('resize', sizeDetail);
 
 load().catch(e => $('status').textContent = 'Kon watchlist niet laden: ' + e.message);
 </script>
+<script src="/static/grade.js"></script>
 </body>
 </html>
