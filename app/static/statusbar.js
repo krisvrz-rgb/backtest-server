@@ -11,12 +11,12 @@
   const css = `
   #sbar { position: sticky; top: 0; z-index: 1000; display: flex; gap: 1px; background: #1b2140;
     font: 12px/1.3 ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace; color: #e6ebf8; }
-  #sbar a.d { flex: 1; display: flex; align-items: center; gap: 18px; padding: 6px 14px; background: #0a0d19;
-    color: inherit; text-decoration: none; min-width: 0; overflow: hidden; white-space: nowrap; }
+  #sbar a.d { flex: 1; display: flex; align-items: center; gap: 3px 12px; flex-wrap: wrap; padding: 5px 12px; background: #0a0d19;
+    color: inherit; text-decoration: none; min-width: 0; white-space: nowrap; }
   #sbar a.d:hover { background: #111528; }
   #sbar a.d.here { box-shadow: inset 0 -2px 0 #5b8cff; }
   #sbar .nm { font: 700 11px system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
-  #sbar .nm i { font-style: normal; font-weight: 600; font-size: 9px; color: #7581a3; margin-left: 5px; }
+  #sbar .nm i { display: inline-block; vertical-align: middle; line-height: 1.25; font-style: normal; font-weight: 600; font-size: 9px; color: #7581a3; margin-left: 5px; }
   #sbar .k { display: flex; flex-direction: column; }
   #sbar .k span { font: 600 8px system-ui, sans-serif; letter-spacing: .1em; text-transform: uppercase; color: #7581a3; }
   #sbar .k b { font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -38,13 +38,27 @@
     if (!ms) return 'nog nooit';
     const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
     if (m < 1) return 'net nu';
-    if (m < 60) return m + ' min geleden';
+    if (m < 60) return m + ' min';
     const h = Math.floor(m / 60);
-    if (h < 24) return h + 'u' + String(m % 60).padStart(2, '0') + ' geleden';
-    return Math.floor(h / 24) + 'd ' + (h % 24) + 'u geleden';
+    if (h < 24) return h + 'u' + String(m % 60).padStart(2, '0');
+    return Math.floor(h / 24) + 'd ' + (h % 24) + 'u';
   };
   const clock = ms => ms ? new Date(ms).toLocaleString('nl-BE', { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '';
   const k = (label, val, title = '') => `<span class="k"${title ? ` title="${title}"` : ''}><span>${label}</span><b>${val}</b></span>`;
+
+  // Winrate alleen zegt niets: 40% winst met winnaars van 3× de verliezers is goed, 70% met winnaars van ⅓ is verlies.
+  // Daarom naast elkaar: winrate, gem. winnaar, gem. verliezer, en de winrate die nodig is om quitte te spelen.
+  const pc = v => Math.round(v * 100) + '%';
+  function edgeK(a) {
+    if (!a || !a.n) return k('winrate · gem. W / V', '<span class="mu">nog geen trades</span>');
+    const ok = a.be_winrate == null ? 'mu' : a.winrate > a.be_winrate ? 'up' : 'dn';
+    return k('winrate', `<span class="${ok}">${pc(a.winrate)}</span> <span class="mu">nodig ${a.be_winrate == null ? '–' : pc(a.be_winrate)}</span>`,
+        `${a.wins} winnaars, ${a.losses} verliezers sinds de start (${a.n} trades).\nNodig = gem. verlies ÷ (gem. winst + gem. verlies): daarboven verdien je geld.`)
+      + k('gem. winnaar / verliezer', `<span class="up">${sgn(a.avg_win)}</span> / <span class="dn">${sgn(-a.avg_loss)}</span>`,
+          'gemiddelde winst per winnende trade / gemiddeld verlies per verliezende trade, na kosten')
+      + k('per trade', `<span class="${cls(a.expectancy)}">${sgn(a.expectancy)}</span>`,
+          `verwachting per trade = winrate × gem. winnaar − (1 − winrate) × gem. verliezer\nverhouding winnaar/verliezer ${a.avg_loss ? (a.avg_win / a.avg_loss).toFixed(2).replace('.', ',') : '–'}`);
+  }
 
   function render(d, s) {
     const el = document.getElementById('sbar-' + d.key);
@@ -56,14 +70,14 @@
     const pct = s.start ? (s.pnl / s.start) * 100 : 0;
     const days = (s.days || []).slice(-7).map(r => `${r.day.slice(5)}: ${r.wins}W/${r.losses}V ${sgn(r.pnl)}`).join('\n');
     const open = s.open + (s.pending ? ` <span class="mu">+${s.pending} wacht</span>` : '');
-    el.innerHTML = `<span class="nm">${d.name}<i>${s.mode === 'live' ? 'LIVE' : 'papier'}${s.on === false ? ' · uit' : ''}</i></span>`
+    el.innerHTML = `<span class="nm">${d.name}<i>${s.mode === 'live' ? 'LIVE' : 'papier'}${s.on === false ? ' · uit' : ''}<br><span title="${'laatste ' + d.what + ': ' + clock(s.analysis_at)}">${d.what} ${s.analysis_running ? '<span class="wa">bezig…</span>' : ago(s.analysis_at)}</span></i></span>`
       + k('waarde', `${usd(s.equity)} <span class="${cls(s.pnl)}">${pct >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(1).replace('.', ',')}%</span>`,
           `start ${usd(s.start)}, winst sinds start ${sgn(s.pnl)}, waarvan open ${sgn(s.upnl || 0)}`)
-      + k('open trades', open, `niet-gerealiseerd ${sgn(s.upnl || 0)}`)
+      + k('open', open, `niet-gerealiseerd ${sgn(s.upnl || 0)}`)
       + k('W/V vandaag', `${t.wins}/${t.losses}${t.wins + t.losses ? ` · ${Math.round(t.wins / (t.wins + t.losses) * 100)}%` : ''} `
           + `<span class="${cls(t.pnl)}">${sgn(t.pnl)}${s.start ? ` · ${t.pnl >= 0 ? '+' : '−'}${Math.abs(t.pnl / s.start * 100).toFixed(1).replace('.', ',')}%` : ''}</span>`,
           'handelsdag 22.00 tot 22.00\n' + (days || 'nog geen afgesloten trades'))
-      + k('laatste ' + d.what, s.analysis_running ? '<span class="wa">bezig…</span>' : ago(s.analysis_at), clock(s.analysis_at));
+      + edgeK(s.all)
   }
 
   async function tick() {

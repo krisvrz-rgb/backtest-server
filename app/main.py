@@ -340,6 +340,7 @@ def desk_summary():
     t0, t1, today = desk_journal.day_bounds()
     since = t1 - 30 * 86400_000
     days: dict[str, dict] = {}
+    pnls = [h["pnl"] for h in desk_journal._trades(0, t1, list(swarm.history)) if bool(h.get("paper", True)) != live]
     for h in desk_journal._trades(since, t1, list(swarm.history)):
         if bool(h.get("paper", True)) == live:
             continue
@@ -354,7 +355,21 @@ def desk_summary():
             "upnl": pf["upnl"], "today": days.get(today, {"day": today, "wins": 0, "losses": 0, "pnl": 0.0}),
             "days": sorted(days.values(), key=lambda r: r["day"]),
             "analysis_at": reps[-1]["at"] if reps else None, "analysis_running": bool(desk_coach.STATUS.get("running")),
-            "on": swarm.on}
+            "on": swarm.on, "all": trade_stats(pnls)}
+
+
+def trade_stats(pnls: list[float]) -> dict:
+    """Sinds de start: winrate, gemiddelde winnaar en verliezer, en de winrate die je nodig hebt om quitte te spelen
+    (gem. verlies / (gem. winst + gem. verlies)). Zelfde vorm voor Swarm en Swing in de statusbalk."""
+    w = [p for p in pnls if p > 0]
+    l = [-p for p in pnls if p <= 0]
+    aw = sum(w) / len(w) if w else 0.0
+    al = sum(l) / len(l) if l else 0.0
+    n = len(pnls)
+    return {"n": n, "wins": len(w), "losses": len(l), "winrate": round(len(w) / n, 4) if n else None,
+            "avg_win": round(aw, 2), "avg_loss": round(al, 2),
+            "be_winrate": round(al / (aw + al), 4) if aw + al > 0 else None,
+            "expectancy": round(sum(pnls) / n, 2) if n else None}
 
 
 @app.get("/api/desk/journal")
