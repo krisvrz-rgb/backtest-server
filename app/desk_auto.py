@@ -1608,26 +1608,63 @@ class Swarm:
             desk_journal.log_rules(self.rules(), why or "instelling gewijzigd")
 
     def set_level(self, coin: str, kind: str, price: float | None) -> dict:
-        """Stop-loss of take-profit van een open trade met de hand verschuiven (of met None weghalen)."""
-        if kind not in ("sl", "tp"):
-            raise ValueError("kind moet sl of tp zijn")
+        """Stop-loss of take-profit van een open trade met de hand verschuiven (of met None weghalen).
+        kind reset, reset_sl of reset_tp: terug naar de regels van de zwerm (plan vanaf de instap, trailing doet de rest)."""
+        if kind not in ("sl", "tp", "reset", "reset_sl", "reset_tp"):
+            raise ValueError("kind moet sl, tp, reset, reset_sl of reset_tp zijn")
         with self.lock:
             m = self.markets.get(coin)
             t = m and m.ticket
             if not t or t["state"] not in ("open", "exiting"):
                 raise ValueError(f"Geen open trade op {coin}")
+            if kind.startswith("reset"):
+                return self._reset_levels(m, t, {"reset": ("sl", "tp"), "reset_sl": ("sl",), "reset_tp": ("tp",)}[kind])
             if price is not None:
                 price, long = float(price), t["side"] == "long"
                 below = (kind == "sl") == long  # long: SL onder de koers, TP erboven; short omgekeerd
                 if (below and price >= m.px) or (not below and price <= m.px):
                     raise ValueError(f"{'Stop-loss' if kind == 'sl' else 'Take-profit'} moet {'onder' if below else 'boven'} "
                                      f"de huidige koers {m.px:,.6g} liggen")
+            if kind == "tp" and not t["paper"]:  # live: de TP-limiet in het boek mee verplaatsen of weghalen
+                cfg = desk.config()
+                self.cancel_tp(m, t, cfg)
+                t[kind] = price
+                if price is not None:
+                    self.place_tp(m, t, cfg)
             t[kind] = price
             self.log("closer", kind.upper(), f"{'stop-loss' if kind == 'sl' else 'take-profit'} met de hand "
                      + (f"verschoven naar {price:,.6g}" if price is not None else "weggehaald"), coin=coin)
             if t["paper"]:
                 self.save()
             return {"ok": True, kind: price}
+
+    def _reset_levels(self, m: Market, t: dict, which: tuple) -> dict:
+        sd = (t.get("why") or {}).get("sd", 0) / 1e4 or m.model.get("sd", 0.0) or 1e-4  # σ zoals bij de instap
+        e = self.exit_plan(m, t["side"], t["entry"], sd, self.tp_rr or None)
+        long = t["side"] == "long"
+        out = {"ok": True}
+        if "sl" in which:
+            t["sl"] = e["sl"]
+            for k in ("trailed", "sl0", "trail_logged"):
+                t.pop(k, None)  # de trailing stop zet hem bij de volgende tick terug waar de regels hem willen
+            out["sl"] = e["sl"]
+        if "tp" in which:
+            tp = e["tp"]
+            if (long and tp <= m.px) or (not long and tp >= m.px):
+                tp = None  # het plan-niveau is al voorbij: geen take-profit, de trailing stop beschermt de winst
+            cfg = desk.config()
+            self.cancel_tp(m, t, cfg)
+            t["tp"] = tp
+            if tp and not t["paper"]:
+                self.place_tp(m, t, cfg)
+            out["tp"] = tp
+        t["plan"] = {**(t.get("plan") or {}), "sl": e["sl_why"], "tp": e["tp_why"], "rr": round(e["rr"], 2)}
+        self.log("closer", "RESET", ("stop-loss en take-profit" if len(which) == 2 else "stop-loss" if which == ("sl",) else "take-profit")
+                 + " terug volgens de regels van de zwerm" + (f": stop {t['sl']:,.6g}" if "sl" in which else "")
+                 + (f", take-profit {t['tp']:,.6g}" if "tp" in which and t.get("tp") else ""), coin=m.coin)
+        if t["paper"]:
+            self.save()
+        return out
 
     def approve(self, order_id: int, yes: bool) -> dict:
         cfg = desk.live_config()

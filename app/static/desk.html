@@ -395,6 +395,7 @@
       <div class="tape nobook">
         <div><div class="big num" id="tapePx" style="font:700 26px var(--mono)">–</div>
           <div class="layers" id="layers" title="Lagen op de grafiek aan of uit"></div>
+          <div class="layers" id="tradeCtl" style="display:none"></div>
           <div class="chartwrap"><canvas id="heat"></canvas><div id="chart"></div><canvas id="featc" class="depth"></canvas><canvas id="depth" class="depth"></canvas></div>
           <div class="minis" id="minis" title="Eén grafiek per open trade · klik om groot te openen"></div></div>
         <div class="book" id="book"></div>
@@ -643,10 +644,12 @@ const FCOL = ['#ff4d6d', '#ff8c42', '#ffd166', '#06d6a0', '#4cc9f0', '#4361ee', 
 const layerOn = new Set(JSON.parse(localStorage.getItem('desk.layers') || '["heat","score","sr","trend","ma"]'));
 if (!localStorage.getItem('desk.layers.ma')) { layerOn.add('ma'); localStorage.setItem('desk.layers.ma', '1'); }
 if (!localStorage.getItem('desk.layers.osc')) { layerOn.add('rsi'); layerOn.add('macd'); localStorage.setItem('desk.layers.osc', '1'); }
+if (!localStorage.getItem('desk.layers.sltp')) { layerOn.add('sltp'); localStorage.setItem('desk.layers.sltp', '1'); }
 if (!localStorage.getItem('desk.layers.sr')) { layerOn.add('sr'); layerOn.add('trend'); localStorage.setItem('desk.layers.sr', '1'); }
 const featSeries = {}; st.featMin = {};
 function renderLayers() {
-  $('layers').innerHTML = `<button data-l="sr" style="--c:#c77dff" class="${layerOn.has('sr') ? 'on' : ''}" title="Steun en weerstand: prijzen waar de koers de afgelopen 2 dagen meermaals keerde (dikker = vaker geraakt). De zwerm gebruikt ze ook voor stop-loss, take-profit en om niet tegen een muur in te stappen">steun/weerstand</button>`
+  $('layers').innerHTML = `<button data-l="sltp" style="--c:#ff4d6d" class="${layerOn.has('sltp') ? 'on' : ''}" title="Stop-loss en take-profit van de open trade tonen of verbergen. Alleen de weergave: de stops blijven gewoon werken">SL/TP</button>`
+    + `<button data-l="sr" style="--c:#c77dff" class="${layerOn.has('sr') ? 'on' : ''}" title="Steun en weerstand: prijzen waar de koers de afgelopen 2 dagen meermaals keerde (dikker = vaker geraakt). De zwerm gebruikt ze ook voor stop-loss, take-profit en om niet tegen een muur in te stappen">steun/weerstand</button>`
     + `<button data-l="ma" style="--c:#f72585" class="${layerOn.has('ma') ? 'on' : ''}" title="Voortschrijdende gemiddelden EMA 20, 50 en 200 op 5 minuten. De zwerm telt ze mee als steun of weerstand: niet instappen vlak voor een EMA, en stop-loss en take-profit erop afstemmen">EMA 20/50/200</button>`
     + `<button data-l="rsi" style="--c:#b5e48c" class="${layerOn.has('rsi') ? 'on' : ''}" title="RSI 14 op 5 minuten, onderaan (30 en 70 gestippeld). Telt mee in het leermodel: alleen als het bewijsbaar iets voorspelt">RSI</button>`
     + `<button data-l="macd" style="--c:#48cae4" class="${layerOn.has('macd') ? 'on' : ''}" title="MACD 12/26/9 op 5 minuten, onderaan: lijn, signaal en histogram. Telt mee in het leermodel: alleen als het bewijsbaar iets voorspelt">MACD</button>`
@@ -1649,8 +1652,30 @@ function exitStory(h) {
     ${e.fees ? `Kosten ${usd(e.fees, 2)}.` : ''} ${h.why ? `Instap: ${cents(h.why.p)} kans tegen ${cents(h.why.be)} break-even, gedragen door ${h.why.parts.slice(0, 2).map(x => x[0]).join(' en ')}.` : ''}</p>`;
 }
 
+function renderTradeCtl(t) {  // knoppen boven de grafiek voor de open trade: SL/TP uit of aan, of terug volgens de regels
+  const open = t && t.entry && (t.state === 'open' || t.state === 'exiting');
+  const key = open ? [st.coin, t.side, !!t.sl, !!t.tp].join('|') : '';
+  if (key === st.tradeCtlKey) return; st.tradeCtlKey = key;
+  $('tradeCtl').style.display = open ? '' : 'none'; if (!open) return;
+  const b = (k, c, txt, tip) => `<button data-k="${k}" style="--c:${c}" title="${tip}">${txt}</button>`;
+  $('tradeCtl').innerHTML = `<span class="cap" style="align-self:center">open ${short(st.coin)} ${t.side}</span>`
+    + (t.sl ? b('sl', '#ff4d6d', 'SL uit', 'Stop-loss van deze trade weghalen: dan sluit hij alleen nog op take-profit, trailing of het einde van het venster')
+            : b('reset_sl', '#ff4d6d', 'SL aan (regels)', 'Stop-loss terugzetten zoals de zwerm hem zou zetten'))
+    + (t.tp ? b('tp', '#2fbf4a', 'TP uit', 'Take-profit van deze trade weghalen: de winst loopt dan door tot stop, trailing of het einde van het venster')
+            : b('reset_tp', '#2fbf4a', 'TP aan (regels)', 'Take-profit terugzetten zoals de zwerm hem zou zetten'))
+    + b('reset', '#5b8cff', '↺ SL+TP volgens regels', 'Stop-loss en take-profit terug naar de regels van de zwerm: plan vanaf de instap, de trailing stop schuift daarna weer mee');
+}
+$('tradeCtl').onclick = async e => {
+  const k = e.target.dataset.k; if (!k) return;
+  if ((k === 'sl') && !confirm('Stop-loss van deze trade weghalen? Dan is er geen bodem meer onder het verlies tot het einde van het venster.')) return;
+  try { const j = await (await fetch('/api/desk/auto/level', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: S.token, coin: st.coin, kind: k, price: null }) })).json(); if (j.detail) alert(j.detail); }
+  catch (err) { alert(err.message); }
+  st.tradeCtlKey = null; await pollAuto(); drawLevels();
+};
 function drawLevels() {
   const sm = srvMarket(), srvT = sm && sm.ticket;
+  renderTradeCtl(srvT);
   // instaplijn: groen voor long, rood voor short, met de lopende winst of verlies
   const lp = srvT ? (srvT.entry || srvT.limit) : null;
   if (lp) {
@@ -1661,7 +1686,7 @@ function drawLevels() {
     if (st.entryLine) st.entryLine.applyOptions(opt); else st.entryLine = cs.createPriceLine(opt);
   } else if (st.entryLine) { cs.removePriceLine(st.entryLine); st.entryLine = null; }
   for (const k of ['sl', 'tp']) {  // stop-loss en take-profit: stippellijn, met de muis te verslepen
-    const lv = st.drag && st.drag.k === k ? st.drag.price : srvT && srvT.entry ? srvT[k] : null, key = k + 'Line';
+    const lv = !layerOn.has('sltp') ? null : st.drag && st.drag.k === k ? st.drag.price : srvT && srvT.entry ? srvT[k] : null, key = k + 'Line';
     if (lv) {
       const e = srvT.entry, pnl = srvT.usd * (lv - e) / e * (srvT.side === 'long' ? 1 : -1);
       const opt = { price: lv, color: k === 'sl' ? '#ff4d6d' : '#2fbf4a', lineWidth: 2, lineStyle: 1, axisLabelVisible: true,
